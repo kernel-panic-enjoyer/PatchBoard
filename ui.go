@@ -3,16 +3,10 @@ package main
 import "html/template"
 
 type PageData struct {
-	Token         string
-	Admin         bool
-	StateDir      string
-	SearchQuery   string
-	Scan          *ScanResult
-	Message       string
-	CommandResult *CommandResult
-	ActionResults []UpdateResult
-	Settings      State
-	Theme         string
+	Token    string
+	Admin    bool
+	StateDir string
+	Theme    string
 }
 
 var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
@@ -39,12 +33,6 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
   <main>
     <section id="notice" class="notice hidden"></section>
     <section id="update-progress" class="progress-panel hidden"><div class="progress-title">Updating packages...</div><div class="progress-bar"><span></span></div></section>
-    {{if .Message}}<section class="notice">{{.Message}}</section>{{end}}
-    {{if .CommandResult}}<section class="log"><h2>Command Result</h2><pre>{{.CommandResult.Command}}
-OK={{.CommandResult.OK}} Code={{.CommandResult.Code}}
-{{.CommandResult.Stdout}}{{.CommandResult.Stderr}}</pre></section>{{end}}
-    {{if .ActionResults}}<section class="log"><h2>Update Results</h2>{{range .ActionResults}}<pre>{{.Key}} · OK={{.Result.OK}} Code={{.Result.Code}}
-{{.Result.Stdout}}{{.Result.Stderr}}</pre>{{end}}</section>{{end}}
 
     <section class="status-grid">
       <div class="panel"><h2>Package Managers</h2><div id="manager-list"><p class="muted">Checking package managers...</p></div></div>
@@ -54,7 +42,7 @@ OK={{.CommandResult.OK}} Code={{.CommandResult.Code}}
         <div class="button-row"><button id="auto-all" type="button" disabled>Auto All</button><button id="auto-none" type="button" disabled>Auto None</button></div>
         <p id="automation-status" class="muted">Loading task status...</p>
       </div></div>
-      <div class="panel"><h2>Search</h2><form id="search-form" class="search" method="get" action="/search"><input type="hidden" name="token" value="{{.Token}}"><input id="search-input" name="q" value="{{.SearchQuery}}" placeholder="Search packages"><button type="submit">Search</button></form></div>
+      <div class="panel"><h2>Search</h2><form id="search-form" class="search" method="get" action="/"><input type="hidden" name="token" value="{{.Token}}"><input id="search-input" name="q" placeholder="Search packages"><button type="submit">Search</button></form></div>
     </section>
 
     <section id="scan-panel" class="panel hidden">
@@ -69,12 +57,9 @@ OK={{.CommandResult.OK}} Code={{.CommandResult.Code}}
       <table><thead><tr><th>Name</th><th>Manager</th><th>ID</th><th>Version</th><th>Action</th></tr></thead><tbody id="search-results-body"></tbody></table>
     </section>
 
-    {{if .Scan}}<section class="panel"><h2>Scan Results</h2><p class="muted">Tracked {{.Scan.TrackedCount}} apps · Registry {{index .Scan.SourceCounts "registry"}} · Winget {{index .Scan.SourceCounts "winget"}} · Store {{index .Scan.SourceCounts "store"}}</p>{{if .Scan.Errors}}<pre>{{range .Scan.Errors}}{{.source}}: {{.error}}
-{{end}}</pre>{{end}}<table><thead><tr><th>Source</th><th>Name</th><th>Version</th><th>Publisher</th><th>Location</th></tr></thead><tbody>{{range .Scan.NewApps}}<tr><td>{{.Source}}</td><td>{{.Name}}</td><td>{{.Version}}</td><td>{{.Publisher}}</td><td>{{.InstallLocation}}</td></tr>{{else}}<tr><td colspan="5">No newly detected applications.</td></tr>{{end}}</tbody></table></section>{{end}}
-
 	<section class="panel">
-	  <div class="section-heading"><h2>Updates Available</h2><div class="button-row"><button id="refresh-packages" type="button">Refresh</button><form class="update-all-form" method="post" action="/update-all"><input type="hidden" name="token" value="{{.Token}}"><button id="update-all-button" type="submit">Update All</button></form></div></div>
-	  <form id="update-selected-form" method="post" action="/update-selected"><input type="hidden" name="token" value="{{.Token}}"></form>
+	  <div class="section-heading"><h2>Updates Available</h2><div class="button-row"><button id="refresh-packages" type="button">Refresh</button><form class="update-all-form" method="post" action="/api/update-all"><input type="hidden" name="token" value="{{.Token}}"><button id="update-all-button" type="submit">Update All</button></form></div></div>
+	  <form id="update-selected-form" method="post" action="/api/update-all"><input type="hidden" name="token" value="{{.Token}}"></form>
 	  <table><thead><tr><th></th><th>Name</th><th>Manager</th><th>Installed</th><th>Available</th><th>Auto</th><th>Action</th></tr></thead><tbody id="updates-body"><tr><td colspan="7">Loading packages...</td></tr></tbody></table>
 	  <button id="update-selected-button" form="update-selected-form" type="submit">Update Selected</button>
 	</section>
@@ -193,6 +178,9 @@ const pageJS = `
     if(output.length > 700){ output = output.slice(0, 700) + "..."; }
     return "Code " + (result.code || 0) + (output ? ": " + output : "");
   }
+  function resultNotice(successMessage, failurePrefix, result){
+    return result && result.ok ? successMessage : failurePrefix + ". " + commandText(result);
+  }
   function summarizeUpdatePayload(payload){
     if(payload.result){
       return payload.result.ok ? "Update completed. Refreshing package status..." : "Update finished with errors. " + commandText(payload.result);
@@ -256,7 +244,7 @@ const pageJS = `
       if(manager.available){
         return '<div class="manager"><strong>' + html(name) + '</strong><span class="badge ok">' + html(managerAvailabilityText(name, manager)) + '</span>' + details + '<span class="muted">' + html(manager.path || '') + '</span></div>';
       }
-      return '<div class="manager"><strong>' + html(name) + '</strong><span class="badge error">Missing</span>' + details + '<span class="muted">' + html(manager.error || '') + '</span><form method="post" action="/manager/install"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(name) + '"><button type="submit">Install ' + html(name) + '</button></form></div>';
+      return '<div class="manager"><strong>' + html(name) + '</strong><span class="badge error">Missing</span>' + details + '<span class="muted">' + html(manager.error || '') + '</span><form class="manager-install-form" method="post" action="/api/managers/install"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(name) + '"><button type="submit">Install ' + html(name) + '</button></form></div>';
     }).join("");
     if(target.innerHTML !== markup){ target.innerHTML = markup; }
   }
@@ -298,7 +286,7 @@ const pageJS = `
 		if(pkg.update_supported === false){
 			return '<span class="muted">Inventory only</span>';
 		}
-		return '<form class="update-form" data-key="' + attr(pkg.key) + '" method="post" action="/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit"' + (updateBusy ? ' disabled' : '') + '>Update</button><div class="row-progress hidden"><div class="progress-bar"><span></span></div></div></form>';
+		return '<form class="update-form" data-key="' + attr(pkg.key) + '" method="post" action="/api/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit"' + (updateBusy ? ' disabled' : '') + '>Update</button><div class="row-progress hidden"><div class="progress-bar"><span></span></div></div></form>';
 	}
 	function installedAction(pkg){
 		if(pkg.action_backend === "store-cli-resolved" && pkg.update_available){
@@ -390,7 +378,7 @@ const pageJS = `
     panel.classList.remove("hidden");
     var results = data.packages || [];
     body.innerHTML = results.length ? results.map(function(pkg){
-      return '<tr><td>' + html(pkg.name) + '</td><td>' + html(pkg.manager) + (pkg.action_backend ? '<br><span class="muted">' + html(pkg.action_backend) + '</span>' : '') + '</td><td>' + html(pkg.id) + '</td><td>' + html(pkg.version) + '</td><td><form method="post" action="/install"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit">Install</button></form></td></tr>';
+      return '<tr><td>' + html(pkg.name) + '</td><td>' + html(pkg.manager) + (pkg.action_backend ? '<br><span class="muted">' + html(pkg.action_backend) + '</span>' : '') + '</td><td>' + html(pkg.id) + '</td><td>' + html(pkg.version) + '</td><td><form class="install-form" method="post" action="/api/install"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit">Install</button></form></td></tr>';
     }).join("") : '<tr><td colspan="5">No installable results.</td></tr>';
   }
   async function loadStatus(force){
@@ -451,6 +439,38 @@ const pageJS = `
       body.innerHTML = '<tr><td colspan="5">' + html(e.message) + '</td></tr>';
     }
   }
+  async function installFromForm(form){
+    var button = form.querySelector("button");
+    if(button){ button.disabled = true; }
+    showNotice("Installing package...");
+    try{
+      var response = await postForm("/api/install", new URLSearchParams(new FormData(form)));
+      var payload = await response.json();
+      if(!response.ok){ throw new Error(payload.error || "Install failed"); }
+      showNotice(resultNotice("Install command completed. Refreshing package status...", "Install finished with errors", payload.result));
+      await refreshPackagesAfterUpdate(!!payload.refresh_started);
+    }catch(e){
+      showNotice("Install failed: " + e.message);
+    }finally{
+      if(button){ button.disabled = false; }
+    }
+  }
+  async function installManagerFromForm(form){
+    var button = form.querySelector("button");
+    if(button){ button.disabled = true; }
+    showNotice("Opening package manager install action...");
+    try{
+      var response = await postForm("/api/managers/install", new URLSearchParams(new FormData(form)));
+      var payload = await response.json();
+      if(!response.ok){ throw new Error(payload.error || "Package manager install failed"); }
+      showNotice(resultNotice("Package manager install action completed.", "Package manager install finished with errors", payload.result));
+      loadStatus(true);
+    }catch(e){
+      showNotice("Package manager install failed: " + e.message);
+    }finally{
+      if(button){ button.disabled = false; }
+    }
+  }
   async function setPackageAuto(key, enabled, button){
     button.disabled = true;
     var params = new URLSearchParams();
@@ -482,6 +502,29 @@ const pageJS = `
   });
   document.addEventListener("submit", function(event){
     var form = event.target;
+    if(form.id === "search-form"){
+      event.preventDefault();
+      var query = String($("search-input").value || "").trim();
+      if(!query){
+        showNotice("Enter a package name to search.");
+        return;
+      }
+      var url = new URL(window.location.href);
+      url.searchParams.set("q", query);
+      window.history.replaceState(null, "", url.toString());
+      loadSearch(query);
+      return;
+    }
+    if(form.matches(".install-form")){
+      event.preventDefault();
+      installFromForm(form);
+      return;
+    }
+    if(form.matches(".manager-install-form")){
+      event.preventDefault();
+      installManagerFromForm(form);
+      return;
+    }
     if(form.matches(".update-form")){
       event.preventDefault();
       var key = form.dataset.key;
@@ -558,7 +601,10 @@ const pageJS = `
   loadLogs();
   setInterval(loadLogs, 750);
   var query = new URLSearchParams(window.location.search).get("q");
-  if(query){ loadSearch(query); }
+  if(query){
+    $("search-input").value = query;
+    loadSearch(query);
+  }
 })();
 `
 

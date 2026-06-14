@@ -49,24 +49,41 @@ type UpdateResult struct {
 	Result CommandResult `json:"result"`
 }
 
+const (
+	managerWinget = "winget"
+	managerStore  = "store"
+	managerChoco  = "choco"
+
+	sourceWinget   = "winget"
+	sourceMSStore  = "msstore"
+	sourceStoreCLI = "store-cli"
+	sourceAppX     = "appx"
+
+	backendStoreCLI              = "store-cli"
+	backendAppXInventory         = "appx-inventory"
+	backendStoreCLIResolved      = "store-cli-resolved"
+	backendWingetMSStoreFallback = "winget-msstore-fallback"
+	inventoryBackendAppX         = "AppX"
+)
+
 func isManagedPackageManager(manager string) bool {
-	return manager == "winget" || manager == "store" || manager == "choco"
+	return manager == managerWinget || manager == managerStore || manager == managerChoco
 }
 
 func wingetSourceManager(source string) string {
-	if strings.EqualFold(strings.TrimSpace(source), "msstore") {
-		return "store"
+	if strings.EqualFold(strings.TrimSpace(source), sourceMSStore) {
+		return managerStore
 	}
-	return "winget"
+	return managerWinget
 }
 
 func managerSortRank(manager string) int {
 	switch manager {
-	case "winget":
+	case managerWinget:
 		return 0
-	case "store":
+	case managerStore:
 		return 1
-	case "choco":
+	case managerChoco:
 		return 2
 	default:
 		return 3
@@ -74,19 +91,19 @@ func managerSortRank(manager string) int {
 }
 
 func wingetSourceListCommand() []string {
-	return managerCommand("winget", "source", "list", "--disable-interactivity")
+	return managerCommand(managerWinget, "source", "list", "--disable-interactivity")
 }
 
 func wingetSourceResetCommand() []string {
-	return managerCommand("winget", "source", "reset", "--force", "--disable-interactivity")
+	return managerCommand(managerWinget, "source", "reset", "--force", "--disable-interactivity")
 }
 
 func detectManager(manager string) ManagerStatus {
-	if manager == "store" {
+	if manager == managerStore {
 		return detectStoreCLIManager()
 	}
 	result := runCommand(20*time.Second, managerCommand(manager, "--version")...)
-	if manager == "winget" && isWingetTransientFailure(result) {
+	if manager == managerWinget && isWingetTransientFailure(result) {
 		appLog("Winget version detection failed with transient code %d; retrying once.", result.Code)
 		time.Sleep(350 * time.Millisecond)
 		result = runCommand(20*time.Second, managerCommand(manager, "--version")...)
@@ -107,25 +124,20 @@ func detectManager(manager string) ManagerStatus {
 }
 
 func detectStoreCLIManager() ManagerStatus {
-	result := runCommand(20*time.Second, managerCommand("store", "--help")...)
+	result := runCommand(20*time.Second, managerCommand(managerStore, "--help")...)
 	status := ManagerStatus{
-		Available:          result.OK,
-		Path:               resolveExecutable("store"),
-		InventoryAvailable: appxInventoryAvailable(),
-		InventoryBackend:   "AppX",
+		Available: result.OK,
+		Path:      resolveExecutable(managerStore),
 	}
 	if status.Available {
 		status.Version = parseStoreHelpVersion(result.Stdout + "\n" + result.Stderr)
-		status.ActionBackend = "store-cli"
+		status.ActionBackend = backendStoreCLI
 		return status
 	}
 	if strings.TrimSpace(result.Stderr+result.Stdout) != "" {
 		status.Error = strings.TrimSpace(result.Stderr + result.Stdout)
 	} else {
 		status.Error = "native Store CLI was not found"
-	}
-	if status.InventoryAvailable {
-		status.Error = strings.TrimSpace(status.Error + "\nStore app inventory is available through Windows AppX.")
 	}
 	return status
 }
@@ -162,7 +174,7 @@ func detectManagers() map[string]ManagerStatus {
 	managers := map[string]ManagerStatus{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, manager := range []string{"winget", "store", "choco"} {
+	for _, manager := range []string{managerWinget, managerStore, managerChoco} {
 		manager := manager
 		wg.Add(1)
 		go func() {
@@ -174,14 +186,14 @@ func detectManagers() map[string]ManagerStatus {
 		}()
 	}
 	wg.Wait()
-	store := managers["store"]
-	if !store.Available && managers["winget"].Available {
-		store.ActionBackend = "winget-msstore-fallback"
+	store := managers[managerStore]
+	if !store.Available && managers[managerWinget].Available {
+		store.ActionBackend = backendWingetMSStoreFallback
 		if store.Error == "" {
 			store.Error = "native Store CLI was not found"
 		}
 		store.Error += "\nStore installs and updates can fall back to winget msstore when a compatible package ID is known."
-		managers["store"] = store
+		managers[managerStore] = store
 	}
 	return managers
 }
@@ -202,7 +214,7 @@ func parseChocoList(output string) []Package {
 		if id == "" || version == "" || strings.Contains(id, " ") || strings.HasPrefix(strings.ToLower(id), "this is try") {
 			continue
 		}
-		packages = append(packages, Package{ID: id, Name: id, Version: version, Manager: "choco"})
+		packages = append(packages, Package{ID: id, Name: id, Version: version, Manager: managerChoco})
 	}
 	return packages
 }
@@ -232,7 +244,7 @@ func splitColumns(line string) []string {
 
 func isSourceToken(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
-	return value == "winget" || value == "msstore"
+	return value == sourceWinget || value == sourceMSStore
 }
 
 func parseWingetTable(output string) []Package {
@@ -258,7 +270,7 @@ func parseWingetTable(output string) []Package {
 		if len(cols) < 3 {
 			continue
 		}
-		pkg := Package{Name: cols[0], ID: cols[1], Version: cols[2], Manager: "winget"}
+		pkg := Package{Name: cols[0], ID: cols[1], Version: cols[2], Manager: managerWinget}
 		rest := cols[3:]
 		if len(rest) > 0 {
 			if isSourceToken(rest[len(rest)-1]) {
@@ -301,7 +313,7 @@ func parseWingetExport(output string) []Package {
 	for _, source := range decoded.Sources {
 		sourceName := source.SourceDetails.Name
 		if sourceName == "" {
-			sourceName = "winget"
+			sourceName = sourceWinget
 		}
 		for _, item := range source.Packages {
 			id := strings.TrimSpace(item.PackageIdentifier)
@@ -368,7 +380,7 @@ func mergeWingetExportWithTable(exported, table []Package) []Package {
 		if used[i] || isTruncatedID(pkg.ID) || exportedIDs[strings.ToLower(pkg.ID)] {
 			continue
 		}
-		if pkg.Source == "winget" || pkg.Source == "msstore" {
+		if pkg.Source == sourceWinget || pkg.Source == sourceMSStore {
 			merged = append(merged, pkg)
 		}
 	}
@@ -379,12 +391,12 @@ func mergeWingetExportWithTable(exported, table []Package) []Package {
 }
 
 func chocoInstalled() ([]Package, CommandResult) {
-	result := runCommand(90*time.Second, managerCommand("choco", "list", "--local-only", "--limit-output", "--no-color")...)
+	result := runCommand(90*time.Second, managerCommand(managerChoco, "list", "--local-only", "--limit-output", "--no-color")...)
 	return parseChocoList(result.Stdout + "\n" + result.Stderr), result
 }
 
 func chocoUpdates() (map[string]string, CommandResult) {
-	result := runCommand(120*time.Second, managerCommand("choco", "outdated", "--limit-output", "--no-color")...)
+	result := runCommand(120*time.Second, managerCommand(managerChoco, "outdated", "--limit-output", "--no-color")...)
 	return parseChocoOutdated(result.Stdout + "\n" + result.Stderr), result
 }
 
@@ -405,14 +417,14 @@ func wingetInstalled() ([]Package, CommandResult) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		listResult = runCommand(120*time.Second, managerCommand("winget", "list", "--accept-source-agreements", "--disable-interactivity")...)
+		listResult = runCommand(120*time.Second, managerCommand(managerWinget, "list", "--accept-source-agreements", "--disable-interactivity")...)
 		tablePackages = parseWingetTable(listResult.Stdout + "\n" + listResult.Stderr)
 	}()
 	if exportPath != "" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			exportResult = runCommand(180*time.Second, managerCommand("winget", "export", "-o", exportPath, "--include-versions", "--accept-source-agreements", "--disable-interactivity")...)
+			exportResult = runCommand(180*time.Second, managerCommand(managerWinget, "export", "-o", exportPath, "--include-versions", "--accept-source-agreements", "--disable-interactivity")...)
 			exportOutput, _ := os.ReadFile(exportPath)
 			exported = parseWingetExport(string(exportOutput))
 		}()
@@ -427,7 +439,7 @@ func wingetInstalled() ([]Package, CommandResult) {
 }
 
 func wingetUpdates() (map[string]string, CommandResult) {
-	result := runCommand(120*time.Second, managerCommand("winget", "upgrade", "--accept-source-agreements", "--disable-interactivity")...)
+	result := runCommand(120*time.Second, managerCommand(managerWinget, "upgrade", "--accept-source-agreements", "--disable-interactivity")...)
 	updates := map[string]string{}
 	for _, pkg := range parseWingetTable(result.Stdout + "\n" + result.Stderr) {
 		if pkg.AvailableVersion != "" && !isTruncatedID(pkg.ID) {
@@ -452,7 +464,7 @@ func parseStoreUpdates(output string) map[string]string {
 			available = pkg.Version
 		}
 		if available != "" {
-			updates[packageKey("store", strings.ToLower(pkg.ID))] = available
+			updates[packageKey(managerStore, strings.ToLower(pkg.ID))] = available
 		}
 	}
 	return updates
@@ -506,10 +518,10 @@ func parseStorePackageTable(output string) []Package {
 			Name:             name,
 			Version:          version,
 			AvailableVersion: available,
-			Manager:          "store",
-			Source:           "store-cli",
+			Manager:          managerStore,
+			Source:           sourceStoreCLI,
 			UpdateSupported:  true,
-			ActionBackend:    "store-cli",
+			ActionBackend:    backendStoreCLI,
 		})
 	}
 	return packages
@@ -589,13 +601,8 @@ func looksLikePackageID(value string) bool {
 }
 
 func storeSearch(query string) ([]Package, CommandResult) {
-	result := runCommand(90*time.Second, managerCommand("store", "search", query)...)
+	result := runCommand(90*time.Second, managerCommand(managerStore, "search", query)...)
 	return parseStoreSearch(result.Stdout + "\n" + result.Stderr), result
-}
-
-func appxInventoryAvailable() bool {
-	result := runCommand(20*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$ErrorActionPreference='Stop'; Get-AppxPackage | Select-Object -First 1 -ExpandProperty PackageFullName")
-	return result.OK || strings.TrimSpace(result.Stdout) != ""
 }
 
 func appxInstalled() ([]Package, CommandResult) {
@@ -650,11 +657,11 @@ func parseAppxPackageJSON(output string) []Package {
 			ID:              id,
 			Name:            friendlyAppxName(rawName, item.DisplayName),
 			Version:         strings.TrimSpace(item.Version),
-			Manager:         "store",
-			Source:          "appx",
+			Manager:         managerStore,
+			Source:          sourceAppX,
 			Match:           strings.TrimSpace(item.PackageFamilyName),
 			UpdateSupported: false,
-			ActionBackend:   "appx-inventory",
+			ActionBackend:   backendAppXInventory,
 		})
 	}
 	sort.Slice(packages, func(i, j int) bool {
@@ -748,7 +755,7 @@ func mergeStoreAppxPackages(packages, appxPackages []Package) []Package {
 		return normalized != "" && seen[normalized]
 	}
 	for _, pkg := range packages {
-		if pkg.Manager != "store" {
+		if pkg.Manager != managerStore {
 			continue
 		}
 		markSeen(pkg.ID)
@@ -785,7 +792,7 @@ func resolveStoreAppxPackages(state *State, packages []Package, storeAvailable b
 	var jobs []job
 	cacheChanged := false
 	for i := range packages {
-		if packages[i].Source != "appx" || packages[i].UpdateSupported {
+		if packages[i].Source != sourceAppX || packages[i].UpdateSupported {
 			continue
 		}
 		cacheKey := strings.ToLower(packages[i].ID)
@@ -863,8 +870,8 @@ func applyStoreResolution(pkg Package, entry StoreResolveCacheEntry) Package {
 	}
 	pkg.ID = target
 	pkg.UpdateSupported = true
-	pkg.ActionBackend = "store-cli-resolved"
-	pkg.Source = "appx"
+	pkg.ActionBackend = backendStoreCLIResolved
+	pkg.Source = sourceAppX
 	pkg.Match = strings.TrimSpace(entry.StoreName)
 	return pkg
 }
@@ -1027,36 +1034,44 @@ func getInventory() Inventory {
 
 	inventoryCh := make(chan managerInventory, 2)
 	var wg sync.WaitGroup
+	var appxPackages []Package
+	var appxResult CommandResult
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		appxPackages, appxResult = appxInstalled()
+	}()
 
-	if managers["winget"].Available {
+	if managers[managerWinget].Available {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			inventoryCh <- collectManagerInventory("winget", wingetInstalled, wingetUpdates, "winget_list", "winget_upgrade")
+			inventoryCh <- collectManagerInventory(managerWinget, wingetInstalled, wingetUpdates, "winget_list", "winget_upgrade")
 		}()
 	}
 
-	if managers["choco"].Available {
+	if managers[managerChoco].Available {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			inventoryCh <- collectManagerInventory("choco", chocoInstalled, chocoUpdates, "choco_list", "choco_outdated")
+			inventoryCh <- collectManagerInventory(managerChoco, chocoInstalled, chocoUpdates, "choco_list", "choco_outdated")
 		}()
 	}
 	wg.Wait()
 	close(inventoryCh)
+	commandResults["appx_inventory"] = appxResult
 
 	for inventory := range inventoryCh {
 		commandResults[inventory.listKey] = inventory.listResult
 		commandResults[inventory.updateKey] = inventory.updateResult
 		for _, pkg := range inventory.installed {
 			displayManager := inventory.manager
-			if inventory.manager == "winget" {
+			if inventory.manager == managerWinget {
 				displayManager = wingetSourceManager(pkg.Source)
 			}
 			key := packageKey(displayManager, pkg.ID)
 			available := inventory.updates[packageKey(displayManager, strings.ToLower(pkg.ID))]
-			if available == "" && inventory.manager == "winget" {
+			if available == "" && inventory.manager == managerWinget {
 				available = pkg.AvailableVersion
 			}
 			pkg.Key = key
@@ -1069,19 +1084,24 @@ func getInventory() Inventory {
 			if pkg.ActionBackend == "" {
 				pkg.ActionBackend = displayManager
 			}
-			if displayManager == "store" && managers["store"].Available {
-				pkg.ActionBackend = "store-cli"
-			} else if displayManager == "store" {
-				pkg.ActionBackend = "winget-msstore-fallback"
+			if displayManager == managerStore && managers[managerStore].Available {
+				pkg.ActionBackend = backendStoreCLI
+			} else if displayManager == managerStore {
+				pkg.ActionBackend = backendWingetMSStoreFallback
 			}
 			packages = append(packages, pkg)
 		}
 	}
 
-	if managers["store"].InventoryAvailable {
-		appxPackages, result := appxInstalled()
-		commandResults["appx_inventory"] = result
-		if managers["store"].Available {
+	if appxResult.OK || len(appxPackages) > 0 {
+		store := managers[managerStore]
+		store.InventoryAvailable = true
+		store.InventoryBackend = inventoryBackendAppX
+		if !store.Available && store.Error != "" {
+			store.Error = strings.TrimSpace(store.Error + "\nStore app inventory is available through Windows AppX.")
+		}
+		managers[managerStore] = store
+		if managers[managerStore].Available {
 			var resolveResults map[string]CommandResult
 			var changed bool
 			appxPackages, resolveResults, changed = resolveStoreAppxPackages(&state, appxPackages, true, storeSearch)
@@ -1093,7 +1113,7 @@ func getInventory() Inventory {
 			}
 		}
 		for i := range appxPackages {
-			appxPackages[i].Key = packageKey("store", appxPackages[i].ID)
+			appxPackages[i].Key = packageKey(managerStore, appxPackages[i].ID)
 			appxPackages[i].Installed = true
 			if appxPackages[i].UpdateSupported {
 				appxPackages[i].AutoUpdate = state.AutoUpdatePackages[appxPackages[i].Key]
@@ -1118,8 +1138,8 @@ func getInventory() Inventory {
 			"last_scan_at":   state.LastScanAt,
 			"tracked_count":  len(state.RegistryApps) + len(state.WingetApps),
 			"registry_count": len(state.RegistryApps),
-			"winget_count":   sourceCounts["winget"],
-			"store_count":    sourceCounts["store"],
+			"winget_count":   sourceCounts[managerWinget],
+			"store_count":    sourceCounts[managerStore],
 		},
 	}
 }
@@ -1134,38 +1154,38 @@ func searchPackages(query string) ([]Package, map[string]ManagerStatus, map[stri
 	results := []Package{}
 	commandResults := map[string]CommandResult{}
 
-	if managers["store"].Available {
+	if managers[managerStore].Available {
 		packages, result := storeSearch(query)
 		commandResults["store_search"] = result
 		for _, pkg := range packages {
-			pkg.Key = packageKey("store", pkg.ID)
+			pkg.Key = packageKey(managerStore, pkg.ID)
 			pkg.UpdateSupported = true
-			pkg.ActionBackend = "store-cli"
+			pkg.ActionBackend = backendStoreCLI
 			results = append(results, pkg)
 		}
 	}
 
-	if managers["winget"].Available {
-		result := runCommand(90*time.Second, managerCommand("winget", "search", query, "--accept-source-agreements", "--disable-interactivity")...)
-		commandResults["winget"] = result
+	if managers[managerWinget].Available {
+		result := runCommand(90*time.Second, managerCommand(managerWinget, "search", query, "--accept-source-agreements", "--disable-interactivity")...)
+		commandResults[managerWinget] = result
 		for _, pkg := range parseWingetTable(result.Stdout + "\n" + result.Stderr) {
 			if !isTruncatedID(pkg.ID) {
 				pkg.Manager = wingetSourceManager(pkg.Source)
 				pkg.Key = packageKey(pkg.Manager, pkg.ID)
 				pkg.UpdateSupported = true
-				if pkg.Manager == "store" {
-					pkg.ActionBackend = "winget-msstore-fallback"
+				if pkg.Manager == managerStore {
+					pkg.ActionBackend = backendWingetMSStoreFallback
 				}
 				results = append(results, pkg)
 			}
 		}
 	}
 
-	if managers["choco"].Available {
-		result := runCommand(90*time.Second, managerCommand("choco", "search", query, "--limit-output", "--no-color")...)
-		commandResults["choco"] = result
+	if managers[managerChoco].Available {
+		result := runCommand(90*time.Second, managerCommand(managerChoco, "search", query, "--limit-output", "--no-color")...)
+		commandResults[managerChoco] = result
 		for _, pkg := range parseChocoList(result.Stdout + "\n" + result.Stderr) {
-			pkg.Key = packageKey("choco", pkg.ID)
+			pkg.Key = packageKey(managerChoco, pkg.ID)
 			results = append(results, pkg)
 		}
 	}
@@ -1195,7 +1215,7 @@ func validateManagerAndID(manager, id string) error {
 		return errors.New("manager must be winget, store, or choco")
 	}
 	id = strings.TrimSpace(id)
-	if manager == "store" {
+	if manager == managerStore {
 		if id == "" || len(id) > 240 || storeIDBlockedPattern.MatchString(id) {
 			return errors.New("store package id or query contains unsupported characters")
 		}
@@ -1208,25 +1228,56 @@ func validateManagerAndID(manager, id string) error {
 }
 
 func wingetSourceArg(manager string) string {
-	if manager == "store" {
-		return "msstore"
+	if manager == managerStore {
+		return sourceMSStore
 	}
-	return "winget"
+	return sourceWinget
 }
 
-func wingetStoreCommand(action, id string) []string {
-	base := []string{"winget", action}
-	if packageIDPattern.MatchString(id) {
-		base = append(base, "--id", id, "--exact")
+var wingetInteractiveFlags = []string{
+	"--accept-package-agreements",
+	"--accept-source-agreements",
+	"--disable-interactivity",
+	"--silent",
+}
+
+func wingetPackageCommand(action, source, id string, extra ...string) []string {
+	args := []string{action}
+	if id != "" && packageIDPattern.MatchString(id) {
+		args = append(args, "--id", id, "--exact")
 	} else {
-		base = append(base, id)
+		args = append(args, id)
 	}
-	base = append(base, "--source", "msstore", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")
-	return managerCommand(base[0], base[1:]...)
+	args = append(args, "--source", source)
+	args = append(args, extra...)
+	args = append(args, wingetInteractiveFlags...)
+	return managerCommand(managerWinget, args...)
+}
+
+func wingetInstallCommand(manager, id string, force bool) []string {
+	var extra []string
+	if force {
+		extra = append(extra, "--force")
+	}
+	return wingetPackageCommand("install", wingetSourceArg(manager), id, extra...)
+}
+
+func wingetUpgradeCommand(manager, id string) []string {
+	return wingetPackageCommand("upgrade", wingetSourceArg(manager), id)
+}
+
+func wingetUpgradeAllCommand(source string) []string {
+	args := []string{"upgrade", "--all", "--source", source}
+	args = append(args, wingetInteractiveFlags...)
+	return managerCommand(managerWinget, args...)
+}
+
+func chocoPackageCommand(action, id string) []string {
+	return managerCommand(managerChoco, action, id, "-y", "--no-progress", "--no-color")
 }
 
 func storeCLIAvailable() bool {
-	return detectManager("store").Available
+	return detectManager(managerStore).Available
 }
 
 func installPackage(manager, id string) CommandResult {
@@ -1235,18 +1286,18 @@ func installPackage(manager, id string) CommandResult {
 	}
 	appLog("Install started for %s:%s.", manager, id)
 	var result CommandResult
-	if manager == "store" {
+	if manager == managerStore {
 		if storeCLIAvailable() {
-			result = runCommand(3600*time.Second, managerCommand("store", "install", id)...)
-		} else if detectManager("winget").Available {
-			result = runCommand(3600*time.Second, wingetStoreCommand("install", id)...)
+			result = runCommand(3600*time.Second, managerCommand(managerStore, "install", id)...)
+		} else if detectManager(managerWinget).Available {
+			result = runCommand(3600*time.Second, wingetInstallCommand(managerStore, id, false)...)
 		} else {
 			result = CommandResult{Code: 1, Command: "store install", Stderr: "native Store CLI is unavailable and winget msstore fallback is unavailable"}
 		}
-	} else if manager == "winget" {
-		result = runCommand(3600*time.Second, managerCommand("winget", "install", "--id", id, "--exact", "--source", wingetSourceArg(manager), "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")...)
+	} else if manager == managerWinget {
+		result = runCommand(3600*time.Second, wingetInstallCommand(manager, id, false)...)
 	} else {
-		result = runCommand(3600*time.Second, managerCommand("choco", "install", id, "-y", "--no-progress", "--no-color")...)
+		result = runCommand(3600*time.Second, chocoPackageCommand("install", id)...)
 	}
 	appLog("Install finished for %s:%s with code %d.", manager, id, result.Code)
 	return result
@@ -1258,30 +1309,28 @@ func updatePackage(manager, id string) CommandResult {
 	}
 	appLog("Update started for %s:%s.", manager, id)
 	var result CommandResult
-	if manager == "store" {
+	if manager == managerStore {
 		if storeCLIAvailable() {
-			result = runCommand(3600*time.Second, managerCommand("store", "update", id)...)
-		} else if detectManager("winget").Available {
-			result = runCommand(3600*time.Second, wingetStoreCommand("upgrade", id)...)
+			result = runCommand(3600*time.Second, managerCommand(managerStore, "update", id)...)
+		} else if detectManager(managerWinget).Available {
+			result = runCommand(3600*time.Second, wingetUpgradeCommand(managerStore, id)...)
 			if shouldForceInstallAfterWingetUpgrade(result) {
 				appLog("Winget msstore upgrade reported no applicable upgrade for %s; trying forced install fallback.", id)
-				fallbackArgs := wingetStoreCommand("install", id)
-				fallbackArgs = append(fallbackArgs, "--force")
-				fallback := runCommand(3600*time.Second, fallbackArgs...)
+				fallback := runCommand(3600*time.Second, wingetInstallCommand(managerStore, id, true)...)
 				result = mergeCommandResults(result, fallback, "winget forced install fallback")
 			}
 		} else {
 			result = CommandResult{Code: 1, Command: "store update", Stderr: "native Store CLI is unavailable and winget msstore fallback is unavailable"}
 		}
-	} else if manager == "winget" {
-		result = runCommand(3600*time.Second, managerCommand("winget", "upgrade", "--id", id, "--exact", "--source", wingetSourceArg(manager), "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")...)
+	} else if manager == managerWinget {
+		result = runCommand(3600*time.Second, wingetUpgradeCommand(manager, id)...)
 		if shouldForceInstallAfterWingetUpgrade(result) {
 			appLog("Winget upgrade reported no applicable upgrade for %s; trying forced install fallback.", id)
-			fallback := runCommand(3600*time.Second, managerCommand("winget", "install", "--id", id, "--exact", "--source", wingetSourceArg(manager), "--force", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")...)
+			fallback := runCommand(3600*time.Second, wingetInstallCommand(manager, id, true)...)
 			result = mergeCommandResults(result, fallback, "winget forced install fallback")
 		}
 	} else {
-		result = runCommand(3600*time.Second, managerCommand("choco", "upgrade", id, "-y", "--no-progress", "--no-color")...)
+		result = runCommand(3600*time.Second, chocoPackageCommand("upgrade", id)...)
 	}
 	appLog("Update finished for %s:%s with code %d.", manager, id, result.Code)
 	return result
@@ -1333,16 +1382,16 @@ func updateAll(packageKeys []string) []UpdateResult {
 	}
 
 	managers := detectManagers()
-	if managers["winget"].Available {
-		results = append(results, UpdateResult{Key: "winget:*", Result: runCommand(7200*time.Second, managerCommand("winget", "upgrade", "--all", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")...)})
+	if managers[managerWinget].Available {
+		results = append(results, UpdateResult{Key: packageKey(managerWinget, "*"), Result: runCommand(7200*time.Second, wingetUpgradeAllCommand(sourceWinget)...)})
 	}
-	if managers["store"].Available {
-		results = append(results, UpdateResult{Key: "store:*", Result: runCommand(7200*time.Second, managerCommand("store", "updates")...)})
-	} else if managers["winget"].Available {
-		results = append(results, UpdateResult{Key: "store:*", Result: runCommand(7200*time.Second, managerCommand("winget", "upgrade", "--all", "--source", "msstore", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity", "--silent")...)})
+	if managers[managerStore].Available {
+		results = append(results, UpdateResult{Key: packageKey(managerStore, "*"), Result: runCommand(7200*time.Second, managerCommand(managerStore, "updates")...)})
+	} else if managers[managerWinget].Available {
+		results = append(results, UpdateResult{Key: packageKey(managerStore, "*"), Result: runCommand(7200*time.Second, wingetUpgradeAllCommand(sourceMSStore)...)})
 	}
-	if managers["choco"].Available {
-		results = append(results, UpdateResult{Key: "choco:*", Result: runCommand(7200*time.Second, managerCommand("choco", "upgrade", "all", "-y", "--no-progress", "--no-color")...)})
+	if managers[managerChoco].Available {
+		results = append(results, UpdateResult{Key: packageKey(managerChoco, "*"), Result: runCommand(7200*time.Second, chocoPackageCommand("upgrade", "all")...)})
 	}
 	appLog("Update all finished with %d manager result(s).", len(results))
 	return results
@@ -1352,14 +1401,14 @@ func installManager(manager string) CommandResult {
 	appLog("Package manager install action started for %s.", manager)
 	var result CommandResult
 	switch manager {
-	case "winget":
+	case managerWinget:
 		err := openURL("ms-appinstaller:?source=https://aka.ms/getwinget")
 		if err != nil {
 			result = CommandResult{Code: 1, Stderr: err.Error(), Command: "open winget installer"}
 			break
 		}
 		result = CommandResult{OK: true, Command: "open winget installer", Stdout: "Opened Microsoft App Installer for winget."}
-	case "store":
+	case managerStore:
 		var messages []string
 		opened := false
 		if err := openURL("ms-windows-store://downloadsandupdates"); err != nil {
@@ -1380,9 +1429,9 @@ func installManager(manager string) CommandResult {
 			result.Stderr = result.Stdout
 			result.Stdout = ""
 		}
-	case "choco":
-		if detectManager("winget").Available {
-			result = installPackage("winget", "Chocolatey.Chocolatey")
+	case managerChoco:
+		if detectManager(managerWinget).Available {
+			result = installPackage(managerWinget, "Chocolatey.Chocolatey")
 			break
 		}
 		err := openURL("https://chocolatey.org/install")

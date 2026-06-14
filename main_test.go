@@ -291,6 +291,32 @@ func TestStorePackageKeysAreValid(t *testing.T) {
 	}
 }
 
+func TestPackageCommandBuilders(t *testing.T) {
+	wingetInstall := strings.Join(wingetInstallCommand("winget", "Git.Git", false), " ")
+	for _, expected := range []string{"winget install", "--id Git.Git --exact", "--source winget", "--accept-package-agreements", "--disable-interactivity", "--silent"} {
+		if !strings.Contains(wingetInstall, expected) {
+			t.Fatalf("winget install command missing %q: %s", expected, wingetInstall)
+		}
+	}
+	if strings.Contains(wingetInstall, "--force") {
+		t.Fatalf("normal install should not include force: %s", wingetInstall)
+	}
+
+	forcedStoreInstall := strings.Join(wingetInstallCommand("store", "Microsoft To Do", true), " ")
+	for _, expected := range []string{"winget install", "Microsoft To Do", "--source msstore", "--force"} {
+		if !strings.Contains(forcedStoreInstall, expected) {
+			t.Fatalf("forced store install command missing %q: %s", expected, forcedStoreInstall)
+		}
+	}
+
+	chocoUpgrade := strings.Join(chocoPackageCommand("upgrade", "git"), " ")
+	for _, expected := range []string{"upgrade git", "-y", "--no-progress", "--no-color"} {
+		if !strings.Contains(chocoUpgrade, expected) {
+			t.Fatalf("choco command missing %q: %s", expected, chocoUpgrade)
+		}
+	}
+}
+
 func TestParseStoreSearchAndUpdates(t *testing.T) {
 	searchOutput := `
 Name             ID              Publisher
@@ -696,6 +722,54 @@ func TestAPIUpdateRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestAPIInstallRejectsInvalidInput(t *testing.T) {
+	app := &App{token: "test-token"}
+	request := httptest.NewRequest(http.MethodPost, "/api/install?token=test-token", strings.NewReader("manager=invalid&package_id=Git.Git"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded struct {
+		Result         CommandResult `json:"result"`
+		RefreshStarted bool          `json:"refresh_started"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RefreshStarted {
+		t.Fatal("invalid install should not start an inventory refresh")
+	}
+	if decoded.Result.Code != 2 || !strings.Contains(decoded.Result.Stderr, "manager must be winget, store, or choco") {
+		t.Fatalf("unexpected validation result: %#v", decoded.Result)
+	}
+}
+
+func TestAPIManagerInstallRejectsInvalidManager(t *testing.T) {
+	app := &App{token: "test-token"}
+	request := httptest.NewRequest(http.MethodPost, "/api/managers/install?token=test-token", strings.NewReader("manager=invalid"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded struct {
+		Result CommandResult `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Result.Code != 2 || !strings.Contains(decoded.Result.Stderr, "manager must be winget, store, or choco") {
+		t.Fatalf("unexpected validation result: %#v", decoded.Result)
+	}
+}
+
 func TestAPIUpdateAllRejectsBadPackageKey(t *testing.T) {
 	app := &App{token: "test-token"}
 	request := httptest.NewRequest(http.MethodPost, "/api/update-all?token=test-token", strings.NewReader("package_key=not-a-valid-key"))
@@ -725,9 +799,8 @@ func TestAPIUpdateAllRejectsBadPackageKey(t *testing.T) {
 func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	var output bytes.Buffer
 	data := PageData{
-		Token:    "test-token",
-		Settings: defaultState(),
-		Theme:    "dark",
+		Token: "test-token",
+		Theme: "dark",
 	}
 	if err := pageTemplate.Execute(&output, data); err != nil {
 		t.Fatal(err)
@@ -736,8 +809,13 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	for _, expected := range []string{
 		`id="update-progress"`,
 		`class="update-all-form"`,
+		`id="search-form"`,
+		`action="/api/install"`,
+		`action="/api/managers/install"`,
 		`runUpdateRequest("/api/update"`,
 		`runUpdateRequest("/api/update-all"`,
+		`installFromForm`,
+		`installManagerFromForm`,
 		`refreshPackagesAfterUpdate`,
 		`id="session-log-panel"`,
 		`id="clear-log-view"`,
@@ -769,6 +847,13 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Available Usage: store`,
 		`Usage: store <command>`,
 		`? "Current" : "-"`,
+		`action="/install"`,
+		`action="/manager/install"`,
+		`action="/update"`,
+		`action="/update-all"`,
+		`{{if .CommandResult}}`,
+		`{{if .ActionResults}}`,
+		`{{if .Scan}}`,
 	} {
 		if strings.Contains(rendered, unexpected) {
 			t.Fatalf("rendered page should not contain %q", unexpected)
