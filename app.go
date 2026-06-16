@@ -7,11 +7,7 @@ import (
 	"time"
 )
 
-const (
-	gracefulShutdownTimeout = 5 * time.Second
-	inventoryCacheTTL       = 90 * time.Second
-	statusCacheTTL          = 30 * time.Second
-)
+const gracefulShutdownTimeout = 5 * time.Second
 
 type InventoryResponse struct {
 	Inventory
@@ -49,6 +45,7 @@ type App struct {
 	inventory          Inventory
 	inventoryLoading   bool
 	inventoryQueued    bool
+	inventoryRefreshID int64
 	inventoryFetchedAt time.Time
 	inventoryErr       string
 	status             StatusResponse
@@ -75,183 +72,4 @@ func (app *App) requestShutdown(source string) {
 			_ = app.server.Close()
 		}
 	})
-}
-
-func (app *App) refreshInventory(force bool) {
-	app.mu.Lock()
-	stale := app.inventoryFetchedAt.IsZero() || time.Since(app.inventoryFetchedAt) > inventoryCacheTTL
-	if app.inventoryLoading {
-		if force {
-			app.inventoryQueued = true
-			appLog("Inventory refresh queued.")
-		}
-		app.mu.Unlock()
-		return
-	}
-	if !force && !stale {
-		app.mu.Unlock()
-		return
-	}
-	app.inventoryLoading = true
-	app.inventoryErr = ""
-	app.mu.Unlock()
-	appLog("Inventory refresh started.")
-
-	go app.runInventoryRefresh()
-}
-
-func (app *App) runInventoryRefresh() {
-	inventory := getInventory()
-	app.mu.Lock()
-	app.inventory = inventory
-	app.inventoryFetchedAt = time.Now()
-	app.inventoryErr = ""
-	if app.inventoryQueued {
-		app.inventoryQueued = false
-		app.inventoryLoading = true
-		app.mu.Unlock()
-		appLog("Inventory refresh completed with %d package(s); running queued refresh.", len(inventory.Packages))
-		go app.runInventoryRefresh()
-		return
-	}
-	app.inventoryLoading = false
-	app.mu.Unlock()
-	appLog("Inventory refresh completed with %d package(s).", len(inventory.Packages))
-}
-
-func (app *App) inventorySnapshot() InventoryResponse {
-	app.mu.RLock()
-	inventory := app.inventory
-	loading := app.inventoryLoading
-	fetchedAt := app.inventoryFetchedAt
-	errText := app.inventoryErr
-	app.mu.RUnlock()
-
-	response := InventoryResponse{
-		Inventory:     inventory,
-		AsyncSnapshot: asyncSnapshot(loading, fetchedAt, errText),
-	}
-	if response.Managers == nil {
-		response.Managers = map[string]ManagerStatus{}
-	}
-	if response.CommandResults == nil {
-		response.CommandResults = map[string]CommandResult{}
-	}
-	if fetchedAt.IsZero() {
-		state := loadState()
-		response.Scan = inventoryScanSummary(state, managedScanSourceCounts(state))
-	}
-	return response
-}
-
-func (app *App) refreshStatus(force bool) {
-	app.mu.Lock()
-	stale := app.statusFetchedAt.IsZero() || time.Since(app.statusFetchedAt) > statusCacheTTL
-	if app.statusLoading {
-		if force {
-			app.statusQueued = true
-			appLog("Status refresh queued.")
-		}
-		app.mu.Unlock()
-		return
-	}
-	if !force && !stale {
-		app.mu.Unlock()
-		return
-	}
-	app.statusLoading = true
-	app.statusErr = ""
-	app.mu.Unlock()
-	appLog("Status refresh started.")
-
-	go app.runStatusRefresh(force)
-}
-
-func (app *App) runStatusRefresh(force bool) {
-	state := loadState()
-	dir, _ := stateDir()
-	var startupEnabled bool
-	var autoTaskEnabled bool
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		startupEnabled = taskExists(taskStartup)
-	}()
-	go func() {
-		defer wg.Done()
-		autoTaskEnabled = taskExists(taskAutoUpdate)
-	}()
-	var managers map[string]ManagerStatus
-	if force {
-		managers = detectManagersFresh()
-	} else {
-		managers = detectManagers()
-	}
-	wg.Wait()
-
-	app.mu.Lock()
-	app.status = StatusResponse{
-		Admin:           isAdmin(),
-		StateDir:        dir,
-		Managers:        managers,
-		StartupEnabled:  startupEnabled,
-		AutoTaskEnabled: autoTaskEnabled,
-		Settings:        state,
-	}
-	app.statusFetchedAt = time.Now()
-	app.statusErr = ""
-	if app.statusQueued {
-		app.statusQueued = false
-		app.statusLoading = true
-		app.mu.Unlock()
-		appLog("Status refresh completed; running queued refresh.")
-		go app.runStatusRefresh(true)
-		return
-	}
-	app.statusLoading = false
-	app.mu.Unlock()
-	appLog("Status refresh completed.")
-}
-
-func (app *App) statusSnapshot() StatusResponse {
-	app.mu.RLock()
-	status := app.status
-	loading := app.statusLoading
-	fetchedAt := app.statusFetchedAt
-	errText := app.statusErr
-	inventoryManagers := cloneManagerStatuses(app.inventory.Managers)
-	app.mu.RUnlock()
-
-	if status.StateDir == "" {
-		status.Settings = loadState()
-		status.StateDir, _ = stateDir()
-		status.Admin = isAdmin()
-	}
-	if status.Managers == nil {
-		status.Managers = map[string]ManagerStatus{}
-	} else {
-		status.Managers = cloneManagerStatuses(status.Managers)
-	}
-	mergeStatusInventoryManagerDetails(&status, inventoryManagers)
-	status.AsyncSnapshot = asyncSnapshot(loading, fetchedAt, errText)
-	return status
-}
-
-func mergeStatusInventoryManagerDetails(status *StatusResponse, inventoryManagers map[string]ManagerStatus) {
-	inventoryStore, ok := inventoryManagers[managerStore]
-	if !ok || !inventoryStore.InventoryAvailable {
-		return
-	}
-	store := status.Managers[managerStore]
-	if store == (ManagerStatus{}) {
-		store = inventoryStore
-	} else {
-		store.InventoryAvailable = true
-		store.InventoryBackend = inventoryStore.InventoryBackend
-		if store.ActionBackend == "" {
-			store.ActionBackend = inventoryStore.ActionBackend
-		}
-	}
-	status.Managers[managerStore] = store
 }

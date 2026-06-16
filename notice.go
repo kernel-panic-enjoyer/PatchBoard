@@ -18,7 +18,7 @@ func updateFailureNotice(result CommandResult) string {
 	return commandFailureNotice("Update finished with errors", result)
 }
 
-func updateAllFailureNotice(results []UpdateResult) string {
+func updateResultsFailureNotice(results []UpdateResult) string {
 	var failed []UpdateResult
 	for _, item := range results {
 		if !item.Result.OK {

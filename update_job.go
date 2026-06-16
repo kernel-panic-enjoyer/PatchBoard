@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 const updateJobModeAll = "all"
@@ -13,7 +12,6 @@ const updateJobModeSelected = "selected"
 var errUpdateJobRunning = errors.New("an update job is already running")
 var errNoUpdateCandidates = errors.New("no updateable packages found")
 
-var updatePackageRunner = updatePackageContext
 var refreshInventoryAfterUpdateJob = func(app *App) {
 	app.refreshInventory(true)
 }
@@ -45,7 +43,7 @@ type UpdateJob struct {
 func (app *App) startUpdateJob(packageKeys []string) (UpdateJobStatus, error) {
 	app.updateJobMu.Lock()
 	if app.updateJob != nil && app.updateJob.status.Running {
-		status := app.updateJob.status
+		status := cloneUpdateJobStatus(app.updateJob.status)
 		app.updateJobMu.Unlock()
 		return status, errUpdateJobRunning
 	}
@@ -61,7 +59,7 @@ func (app *App) startUpdateJob(packageKeys []string) (UpdateJobStatus, error) {
 	defer app.updateJobMu.Unlock()
 	if app.updateJob != nil && app.updateJob.status.Running {
 		cancel()
-		return app.updateJob.status, errUpdateJobRunning
+		return cloneUpdateJobStatus(app.updateJob.status), errUpdateJobRunning
 	}
 	app.updateJobSeq++
 	job := &UpdateJob{
@@ -81,93 +79,17 @@ func (app *App) startUpdateJob(packageKeys []string) (UpdateJobStatus, error) {
 	app.updateJob = job
 	appLog("Update job %s started in %s mode with %d package(s).", job.status.JobID, mode, len(packages))
 	go app.runUpdateJob(ctx, job)
-	return job.status, nil
+	return cloneUpdateJobStatus(job.status), nil
 }
 
-func (app *App) updateJobPackages(packageKeys []string) ([]Package, string, error) {
-	app.mu.RLock()
-	inventoryPackages := append([]Package(nil), app.inventory.Packages...)
-	app.mu.RUnlock()
-
-	byKey := map[string]Package{}
-	for _, pkg := range inventoryPackages {
-		key := normalizedJobPackageKey(pkg)
-		if key != "" {
-			pkg.Key = key
-			byKey[key] = pkg
-		}
+func cloneUpdateJobStatus(status UpdateJobStatus) UpdateJobStatus {
+	if status.PackageKeys != nil {
+		status.PackageKeys = append([]string(nil), status.PackageKeys...)
 	}
-
-	if len(packageKeys) == 0 {
-		var packages []Package
-		seen := map[string]bool{}
-		for _, pkg := range inventoryPackages {
-			key := normalizedJobPackageKey(pkg)
-			if key == "" || seen[key] || !pkg.UpdateAvailable || pkg.UpdateSupported == false {
-				continue
-			}
-			pkg.Key = key
-			packages = append(packages, pkg)
-			seen[key] = true
-		}
-		if len(packages) == 0 {
-			return nil, updateJobModeAll, errNoUpdateCandidates
-		}
-		return packages, updateJobModeAll, nil
+	if status.Results != nil {
+		status.Results = append([]UpdateResult(nil), status.Results...)
 	}
-
-	var packages []Package
-	seen := map[string]bool{}
-	for _, key := range packageKeys {
-		normalized := normalizeAutoUpdatePackageKey(key)
-		if normalized == "" {
-			normalized = key
-		}
-		if seen[normalized] {
-			continue
-		}
-		manager, id, err := splitPackageKey(normalized)
-		if err != nil {
-			return nil, updateJobModeSelected, err
-		}
-		pkg, ok := byKey[normalized]
-		if !ok {
-			pkg = Package{Key: normalized, Manager: manager, ID: id, Name: id, UpdateSupported: true}
-		}
-		if pkg.UpdateSupported == false {
-			return nil, updateJobModeSelected, fmt.Errorf("%s does not support updates", normalized)
-		}
-		pkg.Key = normalized
-		packages = append(packages, pkg)
-		seen[normalized] = true
-	}
-	if len(packages) == 0 {
-		return nil, updateJobModeSelected, errNoUpdateCandidates
-	}
-	return packages, updateJobModeSelected, nil
-}
-
-func updateJobPackageKeys(packages []Package) []string {
-	keys := make([]string, 0, len(packages))
-	for _, pkg := range packages {
-		if pkg.Key != "" {
-			keys = append(keys, pkg.Key)
-		}
-	}
-	return keys
-}
-
-func normalizedJobPackageKey(pkg Package) string {
-	if pkg.Key != "" {
-		if normalized := normalizeAutoUpdatePackageKey(pkg.Key); normalized != "" {
-			return normalized
-		}
-		return pkg.Key
-	}
-	if pkg.Manager == "" || pkg.ID == "" {
-		return ""
-	}
-	return packageKey(pkg.Manager, pkg.ID)
+	return status
 }
 
 func (app *App) runUpdateJob(ctx context.Context, job *UpdateJob) {
@@ -182,7 +104,7 @@ func (app *App) runUpdateJob(ctx context.Context, job *UpdateJob) {
 		job.status.CurrentPackage = updateJobPackageName(pkg)
 		app.updateJobMu.Unlock()
 
-		result := updatePackageRunner(ctx, pkg.Manager, pkg.ID)
+		result := app.updatePackageWithInventoryRetry(ctx, pkg)
 
 		app.updateJobMu.Lock()
 		job.status.Results = append(job.status.Results, UpdateResult{Key: pkg.Key, Result: result})
@@ -203,27 +125,17 @@ func (app *App) runUpdateJob(ctx context.Context, job *UpdateJob) {
 	job.status.FinishedAt = utcNow()
 	job.status.RefreshStarted = true
 	job.status.Notice = updateJobNotice(job.status)
-	status := job.status
+	status := cloneUpdateJobStatus(job.status)
 	app.updateJobMu.Unlock()
 
 	appLog("Update job %s finished with %d/%d result(s).", status.JobID, len(status.Results), status.Total)
-}
-
-func updateJobPackageName(pkg Package) string {
-	for _, value := range []string{pkg.Name, pkg.ID, pkg.Key} {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
-		}
-	}
-	return "package"
 }
 
 func updateJobNotice(status UpdateJobStatus) string {
 	if status.CancelRequested {
 		return "Update cancelled. Refreshing package status..."
 	}
-	if notice := updateAllFailureNotice(status.Results); notice != "" {
+	if notice := updateResultsFailureNotice(status.Results); notice != "" {
 		return notice
 	}
 	return "Update completed. Refreshing package status..."
@@ -243,7 +155,7 @@ func (app *App) cancelUpdateJob() UpdateJobStatus {
 		}
 		appLog("Update job %s cancellation requested.", app.updateJob.status.JobID)
 	}
-	return app.updateJob.status
+	return cloneUpdateJobStatus(app.updateJob.status)
 }
 
 func (app *App) updateJobStatus() UpdateJobStatus {
@@ -252,5 +164,5 @@ func (app *App) updateJobStatus() UpdateJobStatus {
 	if app.updateJob == nil {
 		return UpdateJobStatus{}
 	}
-	return app.updateJob.status
+	return cloneUpdateJobStatus(app.updateJob.status)
 }
