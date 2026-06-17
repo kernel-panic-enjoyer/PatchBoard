@@ -18,6 +18,8 @@ const pageScriptShell = `
   var token = document.body.dataset.token || "";
   var packages = [];
   var updateBusy = false;
+  var updatePage = 1;
+  var updatePageSize = 10;
   var installedPage = 1;
   var installedPageSize = 10;
   var installedSearchQuery = "";
@@ -25,14 +27,20 @@ const pageScriptShell = `
   var searchPage = 1;
   var searchPageSize = 10;
   var lastLogID = 0;
-  var logLines = [];
+  var logEntries = [];
   var logSearchQuery = "";
+  var activeLogCategory = "all";
+  var clearedLogBeforeByCategory = {};
   var managersRendered = false;
   var updateJobPollTimer = null;
   var activeUpdateKeys = [];
   var activeUpdateJobID = "";
+  var rowUpdateQueue = [];
+  var rowUpdateActive = null;
   var latestStatus = null;
   var latestPackagesLoading = true;
+  var toastSeq = 0;
+  var toasts = [];
   function $(id){ return document.getElementById(id); }
   function api(path, params){
     var url = new URL(path, window.location.origin);
@@ -77,5 +85,76 @@ const pageScriptShell = `
       notice.textContent = message || "";
     }
     notice.classList.toggle("hidden", !message);
+  }
+  function showToast(message, kind, duration){
+    var toast = {
+      id: ++toastSeq,
+      message: String(message || ""),
+      kind: kind || "info",
+      remaining: Math.max(duration || 10000, 10000),
+      timer: null,
+      startedAt: 0
+    };
+    if(!toast.message){ return; }
+    toasts.push(toast);
+    renderToasts();
+    startToastTimer(toast);
+  }
+  function renderToasts(){
+    var region = $("toast-region");
+    if(!region){ return; }
+    region.innerHTML = toasts.map(function(toast){
+      return '<article class="toast toast-' + attr(toast.kind) + '" data-toast-id="' + attr(toast.id) + '"><div><strong>' + html(toastTitle(toast.kind)) + '</strong><p>' + html(toast.message) + '</p></div><button class="toast-close ghost" type="button" aria-label="Dismiss notification">&times;</button></article>';
+    }).join("");
+  }
+  function toastTitle(kind){
+    if(kind === "success"){ return "Success"; }
+    if(kind === "error"){ return "Needs attention"; }
+    return "Notice";
+  }
+  function startToastTimer(toast){
+    clearToastTimer(toast);
+    if(document.hidden){ return; }
+    toast.startedAt = Date.now();
+    toast.timer = setTimeout(function(){ removeToast(toast.id); }, Math.max(0, toast.remaining));
+  }
+  function clearToastTimer(toast){
+    if(toast.timer){
+      clearTimeout(toast.timer);
+      toast.timer = null;
+    }
+  }
+  function pauseToastTimers(){
+    toasts.forEach(function(toast){
+      if(toast.timer){
+        toast.remaining = Math.max(0, toast.remaining - (Date.now() - toast.startedAt));
+        clearToastTimer(toast);
+      }
+    });
+  }
+  function resumeToastTimers(){
+    toasts.slice().forEach(function(toast){
+      if(toast.remaining <= 0){
+        removeToast(toast.id);
+      }else{
+        startToastTimer(toast);
+      }
+    });
+  }
+  function removeToast(id){
+    toasts = toasts.filter(function(toast){
+      if(toast.id === id){
+        clearToastTimer(toast);
+        return false;
+      }
+      return true;
+    });
+    renderToasts();
+  }
+  function updatePayloadSucceeded(payload){
+    if(payload && payload.result){ return !!payload.result.ok; }
+    var results = payload && payload.results ? payload.results : [];
+    if(results.length === 0){ return false; }
+    return results.every(function(item){ return item.result && item.result.ok; });
   }
 `

@@ -26,9 +26,11 @@ const pageScriptPackageRender = `
 			return '<span class="muted">Inventory only</span>';
 		}
     var blockedUnknown = pkg.unknown_version && !allowUnknownVersionUpdates();
-    var disabled = updateBusy || blockedUnknown;
+    var updateState = rowUpdateState(pkg.key);
+    var disabled = updateBusy || !!updateState || blockedUnknown;
+    var label = updateState === "active" ? "Updating" : (updateState === "queued" ? "Queued" : "Update");
     var title = blockedUnknown ? ' title="Enable the global unknown-version option first"' : '';
-		return '<form class="update-form" data-key="' + attr(pkg.key) + '" data-unknown-version="' + (pkg.unknown_version ? 'true' : 'false') + '" method="post" action="/api/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit"' + (disabled ? ' disabled' : '') + title + '>' + icon("update") + '<span>Update</span></button><div class="row-progress hidden"><div class="progress-bar"><span></span></div></div></form>';
+		return '<form class="update-form" data-key="' + attr(pkg.key) + '" data-unknown-version="' + (pkg.unknown_version ? 'true' : 'false') + '" data-blocked-unknown="' + (blockedUnknown ? 'true' : 'false') + '" method="post" action="/api/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit"' + (disabled ? ' disabled' : '') + title + '>' + icon("update") + '<span>' + html(label) + '</span></button><div class="row-progress' + (updateState ? '' : ' hidden') + '"><div class="progress-bar"><span></span></div></div></form>';
 	}
 	function installedAction(pkg){
 		if(pkg.action_backend === "store-cli-resolved" && pkg.update_available){
@@ -45,15 +47,33 @@ const pageScriptPackageRender = `
   }
   function renderUpdatesTable(updates, loading){
     var target = $("updates-body");
+    var status = $("updates-page-status");
+    var prev = $("updates-prev");
+    var next = $("updates-next");
     if(!target){ return; }
     if(updates.length === 0){
       target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">No updates available.</td></tr>';
+      if(status){ status.innerHTML = loading ? loadingText('Checking...') : html('No updates'); }
+      if(prev){ prev.disabled = true; }
+      if(next){ next.disabled = true; }
       return;
     }
-    target.innerHTML = updates.map(function(pkg){
+    var total = updates.length;
+    var totalPages = Math.max(1, Math.ceil(total / updatePageSize));
+    if(updatePage > totalPages){ updatePage = totalPages; }
+    if(updatePage < 1){ updatePage = 1; }
+    var start = (updatePage - 1) * updatePageSize;
+    var visible = updates.slice(start, start + updatePageSize);
+    target.innerHTML = visible.map(function(pkg){
       var selectable = packageBulkUpdateable(pkg);
-      return '<tr data-key="' + attr(pkg.key) + '"><td><input form="update-selected-form" type="checkbox" name="package_key" value="' + attr(pkg.key) + '"' + ((updateBusy || !selectable) ? ' disabled' : '') + '></td><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + autoButton(pkg) + '</td><td>' + updateForm(pkg) + '</td></tr>';
+      var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
+      return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td><input form="update-selected-form" type="checkbox" name="package_key" value="' + attr(pkg.key) + '"' + ((updateBusy || !selectable) ? ' disabled' : '') + '></td><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + autoButton(pkg) + '</td><td>' + updateForm(pkg) + '</td></tr>';
     }).join("");
+    if(status){
+      status.textContent = "Showing " + (start + 1) + "-" + Math.min(start + updatePageSize, total) + " of " + total;
+    }
+    if(prev){ prev.disabled = updatePage <= 1; }
+    if(next){ next.disabled = updatePage >= totalPages; }
   }
   function renderInstalledTable(loading){
     var target = $("packages-body");
@@ -77,7 +97,8 @@ const pageScriptPackageRender = `
     var visible = visiblePackages.slice(start, start + installedPageSize);
 	target.innerHTML = visible.map(function(pkg){
 		var rowStatus = pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : (pkg.unknown_version && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>'));
-		return '<tr data-key="' + attr(pkg.key) + '"><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
+    var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
+		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
 	}).join("");
     if(status){
       status.textContent = "Showing " + (start + 1) + "-" + Math.min(start + installedPageSize, total) + " of " + total + (installedSearchQuery ? " matches" : "");
@@ -88,13 +109,14 @@ const pageScriptPackageRender = `
   function renderPackageTables(){
     var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
     var updateablePackages = packages.filter(packageAutoUpdateable);
+    var rowQueueRunning = rowUpdateQueueActive();
     $("auto-all").disabled = updateBusy || updateablePackages.length === 0;
     $("auto-none").disabled = updateBusy || updateablePackages.length === 0;
     renderUpdatesTable(updates, latestPackagesLoading);
     renderInstalledTable(latestPackagesLoading);
     var supportedUpdates = updates.filter(packageBulkUpdateable);
-    $("update-all-button").disabled = updateBusy || supportedUpdates.length === 0;
-    $("update-selected-button").disabled = updateBusy || supportedUpdates.length === 0;
+    $("update-all-button").disabled = updateBusy || rowQueueRunning || supportedUpdates.length === 0;
+    $("update-selected-button").disabled = updateBusy || rowQueueRunning || supportedUpdates.length === 0;
     renderDashboardSummary();
   }
   function renderPackages(data){

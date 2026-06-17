@@ -30,12 +30,16 @@ func runCommand(timeout time.Duration, args ...string) CommandResult {
 
 func runCommandContext(parent context.Context, timeout time.Duration, args ...string) CommandResult {
 	result := CommandResult{Command: strings.Join(args, " ")}
+	categories := logCategoriesForCommand(args)
+	logCommand := func(stream, message string) {
+		sessionLogs.AppendCategorized(stream, message, categories)
+	}
 	if len(args) == 0 {
 		result.Stderr = "empty command"
 		result.Code = 127
-		sessionLogs.Append("command", "<empty command>")
-		sessionLogs.Append("stderr", result.Stderr)
-		sessionLogs.Append("exit", "empty command exited with code 127")
+		logCommand("command", "<empty command>")
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", "empty command exited with code 127")
 		return result
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
@@ -62,48 +66,48 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 	if err != nil {
 		result.Code = 127
 		result.Stderr = err.Error()
-		sessionLogs.Append("command", result.Command)
-		sessionLogs.Append("stderr", result.Stderr)
-		sessionLogs.Append("exit", fmt.Sprintf("%s exited with code 127", result.Command))
+		logCommand("command", result.Command)
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
 		return result
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		result.Code = 127
 		result.Stderr = err.Error()
-		sessionLogs.Append("command", result.Command)
-		sessionLogs.Append("stderr", result.Stderr)
-		sessionLogs.Append("exit", fmt.Sprintf("%s exited with code 127", result.Command))
+		logCommand("command", result.Command)
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
 		return result
 	}
 
-	sessionLogs.Append("command", result.Command)
+	logCommand("command", result.Command)
 	if err := cmd.Start(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			result.Code = 124
 			result.Stderr = "Timed out."
-			sessionLogs.Append("stderr", result.Stderr)
-			sessionLogs.Append("exit", fmt.Sprintf("%s timed out before start", result.Command))
+			logCommand("stderr", result.Stderr)
+			logCommand("exit", fmt.Sprintf("%s timed out before start", result.Command))
 			return result
 		}
 		if ctx.Err() == context.Canceled {
 			result.Code = commandCancelledCode
 			result.Stderr = "Cancelled."
-			sessionLogs.Append("stderr", result.Stderr)
-			sessionLogs.Append("exit", fmt.Sprintf("%s cancelled before start", result.Command))
+			logCommand("stderr", result.Stderr)
+			logCommand("exit", fmt.Sprintf("%s cancelled before start", result.Command))
 			return result
 		}
 		result.Code = 127
 		result.Stderr = err.Error()
-		sessionLogs.Append("stderr", result.Stderr)
-		sessionLogs.Append("exit", fmt.Sprintf("%s exited with code 127", result.Command))
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
 		return result
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go streamCommandOutput(stdoutPipe, "stdout", &stdout, &wg)
-	go streamCommandOutput(stderrPipe, "stderr", &stderr, &wg)
+	go streamCommandOutputCategorized(stdoutPipe, "stdout", &stdout, &wg, categories)
+	go streamCommandOutputCategorized(stderrPipe, "stderr", &stderr, &wg, categories)
 	err = cmd.Wait()
 	wg.Wait()
 
@@ -112,15 +116,15 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 	if ctx.Err() == context.DeadlineExceeded {
 		result.Code = 124
 		result.Stderr += "\nTimed out."
-		sessionLogs.Append("stderr", "Timed out.")
-		sessionLogs.Append("exit", fmt.Sprintf("%s exited with code 124", result.Command))
+		logCommand("stderr", "Timed out.")
+		logCommand("exit", fmt.Sprintf("%s exited with code 124", result.Command))
 		return result
 	}
 	if ctx.Err() == context.Canceled {
 		result.Code = commandCancelledCode
 		result.Stderr += "\nCancelled."
-		sessionLogs.Append("stderr", "Cancelled.")
-		sessionLogs.Append("exit", fmt.Sprintf("%s cancelled with code %d", result.Command, result.Code))
+		logCommand("stderr", "Cancelled.")
+		logCommand("exit", fmt.Sprintf("%s cancelled with code %d", result.Command, result.Code))
 		return result
 	}
 	if err != nil {
@@ -132,10 +136,10 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 				result.Stderr = err.Error()
 			}
 		}
-		sessionLogs.Append("exit", fmt.Sprintf("%s exited with code %d", result.Command, result.Code))
+		logCommand("exit", fmt.Sprintf("%s exited with code %d", result.Command, result.Code))
 		return result
 	}
 	result.OK = true
-	sessionLogs.Append("exit", fmt.Sprintf("%s exited with code 0", result.Command))
+	logCommand("exit", fmt.Sprintf("%s exited with code 0", result.Command))
 	return result
 }

@@ -3,10 +3,11 @@ package main
 import "html/template"
 
 type PageData struct {
-	Token    string
-	Admin    bool
-	StateDir string
-	Theme    string
+	Token       string
+	Admin       bool
+	StateDir    string
+	Theme       string
+	IconVersion string
 }
 
 var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
@@ -14,6 +15,8 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon" sizes="any">
+  <link rel="shortcut icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon">
   <title>Windows Updater WebUI</title>
   <script>!function(){try{var t=localStorage.getItem("windows-updater-theme");if(t==="light"||t==="dark"){document.documentElement.dataset.theme=t}}catch(e){}}();</script>
   <style>` + pageCSS + `</style>
@@ -35,6 +38,7 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
   </header>
   <main>
     <section id="notice" class="notice hidden"></section>
+    <section id="toast-region" class="toast-region" aria-live="polite" aria-atomic="false"></section>
 
     <section class="dashboard-hero">
       <div class="hero-copy">
@@ -83,7 +87,7 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
     <section id="update-progress" class="progress-panel hidden"><div class="progress-header"><div><span class="panel-kicker">Update job</span><div class="progress-title"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Updating packages...</span></span></div></div><button id="cancel-updates-button" class="secondary hidden" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></span><span>Cancel Updates</span></button></div><div class="progress-bar"><span></span></div></section>
 
 	<section id="updates-section" class="panel table-panel priority-panel">
-	  <div class="section-heading"><div><span class="panel-kicker">Primary queue</span><h2>Updates Available</h2></div><div class="button-row"><button id="refresh-packages" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M3 18v-6h6"/><path d="M21 6v6h-6"/></svg></span><span>Refresh</span></button><form class="update-all-form" method="post" action="/api/update-all"><input type="hidden" name="token" value="{{.Token}}"><button id="update-all-button" type="submit"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></span><span>Update All</span></button></form></div></div>
+	  <div class="section-heading"><div><span class="panel-kicker">Primary queue</span><h2>Updates Available</h2></div><div class="button-row"><button id="updates-prev" class="ghost" type="button" disabled>Previous</button><span id="updates-page-status" class="muted">Page 1</span><button id="updates-next" class="ghost" type="button" disabled>Next</button><button id="refresh-packages" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M3 18v-6h6"/><path d="M21 6v6h-6"/></svg></span><span>Refresh</span></button><form class="update-all-form" method="post" action="/api/update-all"><input type="hidden" name="token" value="{{.Token}}"><button id="update-all-button" type="submit"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></span><span>Update All</span></button></form></div></div>
 	  <div class="update-options" aria-label="Global update options"><span class="muted">Global update options</span><label class="check-control"><input id="update-allow-unknown" type="checkbox" name="allow_unknown_version" value="true"> Allow unknown version updates</label><label class="check-control"><input id="update-allow-pinned" type="checkbox" name="allow_pinned" value="true"> Allow pinned updates</label></div>
 	  <form id="update-selected-form" method="post" action="/api/update-all"><input type="hidden" name="token" value="{{.Token}}"></form>
 	  <div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Manager</th><th>Installed</th><th>Available</th><th>Auto</th><th>Action</th></tr></thead><tbody id="updates-body"><tr><td colspan="7"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading packages...</span></span></td></tr></tbody></table></div>
@@ -96,7 +100,16 @@ var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html>
 	</section>
 
     <section id="session-log-panel" class="panel log-panel">
-      <div class="section-heading"><div><span class="panel-kicker">Command output</span><h2>Session Log</h2></div><div class="button-row"><input id="log-search" class="table-search" type="search" placeholder="Search log"><label class="check-control"><input id="log-autoscroll" type="checkbox" checked> Auto Scroll</label><button id="copy-log-view" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Log</span></button><button id="clear-log-view" class="ghost" type="button">Clear View</button></div></div>
+      <div class="section-heading"><div><span class="panel-kicker">Command output</span><h2>Session Log</h2></div><div class="button-row"><input id="log-search" class="table-search" type="search" placeholder="Search active log"><label class="check-control"><input id="log-autoscroll" type="checkbox" checked> Auto Scroll</label><button id="copy-log-view" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Log</span></button><button id="export-log-view" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></span><span>Export Logs</span></button><button id="clear-log-view" class="ghost" type="button">Clear View</button></div></div>
+      <div class="log-tabs" role="tablist" aria-label="Session log categories">
+        <button class="log-tab active" type="button" role="tab" aria-selected="true" data-log-category="all">All</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="application">Application</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="searches">Searches</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="updates">Updates</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="winget">winget</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="store">Store</button>
+        <button class="log-tab" type="button" role="tab" aria-selected="false" data-log-category="chocolatey">Chocolatey</button>
+      </div>
       <pre id="session-log" class="session-log"></pre>
     </section>
   </main>

@@ -193,6 +193,9 @@ func installManager(manager string) CommandResult {
 	default:
 		result = validationCommandResult("manager install", errors.New("unknown manager"))
 	}
+	if result.OK {
+		refreshProcessEnvironmentFromRegistry()
+	}
 	appLog("Package manager install action finished for %s with code %d.", manager, result.Code)
 	return result
 }

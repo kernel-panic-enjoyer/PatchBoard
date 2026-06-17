@@ -24,6 +24,9 @@ const (
 	nifIcon            = 0x00000002
 	nifTip             = 0x00000004
 	idiApplication     = 32512
+	imageIcon          = 1
+	smCxSmallIcon      = 49
+	smCySmallIcon      = 50
 	mfString           = 0x00000000
 	mfSeparator        = 0x00000800
 	tpmRightButton     = 0x00000002
@@ -31,6 +34,7 @@ const (
 	trayMenuOpenWebUI  = 1001
 	trayMenuQuit       = 1002
 	trayStartupTimeout = 5 * time.Second
+	appIconMaxID       = 64
 )
 
 var (
@@ -47,12 +51,14 @@ var (
 	procGetCursorPos        = trayUser32.NewProc("GetCursorPos")
 	procGetMessageW         = trayUser32.NewProc("GetMessageW")
 	procLoadIconW           = trayUser32.NewProc("LoadIconW")
+	procLoadImageW          = trayUser32.NewProc("LoadImageW")
 	procPostMessageW        = trayUser32.NewProc("PostMessageW")
 	procPostQuitMessage     = trayUser32.NewProc("PostQuitMessage")
 	procRegisterClassExW    = trayUser32.NewProc("RegisterClassExW")
 	procSetForegroundWindow = trayUser32.NewProc("SetForegroundWindow")
 	procTrackPopupMenu      = trayUser32.NewProc("TrackPopupMenu")
 	procTranslateMessage    = trayUser32.NewProc("TranslateMessage")
+	procGetSystemMetrics    = trayUser32.NewProc("GetSystemMetrics")
 	procGetModuleHandleW    = trayKernel32.NewProc("GetModuleHandleW")
 	procShellNotifyIconW    = trayShell32.NewProc("Shell_NotifyIconW")
 )
@@ -115,6 +121,7 @@ type trayIcon struct {
 	app        *App
 	url        string
 	hwnd       uintptr
+	instance   uintptr
 	wndProc    uintptr
 	className  []uint16
 	windowName []uint16
@@ -151,10 +158,14 @@ func (tray *trayIcon) run() {
 	defer close(tray.done)
 
 	instance, _, _ := procGetModuleHandleW.Call(0)
+	tray.instance = instance
+	icon := loadAppIcon(instance)
 	tray.wndProc = syscall.NewCallback(tray.windowProc)
 	wc := wndClassEx{
 		WndProc:   tray.wndProc,
 		Instance:  instance,
+		Icon:      icon,
+		IconSm:    icon,
 		ClassName: &tray.className[0],
 	}
 	wc.Size = uint32(unsafe.Sizeof(wc))
@@ -243,13 +254,33 @@ func (tray *trayIcon) addIcon() error {
 	data.ID = 1
 	data.Flags = nifMessage | nifIcon | nifTip
 	data.CallbackMessage = trayCallbackMsg
-	icon, _, _ := procLoadIconW.Call(0, idiApplication)
-	data.Icon = icon
+	data.Icon = loadAppIcon(tray.instance)
 	copy(data.Tip[:], syscall.StringToUTF16(appName))
 	if ret, _, err := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&data))); ret == 0 {
 		return fmt.Errorf("add tray icon: %v", err)
 	}
 	return nil
+}
+
+func loadAppIcon(instance uintptr) uintptr {
+	width := systemMetric(smCxSmallIcon, 32)
+	height := systemMetric(smCySmallIcon, width)
+	for id := uintptr(1); id <= appIconMaxID; id++ {
+		icon, _, _ := procLoadImageW.Call(instance, id, imageIcon, width, height, 0)
+		if icon != 0 {
+			return icon
+		}
+	}
+	icon, _, _ := procLoadIconW.Call(0, idiApplication)
+	return icon
+}
+
+func systemMetric(index int, fallback uintptr) uintptr {
+	value, _, _ := procGetSystemMetrics.Call(uintptr(index))
+	if value == 0 {
+		return fallback
+	}
+	return value
 }
 
 func (tray *trayIcon) removeIcon() {

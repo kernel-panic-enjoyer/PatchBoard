@@ -33,8 +33,10 @@ const pageScriptActions = `
       setInstallProgress(true, notice);
       await refreshPackagesAfterUpdate(!!payload.refresh_started);
       showNotice(notice);
+      showToast(payload.result && payload.result.ok ? "Install completed successfully." : "Install finished with errors. See Session Log for full output.", payload.result && payload.result.ok ? "success" : "error");
     }catch(e){
       showNotice("Install failed: " + e.message);
+      showToast("Install failed: " + e.message, "error");
     }finally{
       setInstallProgress(false);
       if(button){ button.disabled = false; }
@@ -48,10 +50,20 @@ const pageScriptActions = `
       var response = await postForm("/api/managers/install", new URLSearchParams(new FormData(form)));
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Package manager install failed"); }
-      showNotice(resultNotice("Package manager install action completed.", "Package manager install finished with errors", payload.result));
-      loadStatus(true);
+      var notice = resultNotice("Package manager install action completed. Refreshing manager status...", "Package manager install finished with errors", payload.result);
+      showNotice(notice, !!(payload.result && payload.result.ok));
+      if(payload.result && payload.result.ok){
+        await refreshStatusAfterManagerInstall();
+        await refreshPackagesAfterUpdate(!!payload.refresh_started);
+        showNotice("Package manager status refreshed.");
+        showToast("Package manager installed and status refreshed.", "success");
+      }else{
+        loadStatus(true);
+        showToast("Package manager install finished with errors. See Session Log for full output.", "error");
+      }
     }catch(e){
       showNotice("Package manager install failed: " + e.message);
+      showToast("Package manager install failed: " + e.message, "error");
     }finally{
       if(button){ button.disabled = false; }
     }
@@ -66,8 +78,10 @@ const pageScriptActions = `
       button.dataset.enabled = enabled ? "true" : "false";
       button.innerHTML = '<span>' + (enabled ? 'On' : 'Off') + '</span>';
       showNotice("Auto-update setting updated.");
+      showToast("Auto-update setting updated.", "success");
     }catch(e){
       showNotice("Could not update auto setting: " + e.message);
+      showToast("Could not update auto setting: " + e.message, "error");
       loadStatus(true);
       loadPackages(true);
     }
@@ -82,8 +96,10 @@ const pageScriptActions = `
     try{
       await postCommandPayload("/api/settings/auto-update", params, "Could not update auto-update settings");
       showNotice("Auto-update settings updated.");
+      showToast("Auto-update settings updated.", "success");
     }catch(e){
       showNotice("Could not update auto-update settings: " + e.message);
+      showToast("Could not update auto-update settings: " + e.message, "error");
     }finally{
       loadStatus(true);
       loadPackages(true);

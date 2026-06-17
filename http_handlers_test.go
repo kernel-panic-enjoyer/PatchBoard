@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -41,6 +42,79 @@ func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 	}
 	if decoded.LatestID != 1 || len(decoded.Entries) != 1 || decoded.Entries[0].Message != "hello" {
 		t.Fatalf("unexpected log response: %#v", decoded)
+	}
+	if !logEntryInCategory(decoded.Entries[0], logCategoryApplication) {
+		t.Fatalf("expected application log category: %#v", decoded.Entries[0])
+	}
+}
+
+func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
+	oldLogs := sessionLogs
+	sessionLogs = newLogBuffer()
+	defer func() { sessionLogs = oldLogs }()
+
+	sessionLogs.Append("app", "app started")
+	sessionLogs.AppendCategorized("command", "winget search gh", logCategoriesForCommand([]string{"winget", "search", "gh"}))
+	sessionLogs.AppendCategorized("stdout", "GitHub CLI", logCategoriesForCommand([]string{"winget", "search", "gh"}))
+	app := &App{token: "test-token"}
+
+	badRequest := httptest.NewRequest(http.MethodGet, "/api/logs/export", nil)
+	badResponse := httptest.NewRecorder()
+	app.serveHTTP(badResponse, badRequest)
+	if badResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized export request, got %d", badResponse.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/logs/export?token=test-token", nil)
+	response := httptest.NewRecorder()
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected export ok, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("expected zip content type, got %q", got)
+	}
+	if !strings.Contains(response.Header().Get("Content-Disposition"), "windows-updater-webui-logs.zip") {
+		t.Fatalf("missing zip attachment header: %q", response.Header().Get("Content-Disposition"))
+	}
+
+	files := readZipTextFiles(t, response.Body.Bytes())
+	for _, file := range []string{"all.txt", "application.txt", "searches.txt", "updates.txt", "winget.txt", "store.txt", "chocolatey.txt"} {
+		if _, ok := files[file]; !ok {
+			t.Fatalf("missing exported log file %s in %#v", file, files)
+		}
+	}
+	if !strings.Contains(files["application.txt"], "APP app started") {
+		t.Fatalf("application export missing app entry: %q", files["application.txt"])
+	}
+	if !strings.Contains(files["winget.txt"], "COMMAND winget search gh") || !strings.Contains(files["searches.txt"], "STDOUT GitHub CLI") {
+		t.Fatalf("manager/search exports missing command output: %#v", files)
+	}
+	if strings.Contains(files["updates.txt"], "winget search gh") {
+		t.Fatalf("search command should not be exported as update: %q", files["updates.txt"])
+	}
+}
+
+func TestFaviconServesEmbeddedAppIconWithoutToken(t *testing.T) {
+	app := &App{token: "test-token"}
+	request := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected favicon ok, got %d: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "image/x-icon" {
+		t.Fatalf("expected image/x-icon content type, got %q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); !strings.Contains(got, "no-cache") {
+		t.Fatalf("expected no-cache favicon response, got %q", got)
+	}
+	if got := response.Header().Get("ETag"); !strings.Contains(got, appIconVersion()) {
+		t.Fatalf("expected favicon etag with icon version, got %q", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), appIconICO) {
+		t.Fatalf("favicon response did not match embedded app icon")
 	}
 }
 

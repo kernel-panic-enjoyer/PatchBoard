@@ -10,6 +10,11 @@ const pageScriptLogConsole = `
     var stream = (entry.stream || "app").toUpperCase();
     return "[" + stamp + "] " + stream + " " + (entry.message || "");
   }
+  function logEntryInActiveCategory(entry){
+    var category = activeLogCategory || "all";
+    var categories = entry.categories || ["all", "application"];
+    return categories.indexOf(category) !== -1;
+  }
   function renderLogLines(shouldScroll){
     var target = $("session-log");
     if(!target){ return; }
@@ -21,16 +26,18 @@ const pageScriptLogConsole = `
   }
   function filteredLogLines(){
     var query = logSearchQuery.trim().toLowerCase();
-    if(!query){ return logLines; }
-    return logLines.filter(function(line){
-      return line.toLowerCase().indexOf(query) !== -1;
+    var clearedBefore = clearedLogBeforeByCategory[activeLogCategory || "all"] || 0;
+    return logEntries.filter(function(entry){
+      return Number(entry.id || 0) > clearedBefore && logEntryInActiveCategory(entry);
+    }).map(formatLogEntry).filter(function(line){
+      return !query || line.toLowerCase().indexOf(query) !== -1;
     });
   }
   function appendLogEntries(entries){
     if(!entries || entries.length === 0){ return; }
     entries.forEach(function(entry){
       lastLogID = Math.max(lastLogID, Number(entry.id || 0));
-      logLines.push(formatLogEntry(entry));
+      logEntries.push(entry);
     });
     var auto = $("log-autoscroll");
     renderLogLines(!auto || auto.checked);
@@ -43,6 +50,22 @@ const pageScriptLogConsole = `
         lastLogID = data.latest_id;
       }
     }catch(e){}
+  }
+  function setActiveLogCategory(category){
+    activeLogCategory = category || "all";
+    document.querySelectorAll(".log-tab").forEach(function(button){
+      var active = button.dataset.logCategory === activeLogCategory;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    renderLogLines(false);
+  }
+  function clearCurrentLogView(){
+    clearedLogBeforeByCategory[activeLogCategory || "all"] = lastLogID;
+    renderLogLines(false);
+  }
+  function exportLogs(){
+    window.location.href = api("/api/logs/export");
   }
   async function copyLogView(){
     var target = $("session-log");

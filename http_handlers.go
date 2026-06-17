@@ -38,6 +38,19 @@ func validatePackageKey(key string) error {
 
 func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/logs/export":
+		if !requireMethod(w, r, http.MethodGet) {
+			return
+		}
+		data, err := buildLogArchive(sessionLogs.Snapshot())
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="windows-updater-webui-logs.zip"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
 	case "/api/status":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -105,6 +118,13 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/favicon.ico" {
+		w.Header().Set("Content-Type", "image/x-icon")
+		w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+		w.Header().Set("ETag", `"`+appIconVersion()+`"`)
+		_, _ = w.Write(appIconICO)
+		return
+	}
 	if r.URL.Path == "/shutdown" && app.tokenOK(r) {
 		_, _ = io.WriteString(w, "Stopping")
 		go func() {
@@ -136,6 +156,7 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, data PageData) {
 	data.Admin = isAdmin()
 	data.StateDir, _ = stateDir()
 	data.Theme = state.Theme
+	data.IconVersion = appIconVersion()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pageTemplate.Execute(w, data); err != nil {

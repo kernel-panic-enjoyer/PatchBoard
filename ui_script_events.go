@@ -2,9 +2,20 @@ package main
 
 const pageScriptEvents = `
   document.addEventListener("click", function(event){
+    var toastClose = event.target.closest(".toast-close");
+    if(toastClose){
+      var toast = toastClose.closest(".toast");
+      if(toast){ removeToast(Number(toast.dataset.toastId || 0)); }
+      return;
+    }
     var autoButton = event.target.closest(".auto-package");
     if(autoButton){
       setPackageAuto(autoButton.dataset.key, autoButton.dataset.enabled !== "true", autoButton);
+    }
+    var logTab = event.target.closest(".log-tab");
+    if(logTab){
+      setActiveLogCategory(logTab.dataset.logCategory || "all");
+      return;
     }
   });
   document.addEventListener("submit", function(event){
@@ -39,7 +50,7 @@ const pageScriptEvents = `
         showNotice("Enable the global unknown-version option before updating this package.");
         return;
       }
-      runUpdateRequest("/api/update", appendGlobalUpdateOptions(new URLSearchParams(new FormData(form))), [key], "Updating package...");
+      enqueueUpdateRequest(form);
       return;
     }
     if(form.id === "update-selected-form"){
@@ -64,6 +75,13 @@ const pageScriptEvents = `
     setTheme(next);
     postForm("/api/settings/theme", {theme:next}).catch(function(){});
   });
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden){
+      pauseToastTimers();
+    }else{
+      resumeToastTimers();
+    }
+  });
   $("scan-button").addEventListener("click", async function(){
     var button = this;
     button.disabled = true;
@@ -75,15 +93,25 @@ const pageScriptEvents = `
       renderScan(data);
       if(data.errors && data.errors.length){
         showNotice("Application scan completed with errors. Review Scan Results for details.");
+        showToast("Application scan completed with errors.", "error");
       }else{
         showNotice("Application scan completed.");
+        showToast("Application scan completed.", "success");
       }
-    }catch(e){ showNotice("Scan failed: " + e.message); }
+    }catch(e){ showNotice("Scan failed: " + e.message); showToast("Scan failed: " + e.message, "error"); }
     button.disabled = false;
   });
   $("refresh-packages").addEventListener("click", function(){ loadPackages(true); });
   $("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
   $("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
+  $("updates-prev").addEventListener("click", function(){
+    updatePage--;
+    renderUpdatesTable(packages.filter(function(pkg){ return !!pkg.update_available; }), latestPackagesLoading);
+  });
+  $("updates-next").addEventListener("click", function(){
+    updatePage++;
+    renderUpdatesTable(packages.filter(function(pkg){ return !!pkg.update_available; }), latestPackagesLoading);
+  });
   $("search-prev").addEventListener("click", function(){
     searchPage--;
     renderSearchTable();
@@ -112,8 +140,10 @@ const pageScriptEvents = `
     try{
       await postCommandPayload("/api/settings/startup", {enabled:enabled ? "true" : "false"}, "Could not update startup setting");
       showNotice("Startup setting updated.");
+      showToast("Startup setting updated.", "success");
     }catch(e){
       showNotice("Could not update startup setting: " + e.message);
+      showToast("Could not update startup setting: " + e.message, "error");
     }finally{
       button.disabled = false;
       loadStatus(true);
@@ -126,8 +156,10 @@ const pageScriptEvents = `
     try{
       await postCommandPayload("/api/settings/auto-update", {global:enabled ? "true" : "false"}, "Could not update auto-update setting");
       showNotice("Auto-update setting updated.");
+      showToast("Auto-update setting updated.", "success");
     }catch(e){
       showNotice("Could not update auto-update setting: " + e.message);
+      showToast("Could not update auto-update setting: " + e.message, "error");
     }finally{
       button.disabled = false;
       loadStatus(true);
@@ -136,13 +168,13 @@ const pageScriptEvents = `
   $("auto-all").addEventListener("click", function(){ setAllAuto(true); });
   $("auto-none").addEventListener("click", function(){ setAllAuto(false); });
   $("clear-log-view").addEventListener("click", function(){
-    logLines = [];
-    renderLogLines(false);
+    clearCurrentLogView();
   });
   $("log-search").addEventListener("input", function(){
     logSearchQuery = this.value || "";
     renderLogLines(false);
   });
   $("copy-log-view").addEventListener("click", function(){ copyLogView(); });
+  $("export-log-view").addEventListener("click", function(){ exportLogs(); });
   $("cancel-updates-button").addEventListener("click", function(){ cancelUpdateJob(); });
 `

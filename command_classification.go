@@ -90,6 +90,10 @@ func lockMutexContext(ctx context.Context, mu *sync.Mutex) bool {
 
 func commandContextDoneResult(ctx context.Context, command, action string) CommandResult {
 	result := CommandResult{Command: command}
+	categories := logCategoriesForCommandLine(command)
+	logCommand := func(stream, message string) {
+		sessionLogs.AppendCategorized(stream, message, categories)
+	}
 	verb := "cancelled"
 	switch ctx.Err() {
 	case context.DeadlineExceeded:
@@ -100,8 +104,8 @@ func commandContextDoneResult(ctx context.Context, command, action string) Comma
 		result.Code = commandCancelledCode
 		result.Stderr = "Cancelled."
 	}
-	sessionLogs.Append("command", command)
-	sessionLogs.Append("stderr", result.Stderr)
-	sessionLogs.Append("exit", fmt.Sprintf("%s %s %s", command, verb, action))
+	logCommand("command", command)
+	logCommand("stderr", result.Stderr)
+	logCommand("exit", fmt.Sprintf("%s %s %s", command, verb, action))
 	return result
 }

@@ -139,7 +139,8 @@ func (app *App) handleManagerInstallAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	result := installManager(manager)
 	app.refreshStatus(true)
-	writeJSON(w, http.StatusOK, commandResponse(result))
+	app.refreshInventory(true)
+	writeJSON(w, http.StatusOK, refreshedCommandResponse(result))
 }
 
 func (app *App) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {

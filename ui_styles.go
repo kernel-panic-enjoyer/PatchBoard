@@ -102,6 +102,13 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .section-heading h2{margin:0;font-size:21px;line-height:1.2;letter-spacing:0}
 .muted{color:var(--muted)}
 .notice{border-left:4px solid var(--blue);max-height:96px;overflow:auto;overflow-wrap:anywhere;white-space:normal}
+.toast-region{position:fixed;right:18px;bottom:18px;z-index:20;display:grid;gap:10px;width:min(360px,calc(100vw - 28px));pointer-events:none}
+.toast{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:12px 12px 12px 14px;border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;background:color-mix(in srgb,var(--surface) 96%,var(--bg));box-shadow:var(--shadow);pointer-events:auto}
+.toast-success{border-left-color:var(--green)}
+.toast-error{border-left-color:var(--red)}
+.toast strong{display:block;margin-bottom:2px;font-size:13px}
+.toast p{margin:0;color:var(--muted);overflow-wrap:anywhere}
+.toast-close{min-height:28px;width:28px;padding:0;font-size:18px;line-height:1;color:var(--muted)}
 .progress-panel{border-left:4px solid var(--amber)}
 .install-progress-panel{border-left-color:var(--blue)}
 .progress-header{justify-content:space-between;margin-bottom:10px}
@@ -147,6 +154,9 @@ td strong{font-weight:800}
 pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-text);padding:12px;border-radius:8px}
 .session-log{height:300px;margin:0;border:1px solid var(--log-border);border-radius:8px;font:12px/1.5 Consolas,"Cascadia Mono","Courier New",monospace}
 .log-panel .section-heading{justify-content:space-between;margin-bottom:12px}
+.log-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.log-tab{min-height:32px;padding:5px 10px;background:transparent;color:var(--muted);border-color:var(--line-strong)}
+.log-tab.active{background:color-mix(in srgb,var(--blue) 16%,var(--surface));color:var(--text);border-color:var(--blue)}
 @media(max-width:1120px){
   .dashboard-hero,.control-grid{grid-template-columns:1fr}
   .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -166,6 +176,7 @@ pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-
   .table-wrap{overflow-x:auto}
   .manager{grid-template-columns:1fr}
   .session-log{width:100%;min-width:0}
+  .toast-region{right:12px;bottom:12px;left:12px;width:auto}
 }
 @media(prefers-reduced-motion:reduce){
   .spinner,.progress-bar span{animation:none}

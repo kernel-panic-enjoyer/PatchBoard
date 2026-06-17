@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,6 +25,64 @@ func TestManagerCommandOverride(t *testing.T) {
 	got = managerCommand("store", "--help")
 	if len(got) != 2 || got[0] != filepath.Join("C:", "Tools", "store.exe") || got[1] != "--help" {
 		t.Fatalf("unexpected store manager command: %#v", got)
+	}
+}
+
+func readZipTextFiles(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, file := range reader.File {
+		handle, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := io.ReadAll(handle)
+		_ = handle.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[file.Name] = string(content)
+	}
+	return files
+}
+
+func TestLaunchPathAddsChocolateyBinWhenPresent(t *testing.T) {
+	root := t.TempDir()
+	chocoBin := filepath.Join(root, "chocolatey", "bin")
+	if err := os.MkdirAll(chocoBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ProgramData", root)
+	t.Setenv("ChocolateyInstall", "")
+
+	path := launchPath(filepath.Join("C:", "Windows", "System32"))
+	entries := filepath.SplitList(path)
+	if len(entries) == 0 || entries[0] != chocoBin {
+		t.Fatalf("expected Chocolatey bin to be prepended, path=%q entries=%#v", path, entries)
+	}
+}
+
+func TestRegistryEnvironmentValueParsing(t *testing.T) {
+	output := `
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Environment
+    Path    REG_EXPAND_SZ    %SystemRoot%\system32;%ProgramData%\chocolatey\bin
+`
+	got := parseRegistryQueryValue(output, "Path")
+	if got != `%SystemRoot%\system32;%ProgramData%\chocolatey\bin` {
+		t.Fatalf("unexpected parsed registry value: %q", got)
+	}
+}
+
+func TestExpandWindowsEnvRefs(t *testing.T) {
+	t.Setenv("ProgramData", `C:\ProgramData`)
+	got := expandWindowsEnvRefs(`%ProgramData%\chocolatey\bin;%UnknownUpdaterVar%\bin`)
+	want := `C:\ProgramData\chocolatey\bin;%UnknownUpdaterVar%\bin`
+	if got != want {
+		t.Fatalf("unexpected expanded env refs: got %q want %q", got, want)
 	}
 }
 
@@ -104,6 +165,57 @@ func TestLogBufferAppendAndSince(t *testing.T) {
 	newer := buffer.Since(2)
 	if len(newer) != 2 || newer[0].ID != 3 || newer[1].ID != 4 {
 		t.Fatalf("unexpected since entries: %#v", newer)
+	}
+}
+
+func TestLogEntryCategoryMetadata(t *testing.T) {
+	cases := []struct {
+		name       string
+		categories []string
+		want       []string
+	}{
+		{"app", logCategoriesForManagerVerb("", ""), []string{logCategoryApplication}},
+		{"winget search", logCategoriesForCommand([]string{"winget", "search", "gh"}), []string{logCategoryWinget, logCategorySearches}},
+		{"choco upgrade", logCategoriesForCommand([]string{"choco", "upgrade", "git"}), []string{logCategoryChocolatey, logCategoryUpdates}},
+		{"store update", logCategoriesForCommand([]string{"store", "update", "Codex"}), []string{logCategoryStore, logCategoryUpdates}},
+		{"store updates", logCategoriesForCommand([]string{"store", "updates"}), []string{logCategoryStore, logCategoryUpdates}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := LogEntry{Stream: "command", Categories: tc.categories}
+			if !logEntryInCategory(entry, logCategoryAll) {
+				t.Fatalf("expected %q in all category: %#v", tc.name, tc.categories)
+			}
+			for _, category := range tc.want {
+				if !logEntryInCategory(entry, category) {
+					t.Fatalf("expected %q in category %q: %#v", tc.name, category, tc.categories)
+				}
+			}
+		})
+	}
+}
+
+func TestLogArchiveDuplicatesOverlappingCategories(t *testing.T) {
+	entries := []LogEntry{{
+		ID:         1,
+		Timestamp:  "2026-06-17T12:00:00Z",
+		Stream:     "command",
+		Message:    "winget search gh",
+		Categories: logCategoriesForCommand([]string{"winget", "search", "gh"}),
+	}}
+	data, err := buildLogArchive(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := readZipTextFiles(t, data)
+	for _, name := range []string{"all.txt", "winget.txt", "searches.txt"} {
+		if !strings.Contains(files[name], "winget search gh") {
+			t.Fatalf("expected duplicated entry in %s, files=%#v", name, files)
+		}
+	}
+	if strings.Contains(files["updates.txt"], "winget search gh") {
+		t.Fatalf("search entry should not be in updates.txt: %q", files["updates.txt"])
 	}
 }
 
