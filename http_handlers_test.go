@@ -12,7 +12,7 @@ import (
 
 func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer(10)
+	sessionLogs = newLogBuffer()
 	defer func() { sessionLogs = oldLogs }()
 
 	sessionLogs.Append("app", "hello")
@@ -182,9 +182,16 @@ func TestAPIRejectsInvalidRequests(t *testing.T) {
 func TestSettingsJSONRequestParsers(t *testing.T) {
 	updateRequest := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader(`{"manager":"winget","package_id":"Vendor.Unknown","allow_unknown_version":true,"allow_pinned":true}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
-	manager, packageID, allowUnknown, allowPinned, invalidUpdate := parsePackageUpdateAction(updateRequest)
-	if invalidUpdate != nil || manager != managerWinget || packageID != "Vendor.Unknown" || !allowUnknown || !allowPinned {
-		t.Fatalf("unexpected update JSON parse: manager=%q packageID=%q allowUnknown=%t allowPinned=%t invalid=%#v", manager, packageID, allowUnknown, allowPinned, invalidUpdate)
+	manager, packageID, updateOptions, invalidUpdate := parsePackageUpdateAction(updateRequest)
+	if invalidUpdate != nil || manager != managerWinget || packageID != "Vendor.Unknown" || !updateOptions.AllowUnknownVersion || !updateOptions.AllowPinned {
+		t.Fatalf("unexpected update JSON parse: manager=%q packageID=%q options=%#v invalid=%#v", manager, packageID, updateOptions, invalidUpdate)
+	}
+
+	updateAllRequest := httptest.NewRequest(http.MethodPost, "/api/update-all", strings.NewReader(`{"package_keys":["winget:Vendor.Unknown"],"allow_unknown_version":true,"allow_pinned":true}`))
+	updateAllRequest.Header.Set("Content-Type", "application/json")
+	updateAllKeys, updateAllOptions, invalidUpdateAll := parseUpdateAllRequest(updateAllRequest)
+	if invalidUpdateAll != nil || len(updateAllKeys) != 1 || updateAllKeys[0] != "winget:Vendor.Unknown" || !updateAllOptions.AllowUnknownVersion || !updateAllOptions.AllowPinned {
+		t.Fatalf("unexpected update-all JSON parse: keys=%#v options=%#v invalid=%#v", updateAllKeys, updateAllOptions, invalidUpdateAll)
 	}
 
 	startupRequest := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(`{"enabled":true}`))

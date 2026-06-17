@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func (app *App) updateJobPackages(packageKeys []string) ([]Package, string, error) {
+func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) ([]Package, string, error) {
 	app.mu.RLock()
 	inventoryPackages := append([]Package(nil), app.inventory.Packages...)
 	app.mu.RUnlock()
@@ -24,10 +24,11 @@ func (app *App) updateJobPackages(packageKeys []string) ([]Package, string, erro
 		seen := map[string]bool{}
 		for _, pkg := range inventoryPackages {
 			key := normalizedJobPackageKey(pkg)
-			if key == "" || seen[key] || !packageAllowedInBulkUpdate(pkg) {
+			if key == "" || seen[key] || !packageAllowedInBulkUpdate(pkg, options) {
 				continue
 			}
 			pkg.Key = key
+			applyUpdateOptions(&pkg, options)
 			packages = append(packages, pkg)
 			seen[key] = true
 		}
@@ -58,10 +59,11 @@ func (app *App) updateJobPackages(packageKeys []string) ([]Package, string, erro
 		if pkg.UpdateSupported == false {
 			return nil, updateJobModeSelected, fmt.Errorf("%s does not support updates", normalized)
 		}
-		if pkg.UnknownVersion {
-			return nil, updateJobModeSelected, fmt.Errorf("%s has an unknown installed version and requires an individual confirmed update", normalized)
+		if pkg.UnknownVersion && !options.AllowUnknownVersion {
+			return nil, updateJobModeSelected, fmt.Errorf("%s has an unknown installed version and requires an explicit global unknown-version update choice", normalized)
 		}
 		pkg.Key = normalized
+		applyUpdateOptions(&pkg, options)
 		packages = append(packages, pkg)
 		seen[normalized] = true
 	}
@@ -71,8 +73,13 @@ func (app *App) updateJobPackages(packageKeys []string) ([]Package, string, erro
 	return packages, updateJobModeSelected, nil
 }
 
-func packageAllowedInBulkUpdate(pkg Package) bool {
-	return pkg.UpdateAvailable && pkg.UpdateSupported != false && !pkg.UnknownVersion
+func packageAllowedInBulkUpdate(pkg Package, options UpdateOptions) bool {
+	return pkg.UpdateAvailable && pkg.UpdateSupported != false && (!pkg.UnknownVersion || options.AllowUnknownVersion)
+}
+
+func applyUpdateOptions(pkg *Package, options UpdateOptions) {
+	pkg.AllowUnknownVersionUpdate = options.AllowUnknownVersion
+	pkg.AllowPinnedUpdate = options.AllowPinned
 }
 
 func (app *App) packageForUpdate(manager, id string) Package {

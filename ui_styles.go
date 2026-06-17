@@ -67,6 +67,9 @@ input:focus,button:focus-visible{outline:2px solid color-mix(in srgb,var(--blue)
 input[type=checkbox]{min-height:auto;border-radius:4px;padding:0}
 svg{display:block}
 .button-icon svg,.summary-icon svg,.app-mark svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.loading-text{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
+.spinner{display:inline-block;width:16px;height:16px;border-radius:50%;background:conic-gradient(from 0turn,transparent 0turn,color-mix(in srgb,currentColor 18%,transparent) .16turn,color-mix(in srgb,currentColor 58%,transparent) .48turn,currentColor .86turn,currentColor 1turn);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 calc(100% - 2px));mask:radial-gradient(farthest-side,transparent calc(100% - 2px),#000 calc(100% - 2px));animation:spin .9s linear infinite;flex:0 0 auto;will-change:transform}
+@keyframes spin{from{transform:rotate(0turn)}to{transform:rotate(1turn)}}
 .app-header{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:18px 28px;background:color-mix(in srgb,var(--surface) 84%,var(--bg));border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;backdrop-filter:blur(10px)}
 .brand-block{display:flex;align-items:center;gap:13px;min-width:0}
 .app-mark{display:grid;width:42px;height:42px;place-items:center;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--teal));color:#fff;box-shadow:var(--shadow-soft);flex:0 0 auto}
@@ -100,6 +103,7 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .muted{color:var(--muted)}
 .notice{border-left:4px solid var(--blue);max-height:96px;overflow:auto;overflow-wrap:anywhere;white-space:normal}
 .progress-panel{border-left:4px solid var(--amber)}
+.install-progress-panel{border-left-color:var(--blue)}
 .progress-header{justify-content:space-between;margin-bottom:10px}
 .progress-title{font-weight:800}
 .progress-bar{position:relative;height:7px;overflow:hidden;background:color-mix(in srgb,var(--line) 70%,transparent);border-radius:999px}
@@ -122,6 +126,7 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .table-panel>.section-heading,.table-panel>p,.table-panel>pre,.table-footer{padding-left:16px;padding-right:16px}
 .table-panel>.section-heading{padding-top:16px}
 .table-footer{padding-top:12px;padding-bottom:16px}
+.update-options{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-strong)}
 .table-wrap{width:100%;overflow:auto}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead th{position:sticky;top:0;z-index:1;background:var(--surface-strong)}
@@ -161,5 +166,8 @@ pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-
   .table-wrap{overflow-x:auto}
   .manager{grid-template-columns:1fr}
   .session-log{width:100%;min-width:0}
+}
+@media(prefers-reduced-motion:reduce){
+  .spinner,.progress-bar span{animation:none}
 }
 `

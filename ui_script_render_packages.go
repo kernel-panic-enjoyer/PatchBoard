@@ -25,9 +25,10 @@ const pageScriptPackageRender = `
 		if(pkg.update_supported === false){
 			return '<span class="muted">Inventory only</span>';
 		}
-    var unknownConfirm = pkg.unknown_version ? '<label class="check-control unknown-confirm"><input type="checkbox" name="allow_unknown_version" value="true"' + (updateBusy ? ' disabled' : '') + '> Allow unknown version update</label>' : '';
-    var pinnedConfirm = pkg.manager === "winget" ? '<label class="check-control pinned-confirm"><input type="checkbox" name="allow_pinned" value="true"' + (updateBusy ? ' disabled' : '') + '> Allow pinned update</label>' : '';
-		return '<form class="update-form" data-key="' + attr(pkg.key) + '" data-unknown-version="' + (pkg.unknown_version ? 'true' : 'false') + '" method="post" action="/api/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '">' + unknownConfirm + pinnedConfirm + '<button type="submit"' + (updateBusy ? ' disabled' : '') + '>' + icon("update") + '<span>' + (pkg.unknown_version ? 'Update Anyway' : 'Update') + '</span></button><div class="row-progress hidden"><div class="progress-bar"><span></span></div></div></form>';
+    var blockedUnknown = pkg.unknown_version && !allowUnknownVersionUpdates();
+    var disabled = updateBusy || blockedUnknown;
+    var title = blockedUnknown ? ' title="Enable the global unknown-version option first"' : '';
+		return '<form class="update-form" data-key="' + attr(pkg.key) + '" data-unknown-version="' + (pkg.unknown_version ? 'true' : 'false') + '" method="post" action="/api/update"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit"' + (disabled ? ' disabled' : '') + title + '>' + icon("update") + '<span>Update</span></button><div class="row-progress hidden"><div class="progress-bar"><span></span></div></div></form>';
 	}
 	function installedAction(pkg){
 		if(pkg.action_backend === "store-cli-resolved" && pkg.update_available){
@@ -46,7 +47,7 @@ const pageScriptPackageRender = `
     var target = $("updates-body");
     if(!target){ return; }
     if(updates.length === 0){
-      target.innerHTML = '<tr><td colspan="7">' + (loading ? 'Checking for updates...' : 'No updates available.') + '</td></tr>';
+      target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">No updates available.</td></tr>';
       return;
     }
     target.innerHTML = updates.map(function(pkg){
@@ -66,8 +67,8 @@ const pageScriptPackageRender = `
     if(installedPage > totalPages){ installedPage = totalPages; }
     if(installedPage < 1){ installedPage = 1; }
 	if(total === 0){
-		target.innerHTML = '<tr><td colspan="7">' + (loading ? 'Loading packages...' : (installedSearchQuery ? 'No packages match your filter.' : 'No managed packages found.')) + '</td></tr>';
-      if(status){ status.textContent = loading ? 'Loading...' : (installedSearchQuery ? 'No matches' : 'No packages'); }
+		target.innerHTML = loading ? loadingTableRow(7, "Loading packages...") : '<tr><td colspan="7">' + (installedSearchQuery ? 'No packages match your filter.' : 'No managed packages found.') + '</td></tr>';
+      if(status){ status.innerHTML = loading ? loadingText('Loading...') : html(installedSearchQuery ? 'No matches' : 'No packages'); }
       if(prev){ prev.disabled = true; }
       if(next){ next.disabled = true; }
       return;
@@ -84,19 +85,22 @@ const pageScriptPackageRender = `
     if(prev){ prev.disabled = installedPage <= 1; }
     if(next){ next.disabled = installedPage >= totalPages; }
   }
-  function renderPackages(data){
-    renderManagers(data);
-    packages = data.packages || [];
-    latestPackagesLoading = !!data.loading;
+  function renderPackageTables(){
     var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
-    var updateablePackages = packages.filter(function(pkg){ return pkg.update_supported !== false && !pkg.unknown_version; });
+    var updateablePackages = packages.filter(packageAutoUpdateable);
     $("auto-all").disabled = updateBusy || updateablePackages.length === 0;
     $("auto-none").disabled = updateBusy || updateablePackages.length === 0;
-    renderUpdatesTable(updates, !!data.loading);
-    renderInstalledTable(!!data.loading);
+    renderUpdatesTable(updates, latestPackagesLoading);
+    renderInstalledTable(latestPackagesLoading);
     var supportedUpdates = updates.filter(packageBulkUpdateable);
     $("update-all-button").disabled = updateBusy || supportedUpdates.length === 0;
     $("update-selected-button").disabled = updateBusy || supportedUpdates.length === 0;
     renderDashboardSummary();
+  }
+  function renderPackages(data){
+    renderManagers(data);
+    packages = data.packages || [];
+    latestPackagesLoading = !!data.loading;
+    renderPackageTables();
   }
 `

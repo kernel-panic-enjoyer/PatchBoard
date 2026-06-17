@@ -71,7 +71,7 @@ func runAutoUpdate() []UpdateResult {
 			continue
 		}
 		seen[key] = true
-		if !packageAllowedInBulkUpdate(pkg) {
+		if !packageAllowedInBulkUpdate(pkg, UpdateOptions{}) {
 			appLog("Scheduled auto-update skipped %s because it requires explicit user confirmation or does not support updates.", key)
 			continue
 		}

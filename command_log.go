@@ -8,8 +8,6 @@ import (
 	"sync"
 )
 
-const logEntryLimit = 2000
-
 type LogEntry struct {
 	ID        int64  `json:"id"`
 	Timestamp string `json:"timestamp"`
@@ -20,17 +18,13 @@ type LogEntry struct {
 type LogBuffer struct {
 	mu      sync.Mutex
 	nextID  int64
-	max     int
 	entries []LogEntry
 }
 
-var sessionLogs = newLogBuffer(logEntryLimit)
+var sessionLogs = newLogBuffer()
 
-func newLogBuffer(max int) *LogBuffer {
-	if max <= 0 {
-		max = logEntryLimit
-	}
-	return &LogBuffer{max: max}
+func newLogBuffer() *LogBuffer {
+	return &LogBuffer{}
 }
 
 func (buffer *LogBuffer) Append(stream, message string) LogEntry {
@@ -45,11 +39,6 @@ func (buffer *LogBuffer) Append(stream, message string) LogEntry {
 		Message:   strings.TrimRight(message, "\r\n"),
 	}
 	buffer.entries = append(buffer.entries, entry)
-	if len(buffer.entries) > buffer.max {
-		overflow := len(buffer.entries) - buffer.max
-		copy(buffer.entries, buffer.entries[overflow:])
-		buffer.entries = buffer.entries[:buffer.max]
-	}
 	return entry
 }
 

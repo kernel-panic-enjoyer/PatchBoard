@@ -34,6 +34,11 @@ type UpdateJobStatus struct {
 	Error           string         `json:"error,omitempty"`
 }
 
+type UpdateOptions struct {
+	AllowUnknownVersion bool
+	AllowPinned         bool
+}
+
 type UpdateJob struct {
 	status   UpdateJobStatus
 	packages []Package
@@ -41,6 +46,10 @@ type UpdateJob struct {
 }
 
 func (app *App) startUpdateJob(packageKeys []string) (UpdateJobStatus, error) {
+	return app.startUpdateJobWithOptions(packageKeys, UpdateOptions{})
+}
+
+func (app *App) startUpdateJobWithOptions(packageKeys []string, options UpdateOptions) (UpdateJobStatus, error) {
 	app.updateJobMu.Lock()
 	if app.updateJob != nil && app.updateJob.status.Running {
 		status := cloneUpdateJobStatus(app.updateJob.status)
@@ -49,7 +58,7 @@ func (app *App) startUpdateJob(packageKeys []string) (UpdateJobStatus, error) {
 	}
 	app.updateJobMu.Unlock()
 
-	packages, mode, err := app.updateJobPackages(packageKeys)
+	packages, mode, err := app.updateJobPackages(packageKeys, options)
 	if err != nil {
 		return UpdateJobStatus{}, err
 	}

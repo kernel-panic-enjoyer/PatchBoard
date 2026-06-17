@@ -160,3 +160,48 @@ func TestApplyStoreUpdateVersionUsesStoreUpdateNameTarget(t *testing.T) {
 		t.Fatalf("expected Store update to mark row updateable, got %#v", got)
 	}
 }
+
+func TestApplyStoreUpdateVersionIgnoresEqualInstalledVersion(t *testing.T) {
+	pkg := Package{
+		ID:               "OpenAI.Codex_26.611.8273.0_x64__abc123",
+		Name:             "Codex",
+		Version:          "26.611.8273.0",
+		AvailableVersion: "26.611.8273.0",
+		Manager:          managerStore,
+		Source:           sourceAppX,
+		Match:            "OpenAI.Codex_abc123",
+		ActionBackend:    backendStoreCLIResolved,
+		UpdateAvailable:  true,
+		UpdateSupported:  true,
+	}
+	updates := map[string]string{
+		packageKey(managerStore, "codex"): "26.611.8273.0",
+	}
+
+	got := applyStoreUpdateVersion(pkg, updates, true)
+
+	if got.UpdateAvailable || got.AvailableVersion != "" {
+		t.Fatalf("equal Store/AppX versions should be current, got %#v", got)
+	}
+}
+
+func TestApplyStoreUpdateVersionIgnoresOlderAvailableVersion(t *testing.T) {
+	pkg := Package{
+		ID:            "OpenAI.Codex_26.611.8273.0_x64__abc123",
+		Name:          "Codex",
+		Version:       "26.611.8273.0",
+		Manager:       managerStore,
+		Source:        sourceAppX,
+		Match:         "OpenAI.Codex_abc123",
+		ActionBackend: backendStoreCLIResolved,
+	}
+	updates := map[string]string{
+		packageKey(managerStore, "codex"): "26.609.4994.0",
+	}
+
+	got := applyStoreUpdateVersion(pkg, updates, true)
+
+	if got.UpdateAvailable || got.AvailableVersion != "" {
+		t.Fatalf("older Store available version should not mark an update, got %#v", got)
+	}
+}

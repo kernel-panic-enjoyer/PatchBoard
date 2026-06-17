@@ -7,21 +7,25 @@ const pageScriptStatusRender = `
     var availableManagers = managerNames.filter(function(name){ return managerMap[name] && managerMap[name].available; }).length;
     var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
     var supportedUpdates = updates.filter(packageBulkUpdateable);
-    var updateablePackages = packages.filter(function(pkg){ return pkg.update_supported !== false && !pkg.unknown_version; });
+    var updateablePackages = packages.filter(packageAutoUpdateable);
     var inventoryOnly = packages.filter(function(pkg){ return pkg.update_supported === false; }).length;
     var statusLoading = !!(latestStatus && latestStatus.loading);
     var loading = latestPackagesLoading || statusLoading;
 
     setText("summary-updates", loading ? "-" : String(updates.length));
-    setText("summary-updates-detail", loading ? "Checking package status" : supportedUpdates.length + " updateable");
+    var updatesDetail = $("summary-updates-detail");
+    if(updatesDetail){ updatesDetail.innerHTML = loading ? loadingText("Checking package status") : html(supportedUpdates.length + " updateable"); }
     setText("summary-packages", loading ? "-" : String(packages.length));
-    setText("summary-packages-detail", loading ? "Inventory loading" : updateablePackages.length + " managed, " + inventoryOnly + " inventory-only");
+    var packagesDetail = $("summary-packages-detail");
+    if(packagesDetail){ packagesDetail.innerHTML = loading ? loadingText("Inventory loading") : html(updateablePackages.length + " managed, " + inventoryOnly + " inventory-only"); }
     setText("summary-managers", statusLoading ? "-" : availableManagers + "/" + managerNames.length);
-    setText("summary-managers-detail", statusLoading ? "Checking tools" : "Available package managers");
+    var managersDetail = $("summary-managers-detail");
+    if(managersDetail){ managersDetail.innerHTML = statusLoading ? loadingText("Checking tools") : "Available package managers"; }
     var startupEnabled = !!(latestStatus && latestStatus.startup_enabled);
     var autoTaskEnabled = !!(latestStatus && latestStatus.auto_task_enabled);
     setText("summary-automation", statusLoading ? "-" : ((startupEnabled || autoTaskEnabled) ? "On" : "Off"));
-    setText("summary-automation-detail", statusLoading ? "Loading tasks" : "Startup " + (startupEnabled ? "on" : "off") + ", daily updates " + (autoTaskEnabled ? "on" : "off"));
+    var automationDetail = $("summary-automation-detail");
+    if(automationDetail){ automationDetail.innerHTML = statusLoading ? loadingText("Loading tasks") : html("Startup " + (startupEnabled ? "on" : "off") + ", daily updates " + (autoTaskEnabled ? "on" : "off")); }
   }
   function renderManagers(data){
     var target = $("manager-list");
@@ -30,7 +34,7 @@ const pageScriptStatusRender = `
     var names = Object.keys(managers).sort();
     if(names.length === 0){
       if(managersRendered){ return; }
-      var placeholder = '<p class="muted">' + (data.loading ? 'Checking package managers...' : 'No package manager status yet.') + '</p>';
+      var placeholder = '<p class="muted">' + (data.loading ? loadingText('Checking package managers...') : 'No package manager status yet.') + '</p>';
       if(target.innerHTML !== placeholder){ target.innerHTML = placeholder; }
       return;
     }
@@ -73,18 +77,18 @@ const pageScriptStatusRender = `
     if(startup){
       startup.disabled = !!data.loading;
       startup.dataset.enabled = data.startup_enabled ? "true" : "false";
-      startup.innerHTML = icon("refresh") + '<span>' + (data.startup_enabled ? "Disable Start With Windows" : "Enable Start With Windows") + '</span>';
+      startup.innerHTML = data.loading ? loadingText("Checking startup...") : icon("refresh") + '<span>' + (data.startup_enabled ? "Disable Start With Windows" : "Enable Start With Windows") + '</span>';
     }
     var auto = $("auto-global-toggle");
     var globalEnabled = !!(data.settings && data.settings.auto_update_global);
     if(auto){
       auto.disabled = !!data.loading;
       auto.dataset.enabled = globalEnabled ? "true" : "false";
-      auto.innerHTML = icon("update") + '<span>' + (globalEnabled ? "Disable Daily Auto-Update" : "Enable Daily Auto-Update") + '</span>';
+      auto.innerHTML = data.loading ? loadingText("Checking auto-update...") : icon("update") + '<span>' + (globalEnabled ? "Disable Daily Auto-Update" : "Enable Daily Auto-Update") + '</span>';
     }
     var status = $("automation-status");
     if(status){
-      status.textContent = "Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled");
+      status.innerHTML = data.loading ? loadingText("Loading task status...") : html("Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled"));
     }
     renderDashboardSummary();
   }

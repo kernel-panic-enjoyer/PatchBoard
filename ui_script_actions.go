@@ -4,7 +4,14 @@ const pageScriptActions = `
   async function loadSearch(query){
     var body = $("search-results-body");
     $("search-results-panel").classList.remove("hidden");
-    body.innerHTML = '<tr><td colspan="5">Searching...</td></tr>';
+    searchResults = [];
+    searchPage = 1;
+    setText("search-page-status", "Searching...");
+    var prev = $("search-prev");
+    var next = $("search-next");
+    if(prev){ prev.disabled = true; }
+    if(next){ next.disabled = true; }
+    body.innerHTML = loadingTableRow(5, "Searching...");
     try{
       var response = await fetch(api("/api/search", {q:query}));
       var data = await response.json();
@@ -17,23 +24,26 @@ const pageScriptActions = `
   async function installFromForm(form){
     var button = form.querySelector("button");
     if(button){ button.disabled = true; }
-    showNotice("Installing package...");
+    setInstallProgress(true, "Installing package...");
     try{
       var response = await postForm("/api/install", new URLSearchParams(new FormData(form)));
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Install failed"); }
-      showNotice(resultNotice("Install command completed. Refreshing package status...", "Install finished with errors", payload.result));
+      var notice = resultNotice("Install command completed. Refreshing package status...", "Install finished with errors", payload.result);
+      setInstallProgress(true, notice);
       await refreshPackagesAfterUpdate(!!payload.refresh_started);
+      showNotice(notice);
     }catch(e){
       showNotice("Install failed: " + e.message);
     }finally{
+      setInstallProgress(false);
       if(button){ button.disabled = false; }
     }
   }
   async function installManagerFromForm(form){
     var button = form.querySelector("button");
     if(button){ button.disabled = true; }
-    showNotice("Opening package manager install action...");
+    showNotice("Opening package manager install action...", true);
     try{
       var response = await postForm("/api/managers/install", new URLSearchParams(new FormData(form)));
       var payload = await response.json();
@@ -67,8 +77,8 @@ const pageScriptActions = `
     var params = new URLSearchParams();
     params.set("global", enabled ? "true" : "false");
     params.set("package_enabled", enabled ? "true" : "false");
-    packages.forEach(function(pkg){ if(pkg.update_supported !== false && !pkg.unknown_version){ params.append("package_key", pkg.key); } });
-    showNotice("Updating auto-update settings...");
+    packages.forEach(function(pkg){ if(packageAutoUpdateable(pkg)){ params.append("package_key", pkg.key); } });
+    showNotice("Updating auto-update settings...", true);
     try{
       await postCommandPayload("/api/settings/auto-update", params, "Could not update auto-update settings");
       showNotice("Auto-update settings updated.");

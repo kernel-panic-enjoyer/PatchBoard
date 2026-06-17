@@ -82,8 +82,8 @@ func TestPackageManagerMutationCommandDetection(t *testing.T) {
 	}
 }
 
-func TestLogBufferAppendSinceAndRetention(t *testing.T) {
-	buffer := newLogBuffer(3)
+func TestLogBufferAppendAndSince(t *testing.T) {
+	buffer := newLogBuffer()
 	first := buffer.Append("app", "one")
 	second := buffer.Append("stdout", "two")
 	third := buffer.Append("stderr", "three")
@@ -96,9 +96,9 @@ func TestLogBufferAppendSinceAndRetention(t *testing.T) {
 		t.Fatalf("expected latest id 4, got %d", buffer.LatestID())
 	}
 
-	retained := buffer.Since(0)
-	if len(retained) != 3 || retained[0].Message != "two" || retained[2].Message != "four" {
-		t.Fatalf("unexpected retained entries: %#v", retained)
+	all := buffer.Since(0)
+	if len(all) != 4 || all[0].Message != "one" || all[3].Message != "four" {
+		t.Fatalf("unexpected log entries: %#v", all)
 	}
 
 	newer := buffer.Since(2)
@@ -109,7 +109,7 @@ func TestLogBufferAppendSinceAndRetention(t *testing.T) {
 
 func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer(10)
+	sessionLogs = newLogBuffer()
 	defer func() { sessionLogs = oldLogs }()
 
 	pending := appendLogChunk("stdout", "", "Downloading\r|\r/\r-\r")
@@ -126,7 +126,7 @@ func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
 
 func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer(10)
+	sessionLogs = newLogBuffer()
 	defer func() { sessionLogs = oldLogs }()
 
 	raw := "Downloading\r|\r/\r-\rDone\n"
@@ -147,7 +147,7 @@ func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) 
 
 func TestAppendLogChunkPreservesNormalLines(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer(10)
+	sessionLogs = newLogBuffer()
 	defer func() { sessionLogs = oldLogs }()
 
 	pending := appendLogChunk("stdout", "", "first\r")

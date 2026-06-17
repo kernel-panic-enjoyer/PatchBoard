@@ -24,9 +24,13 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`id="summary-managers"`,
 		`id="summary-automation"`,
 		`id="updates-section"`,
+		`id="install-progress"`,
 		`id="update-progress"`,
 		`class="update-all-form"`,
 		`id="search-form"`,
+		`id="search-prev"`,
+		`id="search-page-status"`,
+		`id="search-next"`,
 		`action="/api/install"`,
 		`action="/api/managers/install"`,
 		`runUpdateRequest("/api/update"`,
@@ -37,8 +41,12 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Could not update auto-update settings`,
 		`allow_unknown_version`,
 		`allow_pinned`,
-		`unknown-confirm`,
-		`pinned-confirm`,
+		`id="update-allow-unknown"`,
+		`id="update-allow-pinned"`,
+		`Global update options`,
+		`appendGlobalUpdateOptions`,
+		`allowUnknownVersionUpdates`,
+		`allowPinnedUpdates`,
 		`packageBulkUpdateable`,
 		`startUpdateJob`,
 		`pollUpdateJobStatus`,
@@ -51,12 +59,19 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`response.status === 409 && status.running`,
 		`active && !status.cancel_requested`,
 		`installFromForm`,
+		`renderSearchTable`,
+		`searchPageSize = 10`,
 		`installManagerFromForm`,
+		`setInstallProgress`,
+		`install-progress-panel`,
 		`refreshPackagesAfterUpdate`,
 		`id="session-log-panel"`,
+		`id="log-search"`,
 		`id="copy-log-view"`,
 		`id="clear-log-view"`,
 		`id="log-autoscroll"`,
+		`logSearchQuery`,
+		`filteredLogLines`,
 		`copyLogView`,
 		`navigator.clipboard.writeText`,
 		`document.execCommand("copy")`,
@@ -76,6 +91,15 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`managerLabel`,
 		`backendLabel`,
 		`function icon(name)`,
+		`function spinner()`,
+		`function loadingText(message)`,
+		`function loadingTableRow(colspan, message)`,
+		`class="spinner"`,
+		`class="loading-text"`,
+		`conic-gradient`,
+		`will-change:transform`,
+		`@keyframes spin`,
+		`prefers-reduced-motion:reduce`,
 		`class="button-icon"`,
 		`class="summary-card`,
 		`compactNoticeText`,
@@ -96,6 +120,9 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	for _, unexpected := range []string{
 		`Inventory: `,
 		`Actions: `,
+		`unknown-confirm`,
+		`pinned-confirm`,
+		`Update Anyway`,
 		`Available Usage: store`,
 		`Usage: store <command>`,
 		`? "Current" : "-"`,
@@ -116,5 +143,10 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	updatesIndex := strings.Index(rendered, `Updates Available`)
 	if progressIndex < 0 || updatesIndex < 0 || progressIndex > updatesIndex {
 		t.Fatalf("expected update progress banner before updates table, progress=%d updates=%d", progressIndex, updatesIndex)
+	}
+	installProgressIndex := strings.Index(rendered, `id="install-progress"`)
+	searchResultsIndex := strings.Index(rendered, `id="search-results-panel"`)
+	if installProgressIndex < 0 || searchResultsIndex < 0 || installProgressIndex > searchResultsIndex {
+		t.Fatalf("expected install progress banner before search results, progress=%d search=%d", installProgressIndex, searchResultsIndex)
 	}
 }

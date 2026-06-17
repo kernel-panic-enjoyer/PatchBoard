@@ -27,7 +27,7 @@ const pageScriptDataLoading = `
   async function runUpdateRequest(path, params, keys, message){
     setGlobalProgress(true, message || "Updating packages...");
     setUpdateBusy(true, keys);
-    showNotice(message || "Updating packages...");
+    showNotice(message || "Updating packages...", true);
     try{
       var response = await postForm(path, params);
       var payload = await response.json();
@@ -37,6 +37,7 @@ const pageScriptDataLoading = `
       showNotice(summarizeUpdatePayload(payload));
       if(payload.refresh_started){
         setGlobalProgress(true, "Refreshing package status...");
+        showNotice("Refreshing package status...", true);
         await refreshPackagesAfterUpdate(true);
       }
     }catch(e){

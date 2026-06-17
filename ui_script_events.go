@@ -35,19 +35,16 @@ const pageScriptEvents = `
     if(form.matches(".update-form")){
       event.preventDefault();
       var key = form.dataset.key;
-      if(form.dataset.unknownVersion === "true"){
-        var allowed = form.querySelector('input[name="allow_unknown_version"]');
-        if(!allowed || !allowed.checked){
-          showNotice("This package has an unknown installed version. Check the confirmation box before updating it.");
-          return;
-        }
+      if(form.dataset.unknownVersion === "true" && !allowUnknownVersionUpdates()){
+        showNotice("Enable the global unknown-version option before updating this package.");
+        return;
       }
-      runUpdateRequest("/api/update", new URLSearchParams(new FormData(form)), [key], "Updating package...");
+      runUpdateRequest("/api/update", appendGlobalUpdateOptions(new URLSearchParams(new FormData(form))), [key], "Updating package...");
       return;
     }
     if(form.id === "update-selected-form"){
       event.preventDefault();
-      var params = new URLSearchParams(new FormData(form));
+      var params = appendGlobalUpdateOptions(new URLSearchParams(new FormData(form)));
       var keys = params.getAll("package_key");
       if(keys.length === 0){
         showNotice("Select at least one package to update.");
@@ -59,7 +56,7 @@ const pageScriptEvents = `
     if(form.matches(".update-all-form")){
       event.preventDefault();
       var allKeys = updateableUpdateKeys();
-      startUpdateJob(new URLSearchParams(new FormData(form)), allKeys, "Updating all packages...");
+      startUpdateJob(appendGlobalUpdateOptions(new URLSearchParams(new FormData(form))), allKeys, "Updating all packages...");
     }
   });
   $("theme-toggle").addEventListener("click", function(){
@@ -70,7 +67,7 @@ const pageScriptEvents = `
   $("scan-button").addEventListener("click", async function(){
     var button = this;
     button.disabled = true;
-    showNotice("Scanning applications...");
+    showNotice("Scanning applications...", true);
     try{
       var response = await postForm("/api/scan", {});
       var data = await response.json();
@@ -85,6 +82,16 @@ const pageScriptEvents = `
     button.disabled = false;
   });
   $("refresh-packages").addEventListener("click", function(){ loadPackages(true); });
+  $("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
+  $("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
+  $("search-prev").addEventListener("click", function(){
+    searchPage--;
+    renderSearchTable();
+  });
+  $("search-next").addEventListener("click", function(){
+    searchPage++;
+    renderSearchTable();
+  });
   $("installed-search").addEventListener("input", function(){
     installedSearchQuery = this.value || "";
     installedPage = 1;
@@ -130,6 +137,10 @@ const pageScriptEvents = `
   $("auto-none").addEventListener("click", function(){ setAllAuto(false); });
   $("clear-log-view").addEventListener("click", function(){
     logLines = [];
+    renderLogLines(false);
+  });
+  $("log-search").addEventListener("input", function(){
+    logSearchQuery = this.value || "";
     renderLogLines(false);
   });
   $("copy-log-view").addEventListener("click", function(){ copyLogView(); });

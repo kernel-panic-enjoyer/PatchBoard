@@ -71,8 +71,36 @@ func TestUpdateJobStatusReturnsIndependentSlices(t *testing.T) {
 func TestUpdateJobRejectsSelectedUnknownVersionPackage(t *testing.T) {
 	app := testUpdateJobApp()
 	_, err := app.startUpdateJob([]string{"winget:Vendor.Unknown"})
-	if err == nil || !strings.Contains(err.Error(), "requires an individual confirmed update") {
+	if err == nil || !strings.Contains(err.Error(), "requires an explicit global unknown-version update choice") {
 		t.Fatalf("expected selected unknown-version package to be rejected, got %v", err)
+	}
+}
+
+func TestUpdateJobAllowsSelectedUnknownVersionPackageWithGlobalOption(t *testing.T) {
+	app := testUpdateJobApp()
+	packages, mode, err := app.updateJobPackages([]string{"winget:Vendor.Unknown"}, UpdateOptions{AllowUnknownVersion: true, AllowPinned: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != updateJobModeSelected || len(packages) != 1 || packages[0].Key != "winget:Vendor.Unknown" {
+		t.Fatalf("unexpected selected packages: mode=%q packages=%#v", mode, packages)
+	}
+	if !packages[0].AllowUnknownVersionUpdate || !packages[0].AllowPinnedUpdate {
+		t.Fatalf("expected global update options on selected package, got %#v", packages[0])
+	}
+}
+
+func TestUpdateJobBulkIncludesUnknownVersionWithGlobalOption(t *testing.T) {
+	app := testUpdateJobApp()
+	packages, mode, err := app.updateJobPackages(nil, UpdateOptions{AllowUnknownVersion: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != updateJobModeAll || len(packages) != 3 {
+		t.Fatalf("expected all updateable packages including unknown version, mode=%q packages=%#v", mode, packages)
+	}
+	if packages[2].Key != "winget:Vendor.Unknown" || !packages[2].AllowUnknownVersionUpdate {
+		t.Fatalf("expected unknown package with global option applied, got %#v", packages)
 	}
 }
 

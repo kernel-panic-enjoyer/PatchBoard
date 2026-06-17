@@ -41,7 +41,7 @@ const pageScriptUpdateJobs = `
     var active = !!(status && status.running);
     setUpdateBusy(active || !!(status && status.refresh_started), activeUpdateKeys, status ? status.current_key : "");
     setGlobalProgress(active || !!(status && status.refresh_started), message, active && !status.cancel_requested);
-    showNotice(message);
+    showNotice(message, active || !!(status && status.refresh_started));
   }
   async function finishUpdateJob(status){
     clearUpdateJobPoll();
@@ -81,7 +81,7 @@ const pageScriptUpdateJobs = `
     activeUpdateJobID = "";
     setUpdateBusy(true, activeUpdateKeys);
     setGlobalProgress(true, message || "Starting updates...", true);
-    showNotice(message || "Starting updates...");
+    showNotice(message || "Starting updates...", true);
     try{
       var response = await postForm("/api/update-all", params);
       var status = await response.json();
@@ -123,7 +123,7 @@ const pageScriptUpdateJobs = `
   async function cancelUpdateJob(){
     var button = $("cancel-updates-button");
     if(button){ button.disabled = true; }
-    showNotice("Cancelling after current command stops...");
+    showNotice("Cancelling after current command stops...", true);
     setGlobalProgress(true, "Cancelling after current command stops...", false);
     try{
       var response = await postForm("/api/update-all/cancel", {});

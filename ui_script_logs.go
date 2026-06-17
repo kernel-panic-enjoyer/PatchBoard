@@ -13,10 +13,18 @@ const pageScriptLogConsole = `
   function renderLogLines(shouldScroll){
     var target = $("session-log");
     if(!target){ return; }
-    target.textContent = logLines.join("\n") + (logLines.length ? "\n" : "");
+    var lines = filteredLogLines();
+    target.textContent = lines.join("\n") + (lines.length ? "\n" : "");
     if(shouldScroll){
       target.scrollTop = target.scrollHeight;
     }
+  }
+  function filteredLogLines(){
+    var query = logSearchQuery.trim().toLowerCase();
+    if(!query){ return logLines; }
+    return logLines.filter(function(line){
+      return line.toLowerCase().indexOf(query) !== -1;
+    });
   }
   function appendLogEntries(entries){
     if(!entries || entries.length === 0){ return; }
@@ -24,9 +32,6 @@ const pageScriptLogConsole = `
       lastLogID = Math.max(lastLogID, Number(entry.id || 0));
       logLines.push(formatLogEntry(entry));
     });
-    if(logLines.length > maxLogLines){
-      logLines = logLines.slice(logLines.length - maxLogLines);
-    }
     var auto = $("log-autoscroll");
     renderLogLines(!auto || auto.checked);
   }

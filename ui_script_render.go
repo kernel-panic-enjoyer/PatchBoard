@@ -31,7 +31,25 @@ const pageScriptThemeAndLabels = `
     };
     return labels[value] || value;
   }
+  function allowUnknownVersionUpdates(){
+    var control = $("update-allow-unknown");
+    return !!control && !!control.checked;
+  }
+  function allowPinnedUpdates(){
+    var control = $("update-allow-pinned");
+    return !!control && !!control.checked;
+  }
+  function appendGlobalUpdateOptions(params){
+    params.delete("allow_unknown_version");
+    params.delete("allow_pinned");
+    if(allowUnknownVersionUpdates()){ params.set("allow_unknown_version", "true"); }
+    if(allowPinnedUpdates()){ params.set("allow_pinned", "true"); }
+    return params;
+  }
+  function packageAutoUpdateable(pkg){
+    return pkg.update_supported !== false && !pkg.unknown_version;
+  }
   function packageBulkUpdateable(pkg){
-    return !!pkg.update_available && pkg.update_supported !== false && !pkg.unknown_version;
+    return !!pkg.update_available && pkg.update_supported !== false && (!pkg.unknown_version || allowUnknownVersionUpdates());
   }
 `

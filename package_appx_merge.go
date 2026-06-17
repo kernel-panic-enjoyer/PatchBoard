@@ -102,6 +102,11 @@ func applyStoreUpdateVersion(pkg Package, updates map[string]string, storeAvaila
 	if available == "" {
 		return pkg
 	}
+	if !versionGreater(available, pkg.Version) {
+		pkg.AvailableVersion = ""
+		pkg.UpdateAvailable = false
+		return pkg
+	}
 	target = strings.TrimSpace(target)
 	if target == "" {
 		target = stableStoreActionID(pkg.ID)

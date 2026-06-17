@@ -21,9 +21,12 @@ const pageScriptShell = `
   var installedPage = 1;
   var installedPageSize = 10;
   var installedSearchQuery = "";
+  var searchResults = [];
+  var searchPage = 1;
+  var searchPageSize = 10;
   var lastLogID = 0;
   var logLines = [];
-  var maxLogLines = 2000;
+  var logSearchQuery = "";
   var managersRendered = false;
   var updateJobPollTimer = null;
   var activeUpdateKeys = [];
@@ -43,6 +46,15 @@ const pageScriptShell = `
     });
   }
   function attr(value){ return html(value); }
+  function spinner(){
+    return '<span class="spinner" aria-hidden="true"></span>';
+  }
+  function loadingText(message){
+    return '<span class="loading-text">' + spinner() + '<span>' + html(message) + '</span></span>';
+  }
+  function loadingTableRow(colspan, message){
+    return '<tr><td colspan="' + colspan + '">' + loadingText(message) + '</td></tr>';
+  }
   function icon(name){
     var paths = {
       moon:'<path d="M12 3a6 6 0 1 0 6 6c0 5-4 9-9 9a6 6 0 0 0 3-15Z"/>',
@@ -56,10 +68,14 @@ const pageScriptShell = `
     };
     return '<span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24">' + (paths[name] || paths.box) + '</svg></span>';
   }
-  function showNotice(message){
+  function showNotice(message, loading){
     var notice = $("notice");
     if(!notice){ return; }
-    notice.textContent = message || "";
+    if(loading && message){
+      notice.innerHTML = loadingText(message);
+    }else{
+      notice.textContent = message || "";
+    }
     notice.classList.toggle("hidden", !message);
   }
 `

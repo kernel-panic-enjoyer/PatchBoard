@@ -5,12 +5,19 @@ const pageScriptRequests = `
     var panel = $("update-progress");
     if(!panel){ return; }
     var title = panel.querySelector(".progress-title");
-    if(title){ title.textContent = message || "Updating packages..."; }
+    if(title){ title.innerHTML = show ? loadingText(message || "Updating packages...") : html(message || "Updating packages..."); }
     var cancel = $("cancel-updates-button");
     if(cancel){
       cancel.classList.toggle("hidden", !cancelVisible);
       cancel.disabled = !cancelVisible;
     }
+    panel.classList.toggle("hidden", !show);
+  }
+  function setInstallProgress(show, message){
+    var panel = $("install-progress");
+    if(!panel){ return; }
+    var title = panel.querySelector(".progress-title");
+    if(title){ title.innerHTML = show ? loadingText(message || "Installing package...") : html(message || "Installing package..."); }
     panel.classList.toggle("hidden", !show);
   }
   function setUpdateBusy(busy, keys, currentKey){
@@ -21,7 +28,7 @@ const pageScriptRequests = `
       if(control.closest("#session-log-panel")){ return; }
       if(control.id === "theme-toggle" || control.closest(".header-actions form")){ return; }
       if(control.classList.contains("auto-package")){ control.disabled = busy; return; }
-      if(control.name === "package_key" || control.closest(".update-form") || control.id === "update-all-button" || control.id === "update-selected-button" || control.id === "refresh-packages"){
+      if(control.name === "package_key" || control.closest(".update-form") || control.id === "update-all-button" || control.id === "update-selected-button" || control.id === "refresh-packages" || control.id === "update-allow-unknown" || control.id === "update-allow-pinned"){
         control.disabled = busy;
       }
     });
