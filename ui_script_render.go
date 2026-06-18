@@ -52,4 +52,28 @@ const pageScriptThemeAndLabels = `
   function packageBulkUpdateable(pkg){
     return !!pkg.update_available && pkg.update_supported !== false && (!pkg.unknown_version || allowUnknownVersionUpdates());
   }
+  function pagedItems(items, currentPage, pageSize){
+    var total = items.length;
+    var totalPages = Math.max(1, Math.ceil(total / pageSize));
+    var page = Math.min(Math.max(currentPage, 1), totalPages);
+    var start = (page - 1) * pageSize;
+    return {
+      page: page,
+      total: total,
+      totalPages: totalPages,
+      start: start,
+      end: Math.min(start + pageSize, total),
+      items: items.slice(start, start + pageSize)
+    };
+  }
+  function renderPager(page, status, prev, next, suffix){
+    if(status){ status.textContent = "Showing " + (page.start + 1) + "-" + page.end + " of " + page.total + (suffix || ""); }
+    if(prev){ prev.disabled = page.page <= 1; }
+    if(next){ next.disabled = page.page >= page.totalPages; }
+  }
+  function renderEmptyPager(status, statusHTML, prev, next){
+    if(status){ status.innerHTML = statusHTML; }
+    if(prev){ prev.disabled = true; }
+    if(next){ next.disabled = true; }
+  }
 `

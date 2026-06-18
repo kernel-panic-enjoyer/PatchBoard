@@ -91,10 +91,8 @@ func resolveExecutable(name string) string {
 		if programData := os.Getenv("ProgramData"); programData != "" {
 			candidates = append(candidates, filepath.Join(programData, "chocolatey", "bin", "choco.exe"))
 		}
-		for _, candidate := range candidates {
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate
-			}
+		if candidate := firstExistingPath(candidates); candidate != "" {
+			return candidate
 		}
 	}
 	if strings.EqualFold(name, "winget") || strings.EqualFold(name, "store") {
@@ -120,13 +118,20 @@ func resolveExecutable(name string) string {
 				filepath.Join(base, "Microsoft", "WinGet", "Links", exeName),
 			)
 		}
-		for _, candidate := range candidates {
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate
-			}
+		if candidate := firstExistingPath(candidates); candidate != "" {
+			return candidate
 		}
 	}
 	return name
+}
+
+func firstExistingPath(paths []string) string {
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 func refreshProcessEnvironmentFromRegistry() {

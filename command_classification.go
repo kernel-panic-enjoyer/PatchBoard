@@ -88,9 +88,8 @@ func lockMutexContext(ctx context.Context, mu *sync.Mutex) bool {
 	}
 }
 
-func commandContextDoneResult(ctx context.Context, command, action string) CommandResult {
+func commandContextDoneResult(ctx context.Context, command, action string, categories []string) CommandResult {
 	result := CommandResult{Command: command}
-	categories := logCategoriesForCommandLine(command)
 	logCommand := func(stream, message string) {
 		sessionLogs.AppendCategorized(stream, message, categories)
 	}

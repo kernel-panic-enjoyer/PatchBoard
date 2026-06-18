@@ -13,7 +13,7 @@ import (
 
 func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer()
+	sessionLogs = &LogBuffer{}
 	defer func() { sessionLogs = oldLogs }()
 
 	sessionLogs.Append("app", "hello")
@@ -50,7 +50,7 @@ func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 
 func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer()
+	sessionLogs = &LogBuffer{}
 	defer func() { sessionLogs = oldLogs }()
 
 	sessionLogs.Append("app", "app started")

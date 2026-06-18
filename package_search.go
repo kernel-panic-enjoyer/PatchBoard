@@ -35,29 +35,30 @@ type packageSearchResult struct {
 	CommandResult CommandResult
 }
 
+type packageSearchRunner struct {
+	Manager string
+	Run     func(string) packageSearchResult
+}
+
+var packageSearchRunners = []packageSearchRunner{
+	{managerStore, searchStorePackages},
+	{managerWinget, searchWingetPackages},
+	{managerChoco, searchChocoPackages},
+}
+
 func runPackageSearches(query string, managers map[string]ManagerStatus) []packageSearchResult {
 	searchCh := make(chan packageSearchResult, len(managedPackageManagers))
 	var wg sync.WaitGroup
 
-	if managers[managerStore].Available {
+	for _, runner := range packageSearchRunners {
+		if !managers[runner.Manager].Available {
+			continue
+		}
+		runner := runner
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			searchCh <- searchStorePackages(query)
-		}()
-	}
-	if managers[managerWinget].Available {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			searchCh <- searchWingetPackages(query)
-		}()
-	}
-	if managers[managerChoco].Available {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			searchCh <- searchChocoPackages(query)
+			searchCh <- runner.Run(query)
 		}()
 	}
 

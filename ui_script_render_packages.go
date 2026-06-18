@@ -53,27 +53,17 @@ const pageScriptPackageRender = `
     if(!target){ return; }
     if(updates.length === 0){
       target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">No updates available.</td></tr>';
-      if(status){ status.innerHTML = loading ? loadingText('Checking...') : html('No updates'); }
-      if(prev){ prev.disabled = true; }
-      if(next){ next.disabled = true; }
+      renderEmptyPager(status, loading ? loadingText('Checking...') : html('No updates'), prev, next);
       return;
     }
-    var total = updates.length;
-    var totalPages = Math.max(1, Math.ceil(total / updatePageSize));
-    if(updatePage > totalPages){ updatePage = totalPages; }
-    if(updatePage < 1){ updatePage = 1; }
-    var start = (updatePage - 1) * updatePageSize;
-    var visible = updates.slice(start, start + updatePageSize);
-    target.innerHTML = visible.map(function(pkg){
+    var page = pagedItems(updates, updatePage, updatePageSize);
+    updatePage = page.page;
+    target.innerHTML = page.items.map(function(pkg){
       var selectable = packageBulkUpdateable(pkg);
       var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
       return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td><input form="update-selected-form" type="checkbox" name="package_key" value="' + attr(pkg.key) + '"' + ((updateBusy || !selectable) ? ' disabled' : '') + '></td><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + autoButton(pkg) + '</td><td>' + updateForm(pkg) + '</td></tr>';
     }).join("");
-    if(status){
-      status.textContent = "Showing " + (start + 1) + "-" + Math.min(start + updatePageSize, total) + " of " + total;
-    }
-    if(prev){ prev.disabled = updatePage <= 1; }
-    if(next){ next.disabled = updatePage >= totalPages; }
+    renderPager(page, status, prev, next);
   }
   function renderInstalledTable(loading){
     var target = $("packages-body");
@@ -82,29 +72,19 @@ const pageScriptPackageRender = `
     var next = $("installed-next");
     if(!target){ return; }
     var visiblePackages = packages.filter(packageMatchesInstalledSearch);
-    var total = visiblePackages.length;
-    var totalPages = Math.max(1, Math.ceil(total / installedPageSize));
-    if(installedPage > totalPages){ installedPage = totalPages; }
-    if(installedPage < 1){ installedPage = 1; }
-	if(total === 0){
+    if(visiblePackages.length === 0){
 		target.innerHTML = loading ? loadingTableRow(7, "Loading packages...") : '<tr><td colspan="7">' + (installedSearchQuery ? 'No packages match your filter.' : 'No managed packages found.') + '</td></tr>';
-      if(status){ status.innerHTML = loading ? loadingText('Loading...') : html(installedSearchQuery ? 'No matches' : 'No packages'); }
-      if(prev){ prev.disabled = true; }
-      if(next){ next.disabled = true; }
+      renderEmptyPager(status, loading ? loadingText('Loading...') : html(installedSearchQuery ? 'No matches' : 'No packages'), prev, next);
       return;
     }
-    var start = (installedPage - 1) * installedPageSize;
-    var visible = visiblePackages.slice(start, start + installedPageSize);
-	target.innerHTML = visible.map(function(pkg){
+    var page = pagedItems(visiblePackages, installedPage, installedPageSize);
+    installedPage = page.page;
+	target.innerHTML = page.items.map(function(pkg){
 		var rowStatus = pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : (pkg.unknown_version && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>'));
     var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
 		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + html(pkg.available_version) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
 	}).join("");
-    if(status){
-      status.textContent = "Showing " + (start + 1) + "-" + Math.min(start + installedPageSize, total) + " of " + total + (installedSearchQuery ? " matches" : "");
-    }
-    if(prev){ prev.disabled = installedPage <= 1; }
-    if(next){ next.disabled = installedPage >= totalPages; }
+    renderPager(page, status, prev, next, installedSearchQuery ? " matches" : "");
   }
   function renderPackageTables(){
     var updates = packages.filter(function(pkg){ return !!pkg.update_available; });

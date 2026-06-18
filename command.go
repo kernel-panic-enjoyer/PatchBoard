@@ -47,13 +47,13 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 
 	if isPackageManagerMutationCommand(args) {
 		if !lockMutexContext(ctx, &packageManagerMutationMu) {
-			return commandContextDoneResult(ctx, result.Command, "while waiting for package manager lock")
+			return commandContextDoneResult(ctx, result.Command, "while waiting for package manager lock", categories)
 		}
 		defer packageManagerMutationMu.Unlock()
 	}
 	if isWingetCommand(args) {
 		if !lockMutexContext(ctx, &wingetCommandMu) {
-			return commandContextDoneResult(ctx, result.Command, "while waiting for winget lock")
+			return commandContextDoneResult(ctx, result.Command, "while waiting for winget lock", categories)
 		}
 		defer wingetCommandMu.Unlock()
 	}

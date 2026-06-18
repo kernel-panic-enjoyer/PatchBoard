@@ -22,7 +22,7 @@ type LogBuffer struct {
 	entries []LogEntry
 }
 
-var sessionLogs = newLogBuffer()
+var sessionLogs = &LogBuffer{}
 
 const (
 	logCategoryAll         = "all"
@@ -34,30 +34,25 @@ const (
 	logCategoryChocolatey  = "chocolatey"
 )
 
-var logExportCategories = []struct {
+type LogCategorySpec struct {
 	Category string
 	Filename string
-}{
-	{logCategoryAll, "all.txt"},
-	{logCategoryApplication, "application.txt"},
-	{logCategorySearches, "searches.txt"},
-	{logCategoryUpdates, "updates.txt"},
-	{logCategoryWinget, "winget.txt"},
-	{logCategoryStore, "store.txt"},
-	{logCategoryChocolatey, "chocolatey.txt"},
+	Label    string
 }
 
-func newLogBuffer() *LogBuffer {
-	return &LogBuffer{}
+var logCategorySpecs = []LogCategorySpec{
+	{logCategoryAll, "all.txt", "All"},
+	{logCategoryApplication, "application.txt", "Application"},
+	{logCategorySearches, "searches.txt", "Searches"},
+	{logCategoryUpdates, "updates.txt", "Updates"},
+	{logCategoryWinget, "winget.txt", "winget"},
+	{logCategoryStore, "store.txt", "Store"},
+	{logCategoryChocolatey, "chocolatey.txt", "Chocolatey"},
 }
 
 func logCategoriesForCommand(args []string) []string {
 	manager, verb := packageManagerCommandVerb(args)
 	return logCategoriesForManagerVerb(manager, verb)
-}
-
-func logCategoriesForCommandLine(command string) []string {
-	return logCategoriesForCommand(strings.Fields(command))
 }
 
 func logCategoriesForManagerVerb(manager, verb string) []string {
@@ -79,10 +74,10 @@ func logCategoriesForManagerVerb(manager, verb string) []string {
 	case "install", "upgrade", "update", "updates", "outdated", "import", "configure", "pin", "uninstall":
 		categories = append(categories, logCategoryUpdates)
 	}
-	return normalizeLogCategories(categories, "")
+	return normalizeLogCategories(categories)
 }
 
-func normalizeLogCategories(categories []string, stream string) []string {
+func normalizeLogCategories(categories []string) []string {
 	seen := map[string]bool{}
 	normalized := []string{}
 	add := func(category string) {
@@ -99,18 +94,14 @@ func normalizeLogCategories(categories []string, stream string) []string {
 		add(category)
 	}
 	if len(normalized) == 1 {
-		if strings.EqualFold(stream, "app") || stream == "" {
-			add(logCategoryApplication)
-		} else {
-			add(logCategoryApplication)
-		}
+		add(logCategoryApplication)
 	}
 	return normalized
 }
 
 func logEntryInCategory(entry LogEntry, category string) bool {
 	category = strings.ToLower(strings.TrimSpace(category))
-	for _, candidate := range normalizeLogCategories(entry.Categories, entry.Stream) {
+	for _, candidate := range normalizeLogCategories(entry.Categories) {
 		if candidate == category {
 			return true
 		}
@@ -132,7 +123,7 @@ func (buffer *LogBuffer) AppendCategorized(stream, message string, categories []
 		Timestamp:  utcNow(),
 		Stream:     stream,
 		Message:    strings.TrimRight(message, "\r\n"),
-		Categories: normalizeLogCategories(categories, stream),
+		Categories: normalizeLogCategories(categories),
 	}
 	buffer.entries = append(buffer.entries, entry)
 	return entry
@@ -172,10 +163,6 @@ func appLog(format string, args ...any) {
 	sessionLogs.Append("app", fmt.Sprintf(format, args...))
 }
 
-func appendLogLine(stream, line string) {
-	appendLogLineCategorized(stream, line, nil)
-}
-
 func appendLogLineCategorized(stream, line string, categories []string) {
 	line = strings.TrimRight(line, "\r\n")
 	if isTransientLogFrame(line) {
@@ -191,10 +178,6 @@ func isTransientLogFrame(line string) bool {
 	default:
 		return false
 	}
-}
-
-func appendLogChunk(stream, pending, chunk string) string {
-	return appendLogChunkCategorized(stream, pending, chunk, nil)
 }
 
 func appendLogChunkCategorized(stream, pending, chunk string, categories []string) string {
@@ -221,10 +204,6 @@ func appendLogChunkCategorized(stream, pending, chunk string, categories []strin
 		return line.String() + "\r"
 	}
 	return line.String()
-}
-
-func streamCommandOutput(reader io.Reader, stream string, output *bytes.Buffer, wg *sync.WaitGroup) {
-	streamCommandOutputCategorized(reader, stream, output, wg, nil)
 }
 
 func streamCommandOutputCategorized(reader io.Reader, stream string, output *bytes.Buffer, wg *sync.WaitGroup, categories []string) {

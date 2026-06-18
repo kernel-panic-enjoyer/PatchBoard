@@ -2,6 +2,19 @@ package main
 
 import "sync"
 
+type managerInventoryCollector struct {
+	manager   string
+	installed func() ([]Package, CommandResult)
+	updates   func() (map[string]string, CommandResult)
+	listKey   string
+	updateKey string
+}
+
+var managerInventoryCollectors = []managerInventoryCollector{
+	{managerWinget, wingetInstalled, wingetUpdates, "winget_list", "winget_upgrade"},
+	{managerChoco, chocoInstalled, chocoUpdates, "choco_list", "choco_outdated"},
+}
+
 func collectManagerInventory(
 	manager string,
 	installedFn func() ([]Package, CommandResult),
@@ -52,18 +65,15 @@ func collectInventoryInputs(managers map[string]ManagerStatus) inventoryInputs {
 			inputs.nativeStoreUpdates, inputs.nativeStoreUpdatesResult = storeUpdates()
 		}()
 	}
-	if managers[managerWinget].Available {
+	for _, collector := range managerInventoryCollectors {
+		if !managers[collector.manager].Available {
+			continue
+		}
+		collector := collector
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			inventoryCh <- collectManagerInventory(managerWinget, wingetInstalled, wingetUpdates, "winget_list", "winget_upgrade")
-		}()
-	}
-	if managers[managerChoco].Available {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inventoryCh <- collectManagerInventory(managerChoco, chocoInstalled, chocoUpdates, "choco_list", "choco_outdated")
+			inventoryCh <- collectManagerInventory(collector.manager, collector.installed, collector.updates, collector.listKey, collector.updateKey)
 		}()
 	}
 

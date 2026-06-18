@@ -144,7 +144,7 @@ func TestPackageManagerMutationCommandDetection(t *testing.T) {
 }
 
 func TestLogBufferAppendAndSince(t *testing.T) {
-	buffer := newLogBuffer()
+	buffer := &LogBuffer{}
 	first := buffer.Append("app", "one")
 	second := buffer.Append("stdout", "two")
 	third := buffer.Append("stderr", "three")
@@ -221,11 +221,11 @@ func TestLogArchiveDuplicatesOverlappingCategories(t *testing.T) {
 
 func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer()
+	sessionLogs = &LogBuffer{}
 	defer func() { sessionLogs = oldLogs }()
 
-	pending := appendLogChunk("stdout", "", "Downloading\r|\r/\r-\r")
-	pending = appendLogChunk("stdout", pending, `\`+"\rDone\n")
+	pending := appendLogChunkCategorized("stdout", "", "Downloading\r|\r/\r-\r", nil)
+	pending = appendLogChunkCategorized("stdout", pending, `\`+"\rDone\n", nil)
 	if pending != "" {
 		t.Fatalf("expected no pending log text, got %q", pending)
 	}
@@ -238,14 +238,14 @@ func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
 
 func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer()
+	sessionLogs = &LogBuffer{}
 	defer func() { sessionLogs = oldLogs }()
 
 	raw := "Downloading\r|\r/\r-\rDone\n"
 	var output bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(1)
-	streamCommandOutput(strings.NewReader(raw), "stdout", &output, &wg)
+	streamCommandOutputCategorized(strings.NewReader(raw), "stdout", &output, &wg, nil)
 	wg.Wait()
 
 	if output.String() != raw {
@@ -259,12 +259,12 @@ func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) 
 
 func TestAppendLogChunkPreservesNormalLines(t *testing.T) {
 	oldLogs := sessionLogs
-	sessionLogs = newLogBuffer()
+	sessionLogs = &LogBuffer{}
 	defer func() { sessionLogs = oldLogs }()
 
-	pending := appendLogChunk("stdout", "", "first\r")
-	pending = appendLogChunk("stdout", pending, "\nsecond\nthird")
-	pending = appendLogChunk("stdout", pending, "\n")
+	pending := appendLogChunkCategorized("stdout", "", "first\r", nil)
+	pending = appendLogChunkCategorized("stdout", pending, "\nsecond\nthird", nil)
+	pending = appendLogChunkCategorized("stdout", pending, "\n", nil)
 	if pending != "" {
 		t.Fatalf("expected no pending log text, got %q", pending)
 	}

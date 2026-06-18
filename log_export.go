@@ -11,7 +11,7 @@ import (
 func buildLogArchive(entries []LogEntry) ([]byte, error) {
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
-	for _, file := range logExportCategories {
+	for _, file := range logCategorySpecs {
 		writer, err := archive.Create(file.Filename)
 		if err != nil {
 			_ = archive.Close()

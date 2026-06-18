@@ -34,26 +34,16 @@ const pageScriptAuxiliaryRender = `
     var prev = $("search-prev");
     var next = $("search-next");
     if(!body){ return; }
-    var total = searchResults.length;
-    var totalPages = Math.max(1, Math.ceil(total / searchPageSize));
-    if(searchPage > totalPages){ searchPage = totalPages; }
-    if(searchPage < 1){ searchPage = 1; }
-    if(total === 0){
+    if(searchResults.length === 0){
       body.innerHTML = '<tr><td colspan="5">No installable results.</td></tr>';
-      if(status){ status.textContent = "No results"; }
-      if(prev){ prev.disabled = true; }
-      if(next){ next.disabled = true; }
+      renderEmptyPager(status, html("No results"), prev, next);
       return;
     }
-    var start = (searchPage - 1) * searchPageSize;
-    var visible = searchResults.slice(start, start + searchPageSize);
-    body.innerHTML = visible.map(function(pkg){
+    var page = pagedItems(searchResults, searchPage, searchPageSize);
+    searchPage = page.page;
+    body.innerHTML = page.items.map(function(pkg){
       return '<tr><td>' + html(pkg.name) + '</td><td>' + html(managerLabel(pkg.manager)) + (pkg.action_backend ? '<br><span class="muted">' + html(backendLabel(pkg.action_backend)) + '</span>' : '') + '</td><td>' + html(pkg.id) + '</td><td>' + html(pkg.version) + '</td><td><form class="install-form" method="post" action="/api/install"><input type="hidden" name="token" value="' + attr(token) + '"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit">' + icon("install") + '<span>Install</span></button></form></td></tr>';
     }).join("");
-    if(status){
-      status.textContent = "Showing " + (start + 1) + "-" + Math.min(start + searchPageSize, total) + " of " + total;
-    }
-    if(prev){ prev.disabled = searchPage <= 1; }
-    if(next){ next.disabled = searchPage >= totalPages; }
+    renderPager(page, status, prev, next);
   }
 `

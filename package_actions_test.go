@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -634,7 +633,8 @@ func TestPackageForUpdateUsesEquivalentStoreInventoryMetadata(t *testing.T) {
 
 func TestPackageCommandBuilders(t *testing.T) {
 	wingetInstallArgs := wingetInstallCommand("winget", "Git.Git", false)
-	if len(wingetInstallArgs) < 2 || !strings.EqualFold(strings.TrimSuffix(filepath.Base(wingetInstallArgs[0]), ".exe"), "winget") || wingetInstallArgs[1] != "install" {
+	manager, verb := packageManagerCommandVerb(wingetInstallArgs)
+	if manager != managerWinget || verb != "install" {
 		t.Fatalf("winget install command should start with winget install: %#v", wingetInstallArgs)
 	}
 	wingetInstall := strings.Join(wingetInstallArgs, " ")
@@ -648,7 +648,8 @@ func TestPackageCommandBuilders(t *testing.T) {
 	}
 
 	forcedStoreInstallArgs := wingetInstallCommand("store", "Microsoft To Do", true)
-	if len(forcedStoreInstallArgs) < 2 || !strings.EqualFold(strings.TrimSuffix(filepath.Base(forcedStoreInstallArgs[0]), ".exe"), "winget") || forcedStoreInstallArgs[1] != "install" {
+	manager, verb = packageManagerCommandVerb(forcedStoreInstallArgs)
+	if manager != managerWinget || verb != "install" {
 		t.Fatalf("forced store install command should use winget install fallback: %#v", forcedStoreInstallArgs)
 	}
 	forcedStoreInstall := strings.Join(forcedStoreInstallArgs, " ")

@@ -133,37 +133,28 @@ const pageScriptEvents = `
     installedPage++;
     renderInstalledTable(false);
   });
-  $("startup-toggle").addEventListener("click", async function(){
-    var button = this;
-    var enabled = this.dataset.enabled !== "true";
+  async function toggleBooleanSetting(button, path, field, successMessage, failurePrefix){
+    var enabled = button.dataset.enabled !== "true";
+    var params = {};
+    params[field] = enabled ? "true" : "false";
     button.disabled = true;
     try{
-      await postCommandPayload("/api/settings/startup", {enabled:enabled ? "true" : "false"}, "Could not update startup setting");
-      showNotice("Startup setting updated.");
-      showToast("Startup setting updated.", "success");
+      await postCommandPayload(path, params, failurePrefix);
+      showNotice(successMessage);
+      showToast(successMessage, "success");
     }catch(e){
-      showNotice("Could not update startup setting: " + e.message);
-      showToast("Could not update startup setting: " + e.message, "error");
+      showNotice(failurePrefix + ": " + e.message);
+      showToast(failurePrefix + ": " + e.message, "error");
     }finally{
       button.disabled = false;
       loadStatus(true);
     }
+  }
+  $("startup-toggle").addEventListener("click", function(){
+    toggleBooleanSetting(this, "/api/settings/startup", "enabled", "Startup setting updated.", "Could not update startup setting");
   });
-  $("auto-global-toggle").addEventListener("click", async function(){
-    var button = this;
-    var enabled = this.dataset.enabled !== "true";
-    button.disabled = true;
-    try{
-      await postCommandPayload("/api/settings/auto-update", {global:enabled ? "true" : "false"}, "Could not update auto-update setting");
-      showNotice("Auto-update setting updated.");
-      showToast("Auto-update setting updated.", "success");
-    }catch(e){
-      showNotice("Could not update auto-update setting: " + e.message);
-      showToast("Could not update auto-update setting: " + e.message, "error");
-    }finally{
-      button.disabled = false;
-      loadStatus(true);
-    }
+  $("auto-global-toggle").addEventListener("click", function(){
+    toggleBooleanSetting(this, "/api/settings/auto-update", "global", "Auto-update setting updated.", "Could not update auto-update setting");
   });
   $("auto-all").addEventListener("click", function(){ setAllAuto(true); });
   $("auto-none").addEventListener("click", function(){ setAllAuto(false); });

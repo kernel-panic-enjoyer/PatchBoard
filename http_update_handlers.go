@@ -6,35 +6,42 @@ import (
 	"net/http"
 )
 
-func parsePackageAction(r *http.Request, command string) (string, string, *CommandResult) {
-	var manager string
-	var id string
-	if requestIsJSON(r) {
-		var payload struct {
-			Manager   string `json:"manager"`
-			PackageID string `json:"package_id"`
-		}
-		if err := decodeJSONRequest(r, &payload); err != nil {
-			result := validationCommandResult(command, err)
-			return "", "", &result
-		}
-		manager = payload.Manager
-		id = payload.PackageID
-	} else {
-		_ = r.ParseForm()
-		manager = r.Form.Get("manager")
-		id = r.Form.Get("package_id")
+type packageActionRequest struct {
+	Manager   string `json:"manager"`
+	PackageID string `json:"package_id"`
+}
+
+func packageActionRequestFromForm(r *http.Request) packageActionRequest {
+	_ = r.ParseForm()
+	return packageActionRequest{
+		Manager:   r.Form.Get("manager"),
+		PackageID: r.Form.Get("package_id"),
 	}
-	if err := validateManagerAndID(manager, id); err != nil {
+}
+
+func validatePackageActionRequest(command string, request packageActionRequest) (string, string, *CommandResult) {
+	if err := validateManagerAndID(request.Manager, request.PackageID); err != nil {
 		result := validationCommandResult(command, err)
 		return "", "", &result
 	}
-	return manager, id, nil
+	return request.Manager, request.PackageID, nil
+}
+
+func parsePackageAction(r *http.Request, command string) (string, string, *CommandResult) {
+	var request packageActionRequest
+	if requestIsJSON(r) {
+		if err := decodeJSONRequest(r, &request); err != nil {
+			result := validationCommandResult(command, err)
+			return "", "", &result
+		}
+	} else {
+		request = packageActionRequestFromForm(r)
+	}
+	return validatePackageActionRequest(command, request)
 }
 
 func parsePackageUpdateAction(r *http.Request) (string, string, UpdateOptions, *CommandResult) {
-	var manager string
-	var id string
+	var request packageActionRequest
 	var options UpdateOptions
 	if requestIsJSON(r) {
 		var payload struct {
@@ -47,19 +54,17 @@ func parsePackageUpdateAction(r *http.Request) (string, string, UpdateOptions, *
 			result := validationCommandResult("update", err)
 			return "", "", UpdateOptions{}, &result
 		}
-		manager = payload.Manager
-		id = payload.PackageID
+		request.Manager = payload.Manager
+		request.PackageID = payload.PackageID
 		options.AllowUnknownVersion = payload.AllowUnknownVersion
 		options.AllowPinned = payload.AllowPinned
 	} else {
-		_ = r.ParseForm()
-		manager = r.Form.Get("manager")
-		id = r.Form.Get("package_id")
+		request = packageActionRequestFromForm(r)
 		options = updateOptionsFromForm(r)
 	}
-	if err := validateManagerAndID(manager, id); err != nil {
-		result := validationCommandResult("update", err)
-		return "", "", UpdateOptions{}, &result
+	manager, id, invalid := validatePackageActionRequest("update", request)
+	if invalid != nil {
+		return "", "", UpdateOptions{}, invalid
 	}
 	return manager, id, options, nil
 }
