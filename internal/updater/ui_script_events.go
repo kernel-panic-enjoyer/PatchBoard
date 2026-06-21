@@ -80,6 +80,9 @@ const pageScriptEvents = `
       pauseToastTimers();
     }else{
       resumeToastTimers();
+      if(!eventStream){ startEventStream(); }
+      if(latestStatus && latestStatus.loading){ loadStatus(false); }
+      if(latestPackagesLoading){ loadPackages(false); }
     }
   });
   $("scan-button").addEventListener("click", async function(){
@@ -88,9 +91,15 @@ const pageScriptEvents = `
     showNotice("Scanning applications...", true);
     try{
       var response = await postForm("/api/scan", {});
-      var data = await response.json();
-      if(!response.ok){ throw new Error(data.error || "Scan failed"); }
+      var payload = await response.json();
+      if(!response.ok){ throw new Error(payload.error || "Scan failed"); }
+      var finalStatus = await waitForJob(payload.job_id, function(status){
+        showNotice(status.notice || "Scanning applications...", true);
+      });
+      var data = finalStatus.scan;
+      if(!data){ throw new Error(finalStatus.error || "Scan did not return results"); }
       renderScan(data);
+      await loadPackages(false);
       if(data.errors && data.errors.length){
         showNotice("Application scan completed with errors. Review Scan Results for details.");
         showToast("Application scan completed with errors.", "error");
@@ -101,7 +110,12 @@ const pageScriptEvents = `
     }catch(e){ showNotice("Scan failed: " + e.message); showToast("Scan failed: " + e.message, "error"); }
     button.disabled = false;
   });
-  $("refresh-packages").addEventListener("click", function(){ loadPackages(true); });
+  $("refresh-packages").addEventListener("click", function(){
+    startInventoryRefresh().catch(function(e){
+      showNotice("Could not refresh package status: " + e.message);
+      showToast("Could not refresh package status: " + e.message, "error");
+    });
+  });
   $("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
   $("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
   $("updates-prev").addEventListener("click", function(){

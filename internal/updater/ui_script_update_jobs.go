@@ -4,6 +4,9 @@ const pageScriptUpdateJobs = `
   function updateJobMessage(status){
     status = status || {};
     var mode = status.mode === "selected" ? "selected" : "all";
+    if(status.state === "queued"){
+      return mode === "selected" ? "Queued selected updates..." : "Queued update job...";
+    }
     if(status.cancel_requested && status.running){
       return "Cancelling after current command stops...";
     }
@@ -29,38 +32,16 @@ const pageScriptUpdateJobs = `
       activeUpdateKeys = keys;
     }
   }
-  function clearUpdateJobPoll(){
-    if(updateJobPollTimer){
-      clearTimeout(updateJobPollTimer);
-      updateJobPollTimer = null;
-    }
-  }
   function renderUpdateJobStatus(status){
     applyUpdateJobPackageKeys(status);
     var message = updateJobMessage(status);
-    var active = !!(status && status.running);
-    setUpdateBusy(active || !!(status && status.refresh_started), activeUpdateKeys, status ? status.current_key : "");
-    setGlobalProgress(active || !!(status && status.refresh_started), message, active && !status.cancel_requested);
-    if(active || !!(status && status.refresh_started)){
+    var active = !!(status && !jobComplete(status));
+    setUpdateBusy(active, activeUpdateKeys, status ? status.current_key : "");
+    setGlobalProgress(active, message, active && !status.cancel_requested);
+    if(active){
       showNotice("");
     }else{
       showNotice(message);
-    }
-  }
-  async function finishUpdateJob(status){
-    clearUpdateJobPoll();
-    renderUpdateJobStatus(status);
-    try{
-      if(status && status.refresh_started){
-        setGlobalProgress(true, updateJobMessage(status), false);
-        await refreshPackagesAfterUpdate(true);
-      }
-      showUpdateJobToast(status);
-    }finally{
-      activeUpdateKeys = [];
-      activeUpdateJobID = "";
-      setUpdateBusy(false, [], "");
-      setGlobalProgress(false, "", false);
     }
   }
   function showUpdateJobToast(status){
@@ -79,25 +60,7 @@ const pageScriptUpdateJobs = `
       showToast("Update job completed successfully.", "success");
     }
   }
-  async function pollUpdateJobStatus(){
-    try{
-      var response = await fetch(api("/api/update-all/status"));
-      var status = await response.json();
-      if(!response.ok){ throw new Error(status.error || "Could not load update status"); }
-      if(activeUpdateJobID && status.job_id && status.job_id !== activeUpdateJobID){ return; }
-      renderUpdateJobStatus(status);
-      if(status.running){
-        updateJobPollTimer = setTimeout(pollUpdateJobStatus, 800);
-        return;
-      }
-      await finishUpdateJob(status);
-    }catch(e){
-      showNotice("Could not load update status: " + e.message);
-      updateJobPollTimer = setTimeout(pollUpdateJobStatus, 1200);
-    }
-  }
   async function startUpdateJob(params, keys, message){
-    clearUpdateJobPoll();
     activeUpdateKeys = keys || [];
     activeUpdateJobID = "";
     setUpdateBusy(true, activeUpdateKeys);
@@ -109,19 +72,14 @@ const pageScriptUpdateJobs = `
       if(!response.ok){
         if(response.status === 409 && status.running){
           activeUpdateJobID = status.job_id || "";
-          renderUpdateJobStatus(status);
-          updateJobPollTimer = setTimeout(pollUpdateJobStatus, 800);
+          upsertServerJob(status);
           return;
         }
         throw new Error(status.error || status.notice || "Could not start update job");
       }
       activeUpdateJobID = status.job_id || "";
       renderUpdateJobStatus(status);
-      if(status.running){
-        updateJobPollTimer = setTimeout(pollUpdateJobStatus, 800);
-        return;
-      }
-      await finishUpdateJob(status);
+      upsertServerJob(status);
     }catch(e){
       activeUpdateKeys = [];
       activeUpdateJobID = "";
@@ -133,13 +91,10 @@ const pageScriptUpdateJobs = `
   }
   async function checkActiveUpdateJob(){
     try{
-      var response = await fetch(api("/api/update-all/status"));
-      var status = await response.json();
-      if(!response.ok || !status.running){ return; }
-      activeUpdateJobID = status.job_id || "";
-      renderUpdateJobStatus(status);
-      clearUpdateJobPoll();
-      updateJobPollTimer = setTimeout(pollUpdateJobStatus, 800);
+      var response = await fetch(api("/api/jobs"));
+      var payload = await response.json();
+      if(!response.ok){ return; }
+      reconcileJobs(payload.jobs || []);
     }catch(e){}
   }
   async function cancelUpdateJob(){
@@ -148,12 +103,17 @@ const pageScriptUpdateJobs = `
     setGlobalProgress(true, "Cancelling after current command stops...", false);
     showNotice("");
     try{
-      var response = await postForm("/api/update-all/cancel", {});
+      var cancelID = activeUpdateJobID;
+      if(!cancelID){
+        var active = activeUpdateJobs();
+        cancelID = active.length ? active[0].job_id : "";
+      }
+      var params = new URLSearchParams();
+      if(cancelID){ params.set("job_id", cancelID); }
+      var response = await postForm(cancelID ? "/api/jobs/cancel" : "/api/update-all/cancel", params);
       var status = await response.json();
       if(!response.ok){ throw new Error(status.error || "Could not cancel update job"); }
-      renderUpdateJobStatus(status);
-      clearUpdateJobPoll();
-      updateJobPollTimer = setTimeout(pollUpdateJobStatus, 500);
+      upsertServerJob(status);
     }catch(e){
       showNotice("Could not cancel updates: " + e.message);
       if(button){ button.disabled = false; }

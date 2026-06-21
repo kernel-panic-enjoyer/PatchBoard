@@ -42,3 +42,91 @@ func TestSortSearchPackagesPrioritizesExactIdentityBeforePrefixAndMoniker(t *tes
 		t.Fatalf("expected ghx prefix match after exact identity and exact moniker, got %#v", packages)
 	}
 }
+
+func TestAnnotateSearchPackageAddsSourceBackendAndMatchReason(t *testing.T) {
+	storeViaWinget := Package{
+		Manager: managerStore,
+		Source:  sourceMSStore,
+		ID:      "9NKSQGP7F2NH",
+		Name:    "Codex",
+	}
+	annotateSearchPackage("codex", &storeViaWinget)
+	if storeViaWinget.ActionBackend != backendWingetMSStoreFallback {
+		t.Fatalf("expected winget Store fallback backend, got %#v", storeViaWinget)
+	}
+	if storeViaWinget.MatchReason != "Exact package name match." {
+		t.Fatalf("expected exact name match reason, got %#v", storeViaWinget)
+	}
+
+	choco := Package{Manager: managerChoco, ID: "gh", Name: "gh"}
+	annotateSearchPackage("github-cli", &choco)
+	if choco.Source != managerChoco {
+		t.Fatalf("expected Chocolatey source, got %#v", choco)
+	}
+	if choco.MatchReason != "Returned by Chocolatey search for this query." {
+		t.Fatalf("expected Chocolatey fallback match reason, got %#v", choco)
+	}
+}
+
+func TestSearchMatchReasonUsesWingetMatchMetadata(t *testing.T) {
+	pkg := Package{
+		Manager: managerWinget,
+		ID:      "GitHub.cli",
+		Name:    "GitHub CLI",
+		Match:   "Moniker: gh",
+	}
+	if got := searchMatchReason("gh", pkg); got != "Matched moniker gh." {
+		t.Fatalf("expected winget moniker match reason, got %q", got)
+	}
+}
+
+func TestRunPackageSearchesPreservesPartialFailureResults(t *testing.T) {
+	oldRunners := packageSearchRunners
+	defer func() { packageSearchRunners = oldRunners }()
+
+	packageSearchRunners = []packageSearchRunner{
+		{
+			Manager: managerWinget,
+			Run: func(query string) packageSearchResult {
+				return packageSearchResult{
+					ResultKey:     managerWinget,
+					CommandResult: CommandResult{Command: "winget search gh", Code: 1, Stderr: "source failed"},
+				}
+			},
+		},
+		{
+			Manager: managerChoco,
+			Run: func(query string) packageSearchResult {
+				return packageSearchResult{
+					ResultKey: managerChoco,
+					Packages:  []Package{{Manager: managerChoco, ID: "gh", Name: "gh", Version: "2.0.0"}},
+					CommandResult: CommandResult{
+						OK:      true,
+						Command: "choco search gh",
+						Stdout:  "gh|2.0.0",
+					},
+				}
+			},
+		},
+	}
+
+	results := runPackageSearches("gh", map[string]ManagerStatus{
+		managerWinget: {Available: true},
+		managerChoco:  {Available: true},
+	})
+	if len(results) != 2 {
+		t.Fatalf("expected failed and successful search result, got %#v", results)
+	}
+	var sawWingetFailure, sawChocoPackage bool
+	for _, result := range results {
+		if result.ResultKey == managerWinget && !result.CommandResult.OK && result.CommandResult.Stderr == "source failed" {
+			sawWingetFailure = true
+		}
+		if result.ResultKey == managerChoco && len(result.Packages) == 1 && result.Packages[0].ID == "gh" {
+			sawChocoPackage = true
+		}
+	}
+	if !sawWingetFailure || !sawChocoPackage {
+		t.Fatalf("partial failure metadata was not preserved: %#v", results)
+	}
+}

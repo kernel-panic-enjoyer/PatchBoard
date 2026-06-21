@@ -3,7 +3,6 @@ package updater
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-func TestUpdateJobRejectsConcurrentStarts(t *testing.T) {
+func TestUpdateJobQueuesConcurrentStarts(t *testing.T) {
 	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
@@ -24,42 +23,42 @@ func TestUpdateJobRejectsConcurrentStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Running || status.Total != 2 {
+	if status.State != jobStateQueued || status.Total != 2 {
 		t.Fatalf("unexpected initial job status: %#v", status)
 	}
 	if len(status.PackageKeys) != 2 || status.PackageKeys[0] != "winget:Git.Git" || status.PackageKeys[1] != "choco:gh" {
 		t.Fatalf("unexpected job package keys: %#v", status.PackageKeys)
 	}
 
-	_, err = app.startUpdateJob(nil)
-	if !errors.Is(err, errUpdateJobRunning) {
-		t.Fatalf("expected concurrent start rejection, got %v", err)
+	next, err := app.startUpdateJob(nil)
+	if err != nil {
+		t.Fatalf("expected concurrent update job to queue, got %v", err)
 	}
-	app.cancelUpdateJob()
+	if next.JobID == status.JobID || next.State != jobStateQueued {
+		t.Fatalf("expected second queued update job, first=%#v second=%#v", status, next)
+	}
+	app.cancelOperationJob(status.JobID)
+	app.cancelOperationJob(next.JobID)
 	waitForUpdateJobStopped(t, app)
 }
 
 func TestUpdateJobStatusReturnsIndependentSlices(t *testing.T) {
-	app := &App{
-		updateJob: &UpdateJob{
-			status: UpdateJobStatus{
-				JobID:       "update-1",
-				Running:     true,
-				PackageKeys: []string{"winget:Git.Git"},
-				Results: []UpdateResult{{
-					Key:    "winget:Git.Git",
-					Result: CommandResult{OK: true, Command: "winget upgrade Git.Git"},
-				}},
-			},
-		},
+	original := UpdateJobStatus{
+		JobID:       "update-1",
+		Running:     true,
+		PackageKeys: []string{"winget:Git.Git"},
+		Results: []UpdateResult{{
+			Key:    "winget:Git.Git",
+			Result: CommandResult{OK: true, Command: "winget upgrade Git.Git"},
+		}},
 	}
 
-	status := app.updateJobStatus()
+	status := cloneUpdateJobStatus(original)
 	status.PackageKeys[0] = "winget:Mutated.App"
 	status.Results[0].Key = "winget:Mutated.App"
 	status.Results[0].Result.Command = "mutated"
 
-	next := app.updateJobStatus()
+	next := cloneUpdateJobStatus(original)
 	if next.PackageKeys[0] != "winget:Git.Git" {
 		t.Fatalf("package key slice aliases internal job state: %#v", next.PackageKeys)
 	}
@@ -133,7 +132,7 @@ func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 		t.Fatalf("expected cancel requested status, got %#v", cancelStatus)
 	}
 	status := waitForUpdateJobStopped(t, app)
-	if !status.CancelRequested || status.Running || !status.RefreshStarted {
+	if !status.CancelRequested || status.Running || status.RefreshStarted {
 		t.Fatalf("unexpected cancelled status: %#v", status)
 	}
 	if len(status.Results) != 1 || status.Results[0].Result.Code != commandCancelledCode {
@@ -450,8 +449,8 @@ func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("update job did not start inventory refresh")
 	}
-	if status := app.updateJobStatus(); !status.Running || status.RefreshStarted {
-		t.Fatalf("job should not publish final status before refresh starts, got %#v", status)
+	if status := app.updateJobStatus(); !status.Running || !status.RefreshStarted || status.State != jobStateRefreshing {
+		t.Fatalf("job should stay running while refresh is active, got %#v", status)
 	}
 	close(releaseRefresh)
 	status := waitForUpdateJobStopped(t, app)
@@ -460,7 +459,7 @@ func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 	}
 }
 
-func TestUpdateJobRejectsConcurrentStartBeforeValidation(t *testing.T) {
+func TestUpdateJobValidatesConcurrentQueuedStart(t *testing.T) {
 	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
@@ -472,8 +471,8 @@ func TestUpdateJobRejectsConcurrentStartBeforeValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := app.startUpdateJob([]string{"not-a-valid-key"})
-	if !errors.Is(err, errUpdateJobRunning) {
-		t.Fatalf("expected running-job rejection before validation, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "package key must be manager:id") {
+		t.Fatalf("expected invalid package key validation, got %v", err)
 	}
 	app.cancelUpdateJob()
 	waitForUpdateJobStopped(t, app)

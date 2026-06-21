@@ -96,7 +96,6 @@ func (app *App) handleAutoUpdateSettingsAPI(w http.ResponseWriter, r *http.Reque
 	}
 	state, result := setAutoUpdate(global, packageKeys, packageEnabled)
 	app.refreshStatus(true)
-	app.refreshInventory(true)
 	writeJSON(w, http.StatusOK, settingsCommandResponse(state, result))
 }
 

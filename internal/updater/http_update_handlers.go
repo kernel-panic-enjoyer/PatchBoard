@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"context"
 	"errors"
 	"net/http"
 )
@@ -123,9 +122,7 @@ func (app *App) handleInstallAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, commandResponse(*invalid))
 		return
 	}
-	result := installPackage(manager, id)
-	app.refreshInventory(true)
-	writeJSON(w, http.StatusOK, refreshedCommandResponse(result))
+	jobAcceptedResponse(w, app.startInstallJob(manager, id))
 }
 
 func (app *App) handleManagerInstallAPI(w http.ResponseWriter, r *http.Request) {
@@ -142,10 +139,7 @@ func (app *App) handleManagerInstallAPI(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, commandResponse(result))
 		return
 	}
-	result := installManager(manager)
-	app.refreshStatus(true)
-	app.refreshInventory(true)
-	writeJSON(w, http.StatusOK, refreshedCommandResponse(result))
+	jobAcceptedResponse(w, app.startManagerInstallJob(manager))
 }
 
 func (app *App) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {
@@ -157,14 +151,7 @@ func (app *App) handleUpdateAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, commandResponse(*invalid))
 		return
 	}
-	pkg := app.packageForUpdate(manager, id)
-	pkg.AllowUnknownVersionUpdate = options.AllowUnknownVersion
-	pkg.AllowPinnedUpdate = options.AllowPinned
-	result := app.updatePackageWithInventoryRetry(context.Background(), pkg)
-	app.refreshInventory(true)
-	response := refreshedCommandResponse(result)
-	response.Notice = updateFailureNotice(result)
-	writeJSON(w, http.StatusOK, response)
+	jobAcceptedResponse(w, app.startSingleUpdateJob(manager, id, options))
 }
 
 func (app *App) handleUpdateAllAPI(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +172,7 @@ func (app *App) handleUpdateAllAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	status, err := app.startUpdateJobWithOptions(packageKeys, options)
+	status, err := app.startBulkUpdateJob(packageKeys, options)
 	if err != nil {
 		code := http.StatusBadRequest
 		if errors.Is(err, errUpdateJobRunning) {
@@ -195,11 +182,16 @@ func (app *App) handleUpdateAllAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, status)
 		return
 	}
-	writeJSON(w, http.StatusOK, status)
+	jobAcceptedResponse(w, status)
 }
 
 func (app *App) handleUpdateAllStatusAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	status := app.latestOperationJobStatus(jobTypeUpdateAll, jobTypeUpdate)
+	if status.JobID != "" {
+		writeJSON(w, http.StatusOK, status)
 		return
 	}
 	writeJSON(w, http.StatusOK, app.updateJobStatus())
@@ -209,5 +201,15 @@ func (app *App) handleUpdateAllCancelAPI(w http.ResponseWriter, r *http.Request)
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	writeJSON(w, http.StatusOK, app.cancelUpdateJob())
+	status := app.latestOperationJobStatus(jobTypeUpdateAll, jobTypeUpdate)
+	if status.JobID == "" {
+		writeJSON(w, http.StatusOK, app.cancelUpdateJob())
+		return
+	}
+	cancelled, ok := app.cancelOperationJob(status.JobID)
+	if !ok {
+		writeJSON(w, http.StatusOK, OperationJobStatus{})
+		return
+	}
+	writeJSON(w, http.StatusOK, cancelled)
 }

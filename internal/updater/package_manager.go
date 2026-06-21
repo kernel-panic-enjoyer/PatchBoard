@@ -30,6 +30,7 @@ type Package struct {
 	AutoUpdate       bool   `json:"auto_update"`
 	Source           string `json:"source,omitempty"`
 	Match            string `json:"match,omitempty"`
+	MatchReason      string `json:"match_reason,omitempty"`
 	ActionBackend    string `json:"action_backend,omitempty"`
 
 	AllowUnknownVersionUpdate bool `json:"-"`

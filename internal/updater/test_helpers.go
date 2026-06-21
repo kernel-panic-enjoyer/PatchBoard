@@ -84,7 +84,7 @@ func waitForUpdateJobStopped(t *testing.T, app *App) UpdateJobStatus {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		status := app.updateJobStatus()
-		if !status.Running {
+		if status.JobID != "" && operationJobComplete(status) {
 			return status
 		}
 		time.Sleep(20 * time.Millisecond)

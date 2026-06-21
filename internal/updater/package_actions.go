@@ -78,6 +78,10 @@ func isASCIIAlphaNumeric(r rune) bool {
 }
 
 func installPackage(manager, id string) CommandResult {
+	return installPackageContext(context.Background(), manager, id)
+}
+
+func installPackageContext(ctx context.Context, manager, id string) CommandResult {
 	if err := validateManagerAndID(manager, id); err != nil {
 		return validationCommandResult("install", err)
 	}
@@ -86,11 +90,11 @@ func installPackage(manager, id string) CommandResult {
 	var result CommandResult
 	switch manager {
 	case managerStore:
-		result = runStoreInstallWithFallback(id)
+		result = runStoreInstallWithFallbackContext(ctx, id)
 	case managerWinget:
-		result = runPackageActionCommand(context.Background(), managerWinget, packageActionTimeout, wingetInstallCommand(manager, id, false)...)
+		result = runPackageActionCommand(ctx, managerWinget, packageActionTimeout, wingetInstallCommand(manager, id, false)...)
 	case managerChoco:
-		result = runPackageActionCommand(context.Background(), managerChoco, packageActionTimeout, chocoPackageCommand("install", id)...)
+		result = runPackageActionCommand(ctx, managerChoco, packageActionTimeout, chocoPackageCommand("install", id)...)
 	}
 	appLog("Install finished for %s:%s with code %d.", manager, id, result.Code)
 	return result
@@ -169,6 +173,10 @@ func retryTransientPackageAction(ctx context.Context, manager string, timeout ti
 }
 
 func installManager(manager string) CommandResult {
+	return installManagerContext(context.Background(), manager)
+}
+
+func installManagerContext(ctx context.Context, manager string) CommandResult {
 	appLog("Package manager install action started for %s.", manager)
 	invalidateManagerDetectionCache()
 	defer invalidateManagerDetectionCache()
@@ -204,7 +212,7 @@ func installManager(manager string) CommandResult {
 		}
 	case managerChoco:
 		if detectManager(managerWinget).Available {
-			result = installPackage(managerWinget, "Chocolatey.Chocolatey")
+			result = installPackageContext(ctx, managerWinget, "Chocolatey.Chocolatey")
 			break
 		}
 		err := openURL("https://chocolatey.org/install")

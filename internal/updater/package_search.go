@@ -20,7 +20,10 @@ func searchPackages(query string) (PackageLookup, error) {
 	var foundPackages []Package
 	for _, search := range runPackageSearches(query, managers) {
 		commandResults[search.ResultKey] = search.CommandResult
-		foundPackages = append(foundPackages, search.Packages...)
+		for _, pkg := range search.Packages {
+			annotateSearchPackage(query, &pkg)
+			foundPackages = append(foundPackages, pkg)
+		}
 	}
 	packages := dedupePackagesByManagerID(foundPackages)
 	sortSearchPackages(query, packages)
@@ -77,7 +80,7 @@ func searchStorePackages(query string) packageSearchResult {
 		packages[i].UpdateSupported = true
 		packages[i].ActionBackend = backendStoreCLI
 	}
-	return packageSearchResult{ResultKey: "store_search", Packages: packages, CommandResult: result}
+	return packageSearchResult{ResultKey: managerStore, Packages: packages, CommandResult: result}
 }
 
 func searchWingetPackages(query string) packageSearchResult {
@@ -90,8 +93,89 @@ func searchChocoPackages(query string) packageSearchResult {
 	packages := parseChocoList(result.Stdout + "\n" + result.Stderr)
 	for i := range packages {
 		packages[i].Key = packageKey(managerChoco, packages[i].ID)
+		packages[i].Source = managerChoco
 	}
 	return packageSearchResult{ResultKey: managerChoco, Packages: packages, CommandResult: result}
+}
+
+func annotateSearchPackage(query string, pkg *Package) {
+	if pkg == nil {
+		return
+	}
+	if pkg.Source == "" {
+		switch pkg.Manager {
+		case managerStore:
+			pkg.Source = sourceStoreCLI
+		case managerWinget:
+			pkg.Source = sourceWinget
+		case managerChoco:
+			pkg.Source = managerChoco
+		}
+	}
+	if pkg.ActionBackend == "" && pkg.Manager == managerStore && pkg.Source == sourceMSStore {
+		pkg.ActionBackend = backendWingetMSStoreFallback
+	}
+	if pkg.MatchReason != "" {
+		return
+	}
+	pkg.MatchReason = searchMatchReason(query, *pkg)
+}
+
+func searchMatchReason(query string, pkg Package) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "Returned by package-manager search."
+	}
+	if match := strings.TrimSpace(pkg.Match); match != "" {
+		return "Matched " + humanSearchMatch(match) + "."
+	}
+	lowerQuery := strings.ToLower(query)
+	name := strings.TrimSpace(pkg.Name)
+	id := strings.TrimSpace(pkg.ID)
+	switch {
+	case strings.EqualFold(name, query):
+		return "Exact package name match."
+	case strings.EqualFold(id, query):
+		return "Exact package ID match."
+	case normalizePackageIdentity(name) == normalizePackageIdentity(query):
+		return "Normalized package name match."
+	case normalizePackageIdentity(id) == normalizePackageIdentity(query):
+		return "Normalized package ID match."
+	case strings.HasPrefix(strings.ToLower(name), lowerQuery):
+		return "Package name starts with the search text."
+	case strings.HasPrefix(strings.ToLower(id), lowerQuery):
+		return "Package ID starts with the search text."
+	case strings.Contains(strings.ToLower(name), lowerQuery):
+		return "Package name contains the search text."
+	case strings.Contains(strings.ToLower(id), lowerQuery):
+		return "Package ID contains the search text."
+	}
+	return "Returned by " + searchManagerName(pkg.Manager) + " search for this query."
+}
+
+func humanSearchMatch(match string) string {
+	match = strings.TrimSpace(match)
+	if before, after, ok := strings.Cut(match, ":"); ok {
+		before = strings.TrimSpace(before)
+		after = strings.TrimSpace(after)
+		if before != "" && after != "" {
+			return strings.ToLower(before) + " " + after
+		}
+	}
+	return match
+}
+
+func searchManagerName(manager string) string {
+	switch manager {
+	case managerWinget:
+		return "winget"
+	case managerStore:
+		return "Store"
+	case managerChoco:
+		return "Chocolatey"
+	default:
+		return "package-manager"
+	}
 }
 
 func dedupePackagesByManagerID(packages []Package) []Package {

@@ -83,7 +83,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 
     <section id="search-results-panel" class="panel table-panel hidden">
       <div class="section-heading"><div><span class="panel-kicker">Installable packages</span><h2>Search Results</h2></div><div class="button-row"><button id="search-prev" class="ghost" type="button" disabled>Previous</button><span id="search-page-status" class="muted">Page 1</span><button id="search-next" class="ghost" type="button" disabled>Next</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Manager</th><th>ID</th><th>Version</th><th>Action</th></tr></thead><tbody id="search-results-body"></tbody></table></div>
+      <div id="search-provenance" class="search-provenance hidden"></div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Source</th><th>Manager / Backend</th><th>Exact ID</th><th>Match</th><th>Version</th><th>Action</th></tr></thead><tbody id="search-results-body"></tbody></table></div>
     </section>
 
     <section id="update-progress" class="progress-panel hidden"><div class="progress-header"><div><span class="panel-kicker">Update job</span><div class="progress-title"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Updating packages...</span></span></div></div><button id="cancel-updates-button" class="secondary hidden" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></span><span>Cancel Updates</span></button></div><div class="progress-bar"><span></span></div></section>

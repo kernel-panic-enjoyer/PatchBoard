@@ -18,17 +18,21 @@ func storeActionUnavailableResult(action string) CommandResult {
 }
 
 func runStoreInstallWithFallback(id string) CommandResult {
+	return runStoreInstallWithFallbackContext(context.Background(), id)
+}
+
+func runStoreInstallWithFallbackContext(ctx context.Context, id string) CommandResult {
 	if packageActionManagerAvailable(managerStore) {
-		result := runPackageActionCommand(context.Background(), managerStore, packageActionTimeout, managerCommand(managerStore, "install", id)...)
-		if result.OK || !packageActionManagerAvailable(managerWinget) {
+		result := runPackageActionCommand(ctx, managerStore, packageActionTimeout, managerCommand(managerStore, "install", id)...)
+		if result.OK || ctx.Err() != nil || !packageActionManagerAvailable(managerWinget) {
 			return result
 		}
 		appLog("Store install for %q failed; trying winget msstore fallback.", id)
-		fallback := runPackageActionCommand(context.Background(), managerWinget, packageActionTimeout, wingetInstallCommand(managerStore, id, false)...)
+		fallback := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, wingetInstallCommand(managerStore, id, false)...)
 		return mergeCommandResults(result, fallback, "winget msstore fallback")
 	}
 	if packageActionManagerAvailable(managerWinget) {
-		return runPackageActionCommand(context.Background(), managerWinget, packageActionTimeout, wingetInstallCommand(managerStore, id, false)...)
+		return runPackageActionCommand(ctx, managerWinget, packageActionTimeout, wingetInstallCommand(managerStore, id, false)...)
 	}
 	return storeActionUnavailableResult("install")
 }

@@ -31,6 +31,35 @@ const pageScriptThemeAndLabels = `
     };
     return labels[value] || value;
   }
+  function sourceLabel(value){
+    var labels = {
+      winget: "winget repository",
+      msstore: "Microsoft Store",
+      "store-cli": "Store CLI",
+      appx: "AppX inventory",
+      choco: "Chocolatey sources"
+    };
+    return labels[value] || value || "Unknown source";
+  }
+  function executionBackendLabel(pkg){
+    pkg = pkg || {};
+    if(pkg.action_backend){ return backendLabel(pkg.action_backend); }
+    if(pkg.manager === "store" && pkg.source === "msstore"){ return backendLabel("winget-msstore-fallback"); }
+    return managerLabel(pkg.manager);
+  }
+  function installRouteText(pkg){
+    pkg = pkg || {};
+    if(pkg.manager === "store"){
+      if(pkg.action_backend === "winget-msstore-fallback" || pkg.source === "msstore"){
+        return "Installs through winget Store fallback.";
+      }
+      if(pkg.action_backend === "store-cli" || pkg.source === "store-cli"){
+        return "Installs through native Store CLI.";
+      }
+      return "Installs through Store backend.";
+    }
+    return "Installs through " + managerLabel(pkg.manager) + ".";
+  }
   function allowUnknownVersionUpdates(){
     var control = $("update-allow-unknown");
     return !!control && !!control.checked;

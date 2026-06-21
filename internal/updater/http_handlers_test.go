@@ -48,6 +48,36 @@ func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 	}
 }
 
+func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
+	app := &App{token: "test-token"}
+	status := app.startOperationJob(jobTypeInventoryRefresh, "", 1, nil, func(ctx context.Context, job *OperationJob) {
+		app.mutateOperationJob(job, func(status *OperationJobStatus) {
+			status.State = jobStateSucceeded
+		})
+	})
+
+	badRequest := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	badResponse := httptest.NewRecorder()
+	app.serveHTTP(badResponse, badRequest)
+	if badResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized jobs request, got %d", badResponse.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/jobs?token=test-token", nil)
+	response := httptest.NewRecorder()
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded jobsAPIResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Jobs) != 1 || decoded.Jobs[0].JobID != status.JobID {
+		t.Fatalf("unexpected jobs response: %#v", decoded)
+	}
+}
+
 func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	oldLogs := sessionLogs
 	sessionLogs = &LogBuffer{}
@@ -74,7 +104,7 @@ func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); got != "application/zip" {
 		t.Fatalf("expected zip content type, got %q", got)
 	}
-	if !strings.Contains(response.Header().Get("Content-Disposition"), "windows-updater-webui-logs.zip") {
+	if !strings.Contains(response.Header().Get("Content-Disposition"), "_windows-updater-webui-logs.zip") {
 		t.Fatalf("missing zip attachment header: %q", response.Header().Get("Content-Disposition"))
 	}
 
@@ -92,6 +122,14 @@ func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	}
 	if strings.Contains(files["updates.txt"], "winget search gh") {
 		t.Fatalf("search command should not be exported as update: %q", files["updates.txt"])
+	}
+}
+
+func TestLogExportFilenameUsesTimestampPrefix(t *testing.T) {
+	got := logExportFilename(time.Date(2026, 6, 21, 17, 42, 9, 0, time.Local))
+	want := "2026-06-21_17-42-09_windows-updater-webui-logs.zip"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
 
@@ -179,23 +217,28 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 	response := httptest.NewRecorder()
 
 	app.serveHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("expected update request to complete despite canceled request context, got %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("expected update request to start a background job despite canceled request context, got %d: %s", response.Code, response.Body.String())
 	}
-	if observedErr != nil {
-		t.Fatalf("update command used canceled request context: %v", observedErr)
+	var status OperationJobStatus
+	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.JobID == "" {
+		t.Fatalf("expected job id in response: %#v", status)
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		app.mu.RLock()
-		loading := app.inventoryLoading
-		app.mu.RUnlock()
-		if !loading {
+		status, ok := app.operationJobStatus(status.JobID)
+		if ok && !status.Running && status.State != jobStateQueued {
+			if observedErr != nil {
+				t.Fatalf("update command used canceled request context: %v", observedErr)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("inventory refresh did not finish")
+	t.Fatal("background update job did not finish")
 }
 
 func TestAPIRejectsInvalidRequests(t *testing.T) {

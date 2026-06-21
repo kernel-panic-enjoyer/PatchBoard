@@ -132,10 +132,15 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .stack{display:grid;gap:10px}
 .check-control{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-weight:700}
 .table-panel{padding:0;overflow:hidden}
-.table-panel>.section-heading,.table-panel>p,.table-panel>pre,.table-footer{padding-left:16px;padding-right:16px}
-.table-panel>.section-heading{padding-top:16px}
-.table-footer{padding-top:12px;padding-bottom:16px}
-.update-options{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-strong)}
+  .table-panel>.section-heading,.table-panel>p,.table-panel>pre,.table-footer{padding-left:16px;padding-right:16px}
+  .table-panel>.section-heading{padding-top:16px}
+  .table-footer{padding-top:12px;padding-bottom:16px}
+  .search-provenance{margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;background:var(--surface-strong);display:grid;gap:5px;color:var(--muted)}
+  .search-provenance.hidden{display:none}
+  .provenance-item{overflow-wrap:anywhere}
+  .package-id{display:inline-block;max-width:100%;padding:2px 5px;border:1px solid var(--line);border-radius:5px;background:var(--input);font:12px/1.45 Consolas,"Cascadia Mono","Courier New",monospace;color:var(--text);white-space:normal;overflow-wrap:anywhere}
+  .install-route{display:block;margin-top:6px;max-width:210px}
+  .update-options{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-strong)}
 .table-wrap{width:100%;overflow:auto}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead th{position:sticky;top:0;z-index:1;background:var(--surface-strong)}

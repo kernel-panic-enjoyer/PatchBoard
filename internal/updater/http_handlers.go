@@ -48,7 +48,7 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", `attachment; filename="windows-updater-webui-logs.zip"`)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+logExportFilename(time.Now())+`"`)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
 	case "/api/status":
@@ -61,8 +61,17 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
-		app.refreshInventory(r.URL.Query().Get("refresh") == "1")
 		writeJSON(w, http.StatusOK, app.inventorySnapshot())
+	case "/api/inventory/refresh":
+		app.handleInventoryRefreshAPI(w, r)
+	case "/api/jobs/status":
+		app.handleJobStatusAPI(w, r)
+	case "/api/jobs":
+		app.handleJobsAPI(w, r)
+	case "/api/jobs/cancel":
+		app.handleJobCancelAPI(w, r)
+	case "/api/events":
+		app.handleEventsAPI(w, r)
 	case "/api/logs":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -92,12 +101,7 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case "/api/managers/install":
 		app.handleManagerInstallAPI(w, r)
 	case "/api/scan":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		scan := scanInstalledApplications()
-		app.refreshInventory(true)
-		writeJSON(w, http.StatusOK, scan)
+		app.handleScanAPI(w, r)
 	case "/api/update":
 		app.handleUpdateAPI(w, r)
 	case "/api/update-all/status":
@@ -115,6 +119,10 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func logExportFilename(now time.Time) string {
+	return now.Format("2006-01-02_15-04-05") + "_windows-updater-webui-logs.zip"
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {

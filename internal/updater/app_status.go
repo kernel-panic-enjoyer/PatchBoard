@@ -31,6 +31,25 @@ func (app *App) refreshStatus(force bool) {
 }
 
 func (app *App) runStatusRefresh(force bool) {
+	status := buildStatusResponse(force)
+	app.mu.Lock()
+	app.status = status
+	app.statusFetchedAt = time.Now()
+	app.statusErr = ""
+	if app.statusQueued {
+		app.statusQueued = false
+		app.statusLoading = true
+		app.mu.Unlock()
+		appLog("Status refresh completed; running queued refresh.")
+		go app.runStatusRefresh(true)
+		return
+	}
+	app.statusLoading = false
+	app.mu.Unlock()
+	appLog("Status refresh completed.")
+}
+
+func buildStatusResponse(force bool) StatusResponse {
 	state := loadState()
 	dir, _ := stateDir()
 	var startupEnabled bool
@@ -53,8 +72,7 @@ func (app *App) runStatusRefresh(force bool) {
 	}
 	wg.Wait()
 
-	app.mu.Lock()
-	app.status = StatusResponse{
+	return StatusResponse{
 		Admin:           isAdmin(),
 		StateDir:        dir,
 		Managers:        managers,
@@ -62,6 +80,20 @@ func (app *App) runStatusRefresh(force bool) {
 		AutoTaskEnabled: autoTaskEnabled,
 		Settings:        state,
 	}
+}
+
+func (app *App) refreshStatusSync(reason string) StatusResponse {
+	appLog("Status refresh started for %s.", reason)
+	app.mu.Lock()
+	app.statusLoading = true
+	app.statusQueued = false
+	app.statusErr = ""
+	app.mu.Unlock()
+
+	status := buildStatusResponse(true)
+
+	app.mu.Lock()
+	app.status = status
 	app.statusFetchedAt = time.Now()
 	app.statusErr = ""
 	if app.statusQueued {
@@ -70,11 +102,12 @@ func (app *App) runStatusRefresh(force bool) {
 		app.mu.Unlock()
 		appLog("Status refresh completed; running queued refresh.")
 		go app.runStatusRefresh(true)
-		return
+		return status
 	}
 	app.statusLoading = false
 	app.mu.Unlock()
-	appLog("Status refresh completed.")
+	appLog("Status refresh completed for %s.", reason)
+	return status
 }
 
 func (app *App) statusSnapshot() StatusResponse {

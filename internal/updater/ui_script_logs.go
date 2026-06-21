@@ -49,7 +49,59 @@ const pageScriptLogConsole = `
       if(typeof data.latest_id === "number" && data.latest_id > lastLogID && (!data.entries || data.entries.length === 0)){
         lastLogID = data.latest_id;
       }
-    }catch(e){}
+      logPollDelay = 1000;
+    }catch(e){
+      logPollDelay = Math.min(15000, Math.round(logPollDelay * 1.6));
+    }
+  }
+  function scheduleLogPolling(){
+    if(logPollTimer || eventStream){ return; }
+    logPollTimer = setTimeout(async function(){
+      logPollTimer = null;
+      if(document.hidden){
+        scheduleLogPolling();
+        return;
+      }
+      await loadLogs();
+      scheduleLogPolling();
+    }, logPollDelay);
+  }
+  function stopLogPolling(){
+    if(logPollTimer){
+      clearTimeout(logPollTimer);
+      logPollTimer = null;
+    }
+  }
+  function startEventStream(){
+    if(!window.EventSource){
+      scheduleLogPolling();
+      return;
+    }
+    stopLogPolling();
+    if(eventStream){ eventStream.close(); }
+    eventStream = new EventSource(api("/api/events", {since:String(lastLogID)}));
+    eventStream.addEventListener("logs", function(event){
+      try{
+        var data = JSON.parse(event.data || "{}");
+        appendLogEntries(data.entries || []);
+        if(typeof data.latest_id === "number" && data.latest_id > lastLogID && (!data.entries || data.entries.length === 0)){
+          lastLogID = data.latest_id;
+        }
+      }catch(e){}
+    });
+    eventStream.addEventListener("jobs", function(event){
+      try{
+        var data = JSON.parse(event.data || "{}");
+        reconcileJobs(data.jobs || []);
+      }catch(e){}
+    });
+    eventStream.onerror = function(){
+      if(eventStream){
+        eventStream.close();
+        eventStream = null;
+      }
+      scheduleLogPolling();
+    };
   }
   function setActiveLogCategory(category){
     activeLogCategory = category || "all";

@@ -96,14 +96,14 @@ const pageScriptPackageRender = `
   function renderPackageTables(){
     var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
     var updateablePackages = packages.filter(packageAutoUpdateable);
-    var rowQueueRunning = rowUpdateQueueActive();
+    var updateJobRunning = activeUpdateJobRunning();
     $("auto-all").disabled = updateBusy || updateablePackages.length === 0;
     $("auto-none").disabled = updateBusy || updateablePackages.length === 0;
     renderUpdatesTable(updates, latestPackagesLoading);
     renderInstalledTable(latestPackagesLoading);
     var supportedUpdates = updates.filter(packageBulkUpdateable);
-    $("update-all-button").disabled = updateBusy || rowQueueRunning || supportedUpdates.length === 0;
-    $("update-selected-button").disabled = updateBusy || rowQueueRunning || supportedUpdates.length === 0;
+    $("update-all-button").disabled = updateBusy || updateJobRunning || supportedUpdates.length === 0;
+    $("update-selected-button").disabled = updateBusy || updateJobRunning || supportedUpdates.length === 0;
     renderDashboardSummary();
   }
   function renderPackages(data){
