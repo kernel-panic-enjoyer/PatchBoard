@@ -1,6 +1,4 @@
-package updater
-
-const pageCSS = `
+﻿
 :root{
   color-scheme:light dark;
   --bg:#eef3f7;
@@ -199,4 +197,4 @@ pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-
 @media(prefers-reduced-motion:reduce){
   .spinner,.progress-bar span{animation:none}
 }
-`
+

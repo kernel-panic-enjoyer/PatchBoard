@@ -15,10 +15,14 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := output.String()
+	surface := rendered + "\n" + uiJS + "\n" + uiCSS
 	for _, expected := range []string{
 		`class="dashboard-hero"`,
 		`rel="icon" href="/favicon.ico?v=`,
 		`rel="shortcut icon" href="/favicon.ico?v=`,
+		`rel="stylesheet" href="/assets/ui.css?v=`,
+		`src="/assets/ui.js?v=`,
+		`defer`,
 		`id="dashboard-summary"`,
 		`id="summary-updates"`,
 		`id="summary-packages"`,
@@ -249,8 +253,8 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Store apps detected via`,
 		`store-cli-resolved`,
 	} {
-		if !strings.Contains(rendered, expected) {
-			t.Fatalf("rendered page did not contain %q", expected)
+		if !strings.Contains(surface, expected) {
+			t.Fatalf("rendered page or embedded assets did not contain %q", expected)
 		}
 	}
 	for _, unexpected := range []string{
@@ -283,8 +287,13 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`name="token"`,
 		`searchParams.set("token"`,
 	} {
-		if strings.Contains(rendered, unexpected) {
-			t.Fatalf("rendered page should not contain %q", unexpected)
+		if strings.Contains(surface, unexpected) {
+			t.Fatalf("rendered page or embedded assets should not contain %q", unexpected)
+		}
+	}
+	for _, unexpectedInline := range []string{`<style>`, `<script>!function`, `<script>`} {
+		if strings.Contains(rendered, unexpectedInline) {
+			t.Fatalf("rendered page should not contain inline asset block %q", unexpectedInline)
 		}
 	}
 	progressIndex := strings.Index(rendered, `id="update-progress"`)

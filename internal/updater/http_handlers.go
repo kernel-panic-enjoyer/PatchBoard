@@ -124,6 +124,10 @@ func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusMisdirectedRequest, "untrusted host")
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/assets/") {
+		app.serveFrontendAsset(w, r)
+		return
+	}
 	if r.URL.Path == "/favicon.ico" {
 		w.Header().Set("Content-Type", "image/x-icon")
 		w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
@@ -171,9 +175,29 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, data PageData) {
 	data.StateDir, _ = stateDir()
 	data.Theme = state.Theme
 	data.IconVersion = appIconVersion()
+	data.AssetVersion = frontendAssetVersion()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pageTemplate.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (app *App) serveFrontendAsset(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	version := frontendAssetVersion()
+	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
+	w.Header().Set("ETag", `"`+version+`"`)
+	switch r.URL.Path {
+	case "/assets/ui.css":
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = io.WriteString(w, uiCSS)
+	case "/assets/ui.js":
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		_, _ = io.WriteString(w, uiJS)
+	default:
+		http.NotFound(w, r)
 	}
 }

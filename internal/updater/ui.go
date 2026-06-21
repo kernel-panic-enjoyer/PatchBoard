@@ -3,10 +3,11 @@ package updater
 import "html/template"
 
 type PageData struct {
-	Admin       bool
-	StateDir    string
-	Theme       string
-	IconVersion string
+	Admin        bool
+	StateDir     string
+	Theme        string
+	IconVersion  string
+	AssetVersion string
 }
 
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
@@ -18,9 +19,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon" sizes="any">
   <link rel="shortcut icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon">
+  <link rel="stylesheet" href="/assets/ui.css?v={{.AssetVersion}}">
   <title>Windows Updater WebUI</title>
-  <script>!function(){try{var t=localStorage.getItem("windows-updater-theme");if(t==="light"||t==="dark"){document.documentElement.dataset.theme=t}}catch(e){}}();</script>
-  <style>` + pageCSS + `</style>
 </head>
 <body>
   <header class="app-header">
@@ -122,6 +122,6 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       <pre id="session-log" class="session-log" role="tabpanel" tabindex="0" aria-labelledby="log-tab-all"></pre>
     </section>
   </main>
-  <script>` + pageJS + `</script>
+  <script src="/assets/ui.js?v={{.AssetVersion}}" defer></script>
 </body>
 </html>`))
