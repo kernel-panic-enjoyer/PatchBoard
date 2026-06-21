@@ -85,19 +85,36 @@ func TestLoadStateNormalizesVersionedStoreAppKeys(t *testing.T) {
 }
 
 func TestLoadStateNormalizesStoreAutoUpdateKeys(t *testing.T) {
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", dir)
 	raw := `{
   "created_at": "2026-06-14T12:00:00Z",
   "updated_at": "2026-06-14T12:00:00Z",
   "auto_update_packages": {
-    "store:OpenAI.Codex_1.0.0.0_x64__abc123": true,
+    "store:OpenAI.Codex_abc123": true,
+    "store:9NCODEX": true,
+    "store:Ambiguous Display Name": true,
     "winget:Git.Git": true
   },
   "registry_apps": {},
   "winget_apps": {},
   "store_apps": {},
   "store_resolve_cache": {},
+  "store_update_assessment_cache": {
+    "exact": {
+      "user_sid": "S-1-5-21-exact",
+      "package_family_name": "Exact.App_abc123",
+      "scan_id": "scan-exact",
+      "state": "available",
+      "observed_at": "2026-06-14T12:00:00Z",
+      "store_product_id": "9NCODEX",
+      "exact_action_target_available": true
+    }
+  },
   "theme": "dark"
 }`
 	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(raw), 0o644); err != nil {
@@ -105,11 +122,16 @@ func TestLoadStateNormalizesStoreAutoUpdateKeys(t *testing.T) {
 	}
 
 	state := loadState()
-	if !state.AutoUpdatePackages["store:OpenAI.Codex"] || !state.AutoUpdatePackages["winget:Git.Git"] {
+	codexKey := canonicalStoreAutoUpdateKey(userSID, "OpenAI.Codex_abc123")
+	productKey := canonicalStoreAutoUpdateKey("S-1-5-21-exact", "Exact.App_abc123")
+	if !state.AutoUpdatePackages[codexKey] || !state.AutoUpdatePackages[productKey] || !state.AutoUpdatePackages["winget:Git.Git"] {
 		t.Fatalf("auto-update keys were not normalized correctly: %#v", state.AutoUpdatePackages)
 	}
-	if state.AutoUpdatePackages["store:OpenAI.Codex_1.0.0.0_x64__abc123"] {
-		t.Fatalf("versioned Store auto-update key should not remain: %#v", state.AutoUpdatePackages)
+	if state.AutoUpdatePackages["store:Ambiguous Display Name"] {
+		t.Fatalf("ambiguous Store auto-update key should not remain: %#v", state.AutoUpdatePackages)
+	}
+	if len(state.StoreAutoUpdateMigration.Disabled) != 1 {
+		t.Fatalf("expected one disabled ambiguous Store preference, got %#v", state.StoreAutoUpdateMigration)
 	}
 }
 
@@ -169,6 +191,39 @@ func TestRunAutoUpdateSkipsUnknownVersionPackages(t *testing.T) {
 	}
 	if len(updated.LastAutoUpdateResults) != 0 {
 		t.Fatalf("expected no persisted update results for skipped unknown-version package, got %#v", updated.LastAutoUpdateResults)
+	}
+}
+
+func TestSetAutoUpdateRejectsAmbiguousStorePackageKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	if err := saveState(defaultState()); err != nil {
+		t.Fatal(err)
+	}
+
+	oldDelete := deleteTaskRunner
+	deleteTaskRunner = func(name string) CommandResult {
+		return CommandResult{OK: true, Command: "delete " + name}
+	}
+	defer func() { deleteTaskRunner = oldDelete }()
+
+	enabled := true
+	state, result := setAutoUpdate(nil, []string{"store:Ambiguous Display Name", "winget:Git.Git"}, &enabled)
+	if !result.OK {
+		t.Fatalf("unexpected task result: %#v", result)
+	}
+	if state.AutoUpdatePackages[""] {
+		t.Fatalf("ambiguous Store key was saved as an empty canonical key: %#v", state.AutoUpdatePackages)
+	}
+	if state.AutoUpdatePackages["store:Ambiguous Display Name"] {
+		t.Fatalf("ambiguous Store key should not be persisted: %#v", state.AutoUpdatePackages)
+	}
+	if !state.AutoUpdatePackages["winget:Git.Git"] {
+		t.Fatalf("non-Store package key should still be persisted: %#v", state.AutoUpdatePackages)
+	}
+	loaded := loadState()
+	if loaded.AutoUpdatePackages[""] || loaded.AutoUpdatePackages["store:Ambiguous Display Name"] {
+		t.Fatalf("ambiguous Store key persisted to disk: %#v", loaded.AutoUpdatePackages)
 	}
 }
 

@@ -103,6 +103,20 @@ func (app *App) startSingleUpdateJob(manager, id string, options UpdateOptions) 
 	if pkg.Key == "" {
 		pkg.Key = packageKey(manager, id)
 	}
+	if !packageHasExactStoreUpdateTarget(pkg) {
+		result := validationCommandResult("update", fmt.Errorf("%s has no exact verified Store update target", pkg.Key))
+		return app.startOperationJobWithPackageSnapshot(jobTypeUpdate, updateJobModeSelected, 1, []string{pkg.Key}, []Package{pkg}, func(ctx context.Context, job *OperationJob) {
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.CurrentIndex = 1
+				status.CurrentKey = pkg.Key
+				status.CurrentPackage = updateJobPackageName(pkg)
+				status.Results = []UpdateResult{{Key: pkg.Key, Result: result}}
+				status.Result = &result
+				status.State = jobStateFailed
+				status.Notice = "Update not started. " + result.Stderr
+			})
+		})
+	}
 	return app.startUpdatePackagesOperation(jobTypeUpdate, updateJobModeSelected, []Package{pkg})
 }
 
@@ -131,7 +145,7 @@ func (app *App) startUpdatePackagesOperation(jobType, mode string, packages []Pa
 				})
 				break
 			}
-			result := app.updatePackageWithInventoryRetry(ctx, pkg)
+			result := app.updatePackageForJob(ctx, job, pkg)
 			app.mutateOperationJob(job, func(status *OperationJobStatus) {
 				status.Results = append(status.Results, UpdateResult{Key: pkg.Key, Result: result})
 				status.Result = &result
@@ -159,6 +173,11 @@ func (app *App) startUpdatePackagesOperation(jobType, mode string, packages []Pa
 			if status.State == jobStateCancelled {
 				return
 			}
+			if updateResultsAcceptedNotVerified(status.Results) {
+				status.State = jobStateAcceptedNotVerified
+				status.Notice = "Update accepted but final package state could not be verified. See Session Log for diagnostics."
+				return
+			}
 			if notice := updateResultsFailureNotice(status.Results); notice != "" {
 				status.State = jobStateFailed
 				status.Notice = notice
@@ -168,6 +187,32 @@ func (app *App) startUpdatePackagesOperation(jobType, mode string, packages []Pa
 			status.Notice = "Update completed. Refreshing package status..."
 		})
 	})
+}
+
+func (app *App) updatePackageForJob(ctx context.Context, job *OperationJob, pkg Package) CommandResult {
+	if pkg.Manager == managerStore && pkg.UpdateState != "" {
+		return storeExactUpdateExecutor.ExecuteWithCallbacks(ctx, pkg, StoreExactUpdateCallbacks{
+			Starting: func(StoreExactUpdateRequest) {
+				app.mutateOperationJob(job, func(status *OperationJobStatus) {
+					status.State = jobStateStarting
+					status.Notice = "Starting exact Store update for " + updateJobPackageName(pkg) + "..."
+				})
+			},
+			Accepted: func(StoreExactUpdateRequest, CommandResult) {
+				app.mutateOperationJob(job, func(status *OperationJobStatus) {
+					status.State = jobStateAccepted
+					status.Notice = "Store update accepted for " + updateJobPackageName(pkg) + "."
+				})
+			},
+			Verifying: func(StoreExactUpdateRequest) {
+				app.mutateOperationJob(job, func(status *OperationJobStatus) {
+					status.State = jobStateVerifying
+					status.Notice = "Verifying exact Store update for " + updateJobPackageName(pkg) + "..."
+				})
+			},
+		})
+	}
+	return app.updatePackageWithInventoryRetry(ctx, pkg)
 }
 
 func (app *App) startScanJob() OperationJobStatus {

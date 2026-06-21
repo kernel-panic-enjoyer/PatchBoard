@@ -123,6 +123,13 @@ func argValue(name string) (string, bool) {
 func Main() {
 	enableDPIAwareness()
 
+	if hasArg("--elevated-worker") {
+		if err := runElevatedWorkerFromArgs(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		return
+	}
+
 	if hasArg("--task") {
 		for i, arg := range os.Args {
 			if arg == "--task" && i+1 < len(os.Args) && os.Args[i+1] == "auto-update" {
@@ -131,19 +138,6 @@ func Main() {
 				fmt.Println(string(data))
 				return
 			}
-		}
-	}
-
-	if !hasArg("--no-elevate") && !isAdmin() {
-		exe, _ := os.Executable()
-		var params []string
-		for _, arg := range os.Args[1:] {
-			if arg != "--no-elevate" {
-				params = append(params, quoteArg(arg))
-			}
-		}
-		if err := shellExecuteRunas(exe, strings.Join(params, " ")); err == nil {
-			return
 		}
 	}
 

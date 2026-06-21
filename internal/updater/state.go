@@ -17,19 +17,49 @@ type StoreResolveCacheEntry struct {
 	ResolvedAt   string `json:"resolved_at"`
 }
 
+type StoreUpdateAssessmentCacheEntry struct {
+	UserSID                    string `json:"user_sid"`
+	PackageFamilyName          string `json:"package_family_name"`
+	ScanID                     string `json:"scan_id"`
+	State                      string `json:"state"`
+	Reason                     string `json:"reason,omitempty"`
+	ObservedAt                 string `json:"observed_at"`
+	InstalledVersion           string `json:"installed_version,omitempty"`
+	OfferedVersion             string `json:"offered_version,omitempty"`
+	StoreProductID             string `json:"store_product_id,omitempty"`
+	Applicability              string `json:"applicability,omitempty"`
+	ExactActionTargetAvailable bool   `json:"exact_action_target_available"`
+}
+
+type StoreAutoUpdateMigrationReport struct {
+	LastRun  string                          `json:"last_run,omitempty"`
+	Migrated []StoreAutoUpdateMigrationEntry `json:"migrated,omitempty"`
+	Disabled []StoreAutoUpdateMigrationEntry `json:"disabled,omitempty"`
+}
+
+type StoreAutoUpdateMigrationEntry struct {
+	LegacyKey         string `json:"legacy_key"`
+	CanonicalKey      string `json:"canonical_key,omitempty"`
+	PackageFamilyName string `json:"package_family_name,omitempty"`
+	Reason            string `json:"reason"`
+	MigratedAt        string `json:"migrated_at"`
+}
+
 type State struct {
-	CreatedAt             string                            `json:"created_at"`
-	UpdatedAt             string                            `json:"updated_at"`
-	AutoUpdateGlobal      bool                              `json:"auto_update_global"`
-	AutoUpdatePackages    map[string]bool                   `json:"auto_update_packages"`
-	RegistryApps          map[string]ScannedApp             `json:"registry_apps"`
-	WingetApps            map[string]ScannedApp             `json:"winget_apps"`
-	StoreApps             map[string]ScannedApp             `json:"store_apps"`
-	StoreResolveCache     map[string]StoreResolveCacheEntry `json:"store_resolve_cache"`
-	LastScanAt            string                            `json:"last_scan_at"`
-	LastAutoUpdateAt      string                            `json:"last_auto_update_at"`
-	LastAutoUpdateResults []UpdateResult                    `json:"last_auto_update_results"`
-	Theme                 string                            `json:"theme"`
+	CreatedAt                  string                                     `json:"created_at"`
+	UpdatedAt                  string                                     `json:"updated_at"`
+	AutoUpdateGlobal           bool                                       `json:"auto_update_global"`
+	AutoUpdatePackages         map[string]bool                            `json:"auto_update_packages"`
+	RegistryApps               map[string]ScannedApp                      `json:"registry_apps"`
+	WingetApps                 map[string]ScannedApp                      `json:"winget_apps"`
+	StoreApps                  map[string]ScannedApp                      `json:"store_apps"`
+	StoreResolveCache          map[string]StoreResolveCacheEntry          `json:"store_resolve_cache"`
+	StoreUpdateAssessmentCache map[string]StoreUpdateAssessmentCacheEntry `json:"store_update_assessment_cache"`
+	StoreAutoUpdateMigration   StoreAutoUpdateMigrationReport             `json:"store_auto_update_migration,omitempty"`
+	LastScanAt                 string                                     `json:"last_scan_at"`
+	LastAutoUpdateAt           string                                     `json:"last_auto_update_at"`
+	LastAutoUpdateResults      []UpdateResult                             `json:"last_auto_update_results"`
+	Theme                      string                                     `json:"theme"`
 }
 
 func utcNow() string {
@@ -39,14 +69,15 @@ func utcNow() string {
 func defaultState() State {
 	now := utcNow()
 	return State{
-		CreatedAt:          now,
-		UpdatedAt:          now,
-		AutoUpdatePackages: map[string]bool{},
-		RegistryApps:       map[string]ScannedApp{},
-		WingetApps:         map[string]ScannedApp{},
-		StoreApps:          map[string]ScannedApp{},
-		StoreResolveCache:  map[string]StoreResolveCacheEntry{},
-		Theme:              "dark",
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
+		AutoUpdatePackages:         map[string]bool{},
+		RegistryApps:               map[string]ScannedApp{},
+		WingetApps:                 map[string]ScannedApp{},
+		StoreApps:                  map[string]ScannedApp{},
+		StoreResolveCache:          map[string]StoreResolveCacheEntry{},
+		StoreUpdateAssessmentCache: map[string]StoreUpdateAssessmentCacheEntry{},
+		Theme:                      "dark",
 	}
 }
 
@@ -79,6 +110,9 @@ func loadState() State {
 	migrateStoreScanApps(&state)
 	if state.StoreResolveCache == nil {
 		state.StoreResolveCache = map[string]StoreResolveCacheEntry{}
+	}
+	if state.StoreUpdateAssessmentCache == nil {
+		state.StoreUpdateAssessmentCache = map[string]StoreUpdateAssessmentCacheEntry{}
 	}
 	if state.Theme == "" {
 		state.Theme = "dark"

@@ -33,6 +33,7 @@
   var pendingBulkUpdate = null;
   var lastUpdateResultJob = null;
   var latestStatus = null;
+  var latestStoreScanHealth = null;
   var latestPackagesLoading = true;
   var statusRequestSeq = 0;
   var packageRequestSeq = 0;
@@ -405,6 +406,9 @@
   function exportLogs(){
     window.location.href = api("/api/logs/export");
   }
+  function exportStoreDiagnostics(){
+    window.location.href = api("/api/store/diagnostics/export");
+  }
   async function copyLogView(){
     var target = $("session-log");
     var text = target ? target.textContent || "" : "";
@@ -638,12 +642,14 @@
     return params;
   }
   function packageAutoUpdateable(pkg){
-    return pkg.update_supported !== false && !pkg.unknown_version && !pkg.pinned;
+    return pkg.update_supported !== false && packageHasExactStoreTarget(pkg) && packageHasFreshStoreAssessment(pkg) && !pkg.unknown_version && !pkg.pinned;
   }
   function packageBulkUpdateable(pkg){
     var options = arguments.length > 1 && arguments[1] ? arguments[1] : {allowUnknown:allowUnknownVersionUpdates(), allowPinned:allowPinnedUpdates()};
-    return !!pkg.update_available &&
+    return packageHasUpdate(pkg) &&
       pkg.update_supported !== false &&
+      packageHasExactStoreTarget(pkg) &&
+      packageHasFreshStoreAssessment(pkg) &&
       (!pkg.unknown_version || options.allowUnknown) &&
       (!pkg.pinned || options.allowPinned);
   }
@@ -672,12 +678,165 @@
     if(next){ next.disabled = true; }
   }
 
+  function storeAssessmentActive(pkg){
+    return pkg && pkg.manager === "store" && !!pkg.update_state;
+  }
+  function storeUpdateState(pkg){
+    if(storeAssessmentActive(pkg)){ return String(pkg.update_state || "unknown").toLowerCase(); }
+    if(pkg && pkg.manager === "store"){
+      if(pkg.update_available){ return "available"; }
+      return "unknown";
+    }
+    if(pkg && pkg.update_available){ return "available"; }
+    return "current";
+  }
+  function stateLabel(state){
+    state = String(state || "unknown").toLowerCase();
+    if(state === "inapplicable"){ return "Inapplicable"; }
+    return state.charAt(0).toUpperCase() + state.slice(1);
+  }
+  function stateBadge(pkg){
+    var state = storeUpdateState(pkg);
+    var className = "state-" + (pkg && pkg.stale ? "stale" : state);
+    var label = pkg && pkg.stale ? stateLabel(state) + " (stale)" : stateLabel(state);
+    return '<span class="badge state-badge ' + attr(className) + '">' + html(label) + '</span>';
+  }
+  function packageHasExactStoreTarget(pkg){
+    if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }
+    if(!storeAssessmentActive(pkg)){ return true; }
+    return !!pkg.exact_action_target_available && !!pkg.installed_package_family_name && !!pkg.store_product_id;
+  }
+  function packageHasFreshStoreAssessment(pkg){
+    if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }
+    if(!storeAssessmentActive(pkg)){ return true; }
+    return storeUpdateState(pkg) === "available" && !pkg.stale;
+  }
+  function packageHasUpdate(pkg){
+    if(storeAssessmentActive(pkg)){ return storeUpdateState(pkg) === "available"; }
+    if(pkg && pkg.manager === "store"){ return false; }
+    return !!pkg.update_available;
+  }
+  function packageNeedsUpdateAttention(pkg){
+    if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return true; }
+    if(!storeAssessmentActive(pkg)){ return !!pkg.update_available; }
+    var state = storeUpdateState(pkg);
+    return state === "available" || state === "pending" || state === "conflict" || state === "inapplicable" || !!pkg.stale;
+  }
+  function packageReasonText(pkg){
+    return String((pkg && pkg.update_reason) || "").trim();
+  }
+  function providerDiagnosticsMarkup(pkg){
+    var summaries = (pkg && pkg.provider_summaries) || [];
+    if(!packageReasonText(pkg) && summaries.length === 0){ return ""; }
+    var items = [];
+    if(packageReasonText(pkg)){
+      items.push('<li><strong>Reason:</strong> ' + html(packageReasonText(pkg)) + '</li>');
+    }
+    summaries.forEach(function(summary){
+      var text = (summary.name || "Provider") + " - " + (summary.health || "unknown") + " / " + (summary.kind || "evidence");
+      if(summary.observed_at){ text += " at " + summary.observed_at; }
+      if(summary.error){ text += " - " + summary.error; }
+      items.push('<li>' + html(text) + '</li>');
+    });
+    return '<details class="diagnostic-details"><summary>Update diagnostics</summary><ul class="diagnostic-list">' + items.join("") + '</ul></details>';
+  }
+  function defaultStoreHealthCounts(){
+    return {available:0,current:0,unknown:0,conflict:0,inapplicable:0,pending:0,stale:0};
+  }
+  function normalizedStoreHealthFromAPI(){
+    var health = latestStoreScanHealth || {};
+    if(!health.active){ return null; }
+    var counts = defaultStoreHealthCounts();
+    Object.keys(health.counts || {}).forEach(function(key){
+      counts[key] = Number(health.counts[key]) || 0;
+    });
+    var providerIssues = packages.filter(function(pkg){
+      if(!storeAssessmentActive(pkg)){ return false; }
+      var state = storeUpdateState(pkg);
+      return ["unknown","conflict","inapplicable","pending"].indexOf(state) !== -1 || !!pkg.stale;
+    });
+    return {
+      active:true,
+      healthy:!!(health.healthy && health.authoritative),
+      storePackages:packages.filter(function(pkg){ return pkg.manager === "store"; }),
+      assessed:packages.filter(storeAssessmentActive),
+      counts:counts,
+      providerIssues:providerIssues,
+      scanID:health.scan_id || "",
+      observedAt:health.observed_at || "",
+      status:health.status || "",
+      reason:health.reason || "",
+      providers:health.providers || []
+    };
+  }
+  function storeScanHealth(){
+    var apiHealth = normalizedStoreHealthFromAPI();
+    if(apiHealth){ return apiHealth; }
+    var storePackages = packages.filter(function(pkg){ return pkg.manager === "store"; });
+    var assessed = storePackages.filter(storeAssessmentActive);
+    var counts = defaultStoreHealthCounts();
+    var providerIssues = [];
+    assessed.forEach(function(pkg){
+      var state = storeUpdateState(pkg);
+      if(counts[state] == null){ counts.unknown++; } else { counts[state]++; }
+      if(pkg.stale){ counts.stale++; }
+      if(["unknown","conflict","inapplicable","pending"].indexOf(state) !== -1 || pkg.stale){
+        providerIssues.push(pkg);
+      }
+    });
+    if(storePackages.length > 0 && assessed.length === 0){
+      counts.unknown = storePackages.length;
+      providerIssues = storePackages.slice();
+    }
+    var active = storePackages.length > 0 || assessed.length > 0;
+    var healthy = active && counts.unknown === 0 && counts.conflict === 0 && counts.inapplicable === 0 && counts.stale === 0;
+    return {active:active, healthy:healthy, storePackages:storePackages, assessed:assessed, counts:counts, providerIssues:providerIssues, providers:[]};
+  }
+  function storeCoverageHealthy(){
+    var health = storeScanHealth();
+    return !health.active || health.healthy;
+  }
+  function renderStoreScanHealth(){
+    var target = $("store-scan-health-body");
+    if(!target){ return; }
+    if(latestPackagesLoading){
+      target.innerHTML = loadingText("Checking Store coverage...");
+      return;
+    }
+    var health = storeScanHealth();
+    if(!health.active){
+      target.innerHTML = '<div class="health-summary"><span class="badge state-unknown">Legacy Store detector</span><span class="muted">New Store assessment fields are disabled.</span></div>';
+      return;
+    }
+    var title = health.healthy ? "Store scan is complete enough to report Current." : "Store update status needs attention.";
+    var badge = health.healthy ? '<span class="badge state-current">Healthy</span>' : '<span class="badge state-unknown">Not authoritative</span>';
+    var metrics = ["available","current","unknown","conflict","inapplicable","pending","stale"].map(function(key){
+      return '<span class="badge state-' + attr(key) + '">' + html(stateLabel(key)) + ': ' + html(health.counts[key] || 0) + '</span>';
+    }).join("");
+    var details = [];
+    if(health.reason){
+      details.push('<li><strong>Summary:</strong> ' + html(health.reason) + '</li>');
+    }
+    if(health.scanID || health.observedAt || health.status){
+      details.push('<li><strong>Scan:</strong> ' + html([health.scanID, health.status, health.observedAt].filter(Boolean).join(" - ")) + '</li>');
+    }
+    (health.providers || []).forEach(function(provider){
+      var text = (provider.name || "Provider") + " - " + (provider.health || "unknown") + " / " + (provider.kind || "provider_run");
+      if(provider.observed_at){ text += " at " + provider.observed_at; }
+      if(provider.error){ text += " - " + provider.error; }
+      details.push('<li>' + html(text) + '</li>');
+    });
+    health.providerIssues.slice(0, 20).forEach(function(pkg){
+      details.push('<li><strong>' + html(pkg.name || pkg.id || "Store package") + ':</strong> ' + html(packageReasonText(pkg) || storeUpdateState(pkg)) + providerDiagnosticsMarkup(pkg) + '</li>');
+    });
+    target.innerHTML = '<div class="health-summary">' + badge + '<strong>' + html(title) + '</strong></div><div class="health-metrics">' + metrics + '</div>' + (details.length ? '<details class="diagnostic-details"><summary>Provider diagnostics</summary><ul class="diagnostic-list">' + details.join("") + '</ul></details>' : '');
+  }
 
   function renderDashboardSummary(){
     var managerMap = latestStatus && latestStatus.managers ? latestStatus.managers : {};
     var managerNames = Object.keys(managerMap);
     var availableManagers = managerNames.filter(function(name){ return managerMap[name] && managerMap[name].available; }).length;
-    var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
+    var updates = packages.filter(packageHasUpdate);
     var supportedUpdates = updates.filter(packageBulkUpdateable);
     var updateablePackages = packages.filter(packageAutoUpdateable);
     var inventoryOnly = packages.filter(function(pkg){ return pkg.update_supported === false; }).length;
@@ -686,7 +845,11 @@
 
     setText("summary-updates", loading ? "-" : String(updates.length));
     var updatesDetail = $("summary-updates-detail");
-    if(updatesDetail){ updatesDetail.innerHTML = loading ? loadingText("Checking package status") : html(supportedUpdates.length + " updateable"); }
+    if(updatesDetail){
+      if(loading){ updatesDetail.innerHTML = loadingText("Checking package status"); }
+      else if(!storeCoverageHealthy()){ updatesDetail.innerHTML = html(supportedUpdates.length + " updateable; Store status not authoritative"); }
+      else{ updatesDetail.innerHTML = html(supportedUpdates.length + " updateable"); }
+    }
     setText("summary-packages", loading ? "-" : String(packages.length));
     var packagesDetail = $("summary-packages-detail");
     if(packagesDetail){ packagesDetail.innerHTML = loading ? loadingText("Inventory loading") : html(updateablePackages.length + " managed, " + inventoryOnly + " inventory-only"); }
@@ -776,14 +939,18 @@
     if(pkg.pinned){
       secondary += " - pinned";
     }
-    return '<strong>' + html(pkg.name) + '</strong><br><span class="muted">' + html(secondary) + '</span>';
+    var identity = "";
+    if(storeAssessmentActive(pkg) && pkg.installed_package_family_name){
+      identity = '<br><span class="muted">PFN: ' + html(pkg.installed_package_family_name) + '</span>';
+    }
+    return '<strong>' + html(pkg.name) + '</strong><br><span class="muted">' + html(secondary) + '</span>' + identity + (storeAssessmentActive(pkg) ? providerDiagnosticsMarkup(pkg) : '');
   }
 	function managerCell(pkg){
 		var backend = pkg.action_backend ? '<br><span class="muted">' + html(backendLabel(pkg.action_backend)) + '</span>' : '';
 		return '<span class="badge manager-badge">' + html(managerLabel(pkg.manager)) + '</span>' + backend;
 	}
   function autoButton(pkg){
-    if(pkg.update_supported === false){
+    if(pkg.update_supported === false || !packageHasExactStoreTarget(pkg)){
       return '<span class="muted">N/A</span>';
     }
     if(pkg.unknown_version || pkg.pinned){
@@ -792,16 +959,49 @@
     return '<button class="auto-package toggle-button" type="button" data-key="' + attr(pkg.key) + '" data-package-name="' + attr(pkg.name) + '" data-enabled="' + (pkg.auto_update ? 'true' : 'false') + '" aria-pressed="' + (pkg.auto_update ? 'true' : 'false') + '" aria-label="Auto-update for ' + attr(pkg.name) + '"' + (updateBusy ? ' disabled' : '') + '><span>' + (pkg.auto_update ? 'On' : 'Off') + '</span></button>';
   }
   function packageAvailableCell(pkg){
-    var available = html(pkg.available_version);
-    if(pkg.manager === "store" && pkg.update_available && String(pkg.available_version || "") === String(pkg.version || "")){
-      return '<span class="muted">Pending in Microsoft Store</span>';
+    if(storeAssessmentActive(pkg)){
+      var state = storeUpdateState(pkg);
+      var offered = pkg.offered_version || pkg.available_version || "";
+      var text = "";
+      if(state === "available"){
+        text = offered ? offered : "Update available";
+      }else if(state === "pending"){
+        text = offered ? offered + " pending" : "Pending verification";
+      }else if(state === "inapplicable"){
+        text = "Not applicable";
+      }else if(state === "conflict"){
+        text = "Provider conflict";
+      }else if(state === "unknown"){
+        text = "Unknown";
+      }else if(state === "current"){
+        text = "Current";
+      }else{
+        text = stateLabel(state);
+      }
+      return stateBadge(pkg) + '<br><span class="muted">' + html(text) + '</span>';
     }
+    if(pkg.manager === "store"){
+      return stateBadge(pkg) + '<br><span class="muted">Unknown</span>';
+    }
+    var available = html(pkg.available_version);
     return available;
   }
 	function updateForm(pkg){
+    if(storeAssessmentActive(pkg) && !packageHasExactStoreTarget(pkg)){
+      return '<span class="muted" title="Store updates require an exact verified action target">Exact target unavailable</span>';
+    }
+    if(storeAssessmentActive(pkg) && !packageHasFreshStoreAssessment(pkg)){
+      return '<span class="muted" title="Store updates require a fresh available assessment">Rescan required</span>';
+    }
 		if(pkg.update_supported === false){
 			return '<span class="muted">Inventory only</span>';
 		}
+    if(!packageHasExactStoreTarget(pkg)){
+      return '<span class="muted" title="Store updates require an exact verified action target">Exact target unavailable</span>';
+    }
+    if(!packageHasFreshStoreAssessment(pkg)){
+      return '<span class="muted" title="Store updates require a fresh available assessment">Rescan required</span>';
+    }
     var blockedUnknown = pkg.unknown_version && !allowUnknownVersionUpdates();
     var blockedPinned = pkg.pinned && !allowPinnedUpdates();
     var updateState = rowUpdateState(pkg.key);
@@ -811,7 +1011,7 @@
 		return '<form class="update-form" data-key="' + attr(pkg.key) + '" data-unknown-version="' + (pkg.unknown_version ? 'true' : 'false') + '" data-pinned="' + (pkg.pinned ? 'true' : 'false') + '" data-blocked-unknown="' + (blockedUnknown ? 'true' : 'false') + '" data-blocked-pinned="' + (blockedPinned ? 'true' : 'false') + '" method="post" action="/api/update"><input type="hidden" name="manager" value="' + attr(pkg.manager) + '"><input type="hidden" name="package_id" value="' + attr(pkg.id) + '"><button type="submit" aria-label="' + attr(label + " " + pkg.name) + '"' + (disabled ? ' disabled' : '') + title + '>' + icon("update") + '<span>' + html(label) + '</span></button><div class="row-progress' + (updateState ? '' : ' hidden') + '">' + progressBar((updateState ? label : "Update progress") + " for " + pkg.name) + '</div></form>';
   }
 	function installedAction(pkg){
-		if(pkg.action_backend === "store-cli-resolved" && pkg.update_available){
+		if(packageHasUpdate(pkg) && packageHasExactStoreTarget(pkg) && packageHasFreshStoreAssessment(pkg)){
 			return updateForm(pkg);
 		}
 		return '<span class="muted">-</span>';
@@ -819,7 +1019,7 @@
   function packageMatchesInstalledSearch(pkg){
     var query = installedSearchQuery.trim().toLowerCase();
     if(!query){ return true; }
-    return [pkg.name, pkg.id, pkg.manager, pkg.version, pkg.available_version].some(function(value){
+    return [pkg.name, pkg.id, pkg.manager, pkg.version, pkg.available_version, pkg.update_state, pkg.update_reason, pkg.installed_package_family_name, pkg.store_product_id].some(function(value){
       return String(value || "").toLowerCase().indexOf(query) !== -1;
     });
   }
@@ -830,8 +1030,9 @@
     var next = $("updates-next");
     if(!target){ return; }
     if(updates.length === 0){
-      target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">No updates available.</td></tr>';
-      renderEmptyPager(status, loading ? loadingText('Checking...') : html('No updates'), prev, next);
+      var emptyText = storeCoverageHealthy() ? 'No updates available.' : 'Store update status is unknown. Review scan health.';
+      target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">' + html(emptyText) + '</td></tr>';
+      renderEmptyPager(status, loading ? loadingText('Checking...') : html(storeCoverageHealthy() ? 'No updates' : 'Store status unknown'), prev, next);
       return;
     }
     var page = pagedItems(updates, updatePage, updatePageSize);
@@ -858,14 +1059,14 @@
     var page = pagedItems(visiblePackages, installedPage, installedPageSize);
     installedPage = page.page;
 	target.innerHTML = page.items.map(function(pkg){
-		var rowStatus = pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : ((pkg.unknown_version || pkg.pinned) && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>'));
+		var rowStatus = pkg.manager === "store" ? stateBadge(pkg) : (pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : ((pkg.unknown_version || pkg.pinned) && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>')));
     var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
 		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + packageAvailableCell(pkg) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
 	}).join("");
     renderPager(page, status, prev, next, installedSearchQuery ? " matches" : "");
   }
   function renderPackageTables(){
-    var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
+    var updates = packages.filter(packageNeedsUpdateAttention);
     var updateablePackages = packages.filter(packageAutoUpdateable);
     var updateJobRunning = activeUpdateJobRunning();
     $("auto-all").disabled = updateBusy || updateablePackages.length === 0;
@@ -880,7 +1081,9 @@
   function renderPackages(data){
     renderManagers(data);
     packages = data.packages || [];
+    latestStoreScanHealth = data.store_scan_health || null;
     latestPackagesLoading = !!data.loading;
+    renderStoreScanHealth();
     renderPackageTables();
   }
 
@@ -1127,7 +1330,7 @@
     return data;
   }
   function jobComplete(status){
-    return status && !status.running && status.state !== "queued" && status.state !== "running" && status.state !== "refreshing";
+    return status && !status.running && ["queued","starting","running","accepted","verifying","refreshing"].indexOf(status.state) === -1;
   }
   function waitUntilVisible(){
     if(!document.hidden){ return Promise.resolve(); }
@@ -1349,6 +1552,9 @@
     if(status.running){
       var name = status.current_package || "package";
       var counter = status.total ? " (" + (status.current_index || 0) + "/" + status.total + ")" : "";
+      if(status.state === "starting"){ return "Starting update: " + name + counter; }
+      if(status.state === "accepted"){ return "Update accepted: " + name + counter; }
+      if(status.state === "verifying"){ return "Verifying update: " + name + counter; }
       return (mode === "selected" ? "Updating selected packages: " : "Updating all packages: ") + name + counter;
     }
     if(status.cancel_requested){
@@ -1374,7 +1580,7 @@
     return enabled.length ? enabled.join("; ") : "No unknown-version or pinned-package overrides enabled.";
   }
   function packageUpdateTarget(pkg){
-    return pkg.available_version || "Unknown target";
+    return pkg.offered_version || pkg.available_version || "Unknown target";
   }
   function packageUpdateSource(pkg){
     return sourceLabel(pkg.source || pkg.manager);
@@ -1406,8 +1612,9 @@
   }
   function exclusionReason(pkg, mode, selectedMap, options){
     if(mode === "selected" && !selectedMap[pkg.key]){ return "Not selected."; }
-    if(!pkg.update_available){ return "No update available."; }
+    if(!packageHasUpdate(pkg)){ return pkg.manager === "store" ? "Store state is " + stateLabel(storeUpdateState(pkg)) + "." : "No update available."; }
     if(pkg.update_supported === false){ return "Updates are not supported for this package."; }
+    if(!packageHasExactStoreTarget(pkg)){ return "Store update requires an exact verified action target."; }
     if(pkg.unknown_version && !options.allowUnknown){ return "Unknown installed version requires the global unknown-version override."; }
     if(pkg.pinned && !options.allowPinned){ return "Pinned package requires the global pinned update override."; }
     return "";
@@ -1415,7 +1622,7 @@
   function buildUpdatePreflight(mode, keys, params, message){
     var options = updateOptionsFromParams(params);
     var selected = selectedKeyMap(keys || []);
-    var updates = packages.filter(function(pkg){ return !!pkg.update_available; });
+    var updates = packages.filter(packageNeedsUpdateAttention);
     var affected = [];
     var excluded = [];
     updates.forEach(function(pkg){
@@ -1513,7 +1720,12 @@
       return;
     }
     var results = status.results || [];
-    var failed = results.filter(function(item){ return !(item.result && item.result.ok); });
+    var failed = results.filter(function(item){ return !(item.result && item.result.ok) && !(item.result && item.result.code === 202); });
+    var unverified = results.filter(function(item){ return item.result && item.result.code === 202; });
+    if(unverified.length > 0){
+      showToast(unverified.length + " Store update request(s) were accepted but not verified. See Session Log for diagnostics.", "error");
+      return;
+    }
     if(failed.length > 0){
       showToast(failed.length + " update command(s) finished with errors. See Session Log for full output.", "error");
       return;
@@ -1539,6 +1751,7 @@
   function updateResultStatus(status, key, result){
     if(!result){ return status && status.cancel_requested ? "skipped" : "skipped"; }
     if(result.code === 130){ return "cancelled"; }
+    if(result.code === 202){ return "accepted_not_verified"; }
     return result.ok ? "succeeded" : "failed";
   }
   function updateResultText(result, statusText){
@@ -1547,6 +1760,7 @@
     }
     if(result.ok){ return "Command succeeded."; }
     if(result.code === 130){ return "Command cancelled."; }
+    if(result.code === 202){ return "Accepted but final package state could not be verified."; }
     return commandText(result);
   }
   function updateResultRows(status){
@@ -1569,10 +1783,10 @@
     var rows = updateResultRows(status);
     if(rows.length === 0){ return; }
     lastUpdateResultJob = status;
-    var counts = {succeeded:0, failed:0, skipped:0, cancelled:0};
+    var counts = {succeeded:0, failed:0, skipped:0, cancelled:0, accepted_not_verified:0};
     rows.forEach(function(row){ counts[row.state] = (counts[row.state] || 0) + 1; });
     panel.classList.remove("hidden");
-    setText("update-results-summary", "Succeeded " + counts.succeeded + " - Failed " + counts.failed + " - Skipped " + counts.skipped + " - Cancelled " + counts.cancelled + ".");
+    setText("update-results-summary", "Succeeded " + counts.succeeded + " - Accepted not verified " + counts.accepted_not_verified + " - Failed " + counts.failed + " - Skipped " + counts.skipped + " - Cancelled " + counts.cancelled + ".");
     $("update-results-body").innerHTML = rows.map(function(row){
       var pkg = row.pkg || {};
       var notes = packageRiskNotes(pkg, {allowUnknown:!!status.allow_unknown_version, allowPinned:!!status.allow_pinned});
@@ -1944,15 +2158,24 @@
       showToast("Could not refresh package status: " + e.message, "error");
     });
   });
+  $("store-rescan-button").addEventListener("click", function(){
+    startInventoryRefresh().catch(function(e){
+      showNotice("Could not rescan Store status: " + e.message);
+      showToast("Could not rescan Store status: " + e.message, "error");
+    });
+  });
+  $("store-diagnostics-export-button").addEventListener("click", function(){
+    exportStoreDiagnostics();
+  });
   $("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
   $("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
   $("updates-prev").addEventListener("click", function(){
     updatePage--;
-    renderUpdatesTable(packages.filter(function(pkg){ return !!pkg.update_available; }), latestPackagesLoading);
+    renderUpdatesTable(packages.filter(packageNeedsUpdateAttention), latestPackagesLoading);
   });
   $("updates-next").addEventListener("click", function(){
     updatePage++;
-    renderUpdatesTable(packages.filter(function(pkg){ return !!pkg.update_available; }), latestPackagesLoading);
+    renderUpdatesTable(packages.filter(packageNeedsUpdateAttention), latestPackagesLoading);
   });
   $("search-prev").addEventListener("click", function(){
     searchPage--;

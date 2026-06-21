@@ -41,7 +41,7 @@ func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) (
 	var packages []Package
 	seen := map[string]bool{}
 	for _, key := range packageKeys {
-		normalized := normalizeAutoUpdatePackageKey(key)
+		normalized := normalizeJobRequestPackageKey(key)
 		if normalized == "" {
 			normalized = key
 		}
@@ -58,6 +58,12 @@ func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) (
 		}
 		if pkg.UpdateSupported == false {
 			return nil, updateJobModeSelected, fmt.Errorf("%s does not support updates", normalized)
+		}
+		if !packageHasExactStoreUpdateTarget(pkg) {
+			return nil, updateJobModeSelected, fmt.Errorf("%s has no exact verified Store update target", normalized)
+		}
+		if !packageHasFreshStoreAvailableAssessment(pkg) {
+			return nil, updateJobModeSelected, fmt.Errorf("%s requires a fresh available Store assessment before updating", normalized)
 		}
 		if pkg.UnknownVersion && !options.AllowUnknownVersion {
 			return nil, updateJobModeSelected, fmt.Errorf("%s has an unknown installed version and requires an explicit global unknown-version update choice", normalized)
@@ -79,8 +85,20 @@ func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) (
 func packageAllowedInBulkUpdate(pkg Package, options UpdateOptions) bool {
 	return pkg.UpdateAvailable &&
 		pkg.UpdateSupported != false &&
+		packageHasExactStoreUpdateTarget(pkg) &&
+		packageHasFreshStoreAvailableAssessment(pkg) &&
 		(!pkg.UnknownVersion || options.AllowUnknownVersion) &&
 		(!pkg.Pinned || options.AllowPinned)
+}
+
+func packageHasFreshStoreAvailableAssessment(pkg Package) bool {
+	if pkg.Manager != managerStore {
+		return true
+	}
+	if pkg.UpdateState == "" {
+		return !storeNewDetectorActive()
+	}
+	return strings.EqualFold(strings.TrimSpace(pkg.UpdateState), string(StoreUpdateAvailable)) && !pkg.Stale
 }
 
 func applyUpdateOptions(pkg *Package, options UpdateOptions) {
@@ -135,6 +153,9 @@ func updateJobPackageKeys(packages []Package) []string {
 }
 
 func normalizedJobPackageKey(pkg Package) string {
+	if pkg.Manager == managerStore && storeNewDetectorActive() {
+		return storePackagePublicKey(pkg)
+	}
 	if pkg.Key != "" {
 		if normalized := normalizeAutoUpdatePackageKey(pkg.Key); normalized != "" {
 			return normalized
@@ -145,6 +166,23 @@ func normalizedJobPackageKey(pkg Package) string {
 		return ""
 	}
 	return packageKey(pkg.Manager, pkg.ID)
+}
+
+func normalizeJobRequestPackageKey(key string) string {
+	manager, id, err := splitPackageKey(key)
+	if err != nil {
+		return key
+	}
+	if manager == managerStore && storeNewDetectorActive() {
+		if _, pfn, ok := splitCanonicalStoreAutoUpdateKey(key); ok {
+			return packageKey(managerStore, pfn)
+		}
+		return packageKey(managerStore, id)
+	}
+	if normalized := normalizeAutoUpdatePackageKey(key); normalized != "" {
+		return normalized
+	}
+	return key
 }
 
 func updateJobPackageName(pkg Package) string {

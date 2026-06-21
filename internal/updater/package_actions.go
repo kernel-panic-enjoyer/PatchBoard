@@ -85,6 +85,9 @@ func installPackageContext(ctx context.Context, manager, id string) CommandResul
 	if err := validateManagerAndID(manager, id); err != nil {
 		return validationCommandResult("install", err)
 	}
+	if result := runPrivilegedPackageInstall(ctx, manager, id); result.Command != "" || result.Code != 0 || result.OK {
+		return result
+	}
 	appLog("Install started for %s:%s.", manager, id)
 	defer invalidateManagerDetectionCache()
 	var result CommandResult
@@ -106,12 +109,21 @@ func updatePackageWithMetadataContext(ctx context.Context, pkg Package) CommandR
 	if err := validateManagerAndID(manager, id); err != nil {
 		return validationCommandResult("update", err)
 	}
+	if result := runPrivilegedPackageUpdate(ctx, pkg); result.Command != "" || result.Code != 0 || result.OK {
+		return result
+	}
 	appLog("Update started for %s:%s.", manager, id)
 	defer invalidateManagerDetectionCache()
 	var result CommandResult
 	switch manager {
 	case managerStore:
-		result = runStoreUpdatePackageWithFallbackContext(ctx, pkg)
+		if pkg.UpdateState != "" {
+			result = runExactStoreUpdateWithVerification(ctx, pkg)
+		} else if storeNewDetectorActive() {
+			result = validationCommandResult("update", errors.New("Store update requires the new exact assessment path; legacy Store update fallback is disabled"))
+		} else {
+			result = runStoreUpdatePackageWithFallbackContext(ctx, pkg)
+		}
 	case managerWinget:
 		result = runWingetUpgradePackageWithInstallFallbackContext(ctx, manager, pkg)
 	case managerChoco:
@@ -180,6 +192,17 @@ func installManagerContext(ctx context.Context, manager string) CommandResult {
 	appLog("Package manager install action started for %s.", manager)
 	invalidateManagerDetectionCache()
 	defer invalidateManagerDetectionCache()
+	if manager == managerChoco && !isAdmin() {
+		result := runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
+			Operation: workerOperationManagerInstall,
+			Payload:   elevatedWorkerManagerInstallPayload{Manager: manager},
+		})
+		if result.OK {
+			refreshProcessEnvironmentFromRegistry()
+		}
+		appLog("Package manager install action finished for %s with code %d.", manager, result.Code)
+		return result
+	}
 	var result CommandResult
 	switch manager {
 	case managerWinget:

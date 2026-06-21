@@ -48,19 +48,30 @@ func TestStorePackageKeysAreValid(t *testing.T) {
 	}
 }
 
-func TestPackageAutoUpdateEnabledUsesEquivalentStoreKey(t *testing.T) {
+func TestPackageAutoUpdateEnabledUsesCanonicalStoreKey(t *testing.T) {
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	state := State{
 		AutoUpdatePackages: map[string]bool{
-			"store:OpenAI.Codex_1.0.0.0_x64__abc123": true,
+			canonicalStoreAutoUpdateKey(userSID, "OpenAI.Codex_abc123"): true,
 		},
 	}
 	pkg := Package{
-		Key:     "store:OpenAI.Codex",
-		Manager: "store",
-		ID:      "OpenAI.Codex",
+		Key:                        "store:OpenAI.Codex_abc123",
+		Manager:                    "store",
+		ID:                         "OpenAI.Codex_abc123",
+		InstalledPackageFamilyName: "OpenAI.Codex_abc123",
 	}
 	if !packageAutoUpdateEnabled(state, pkg) {
-		t.Fatalf("expected equivalent Store auto-update key to be honored")
+		t.Fatalf("expected canonical Store auto-update key to be honored")
+	}
+	state.AutoUpdatePackages = map[string]bool{
+		"store:OpenAI.Codex_1.0.0.0_x64__abc123": true,
+	}
+	if packageAutoUpdateEnabled(state, pkg) {
+		t.Fatalf("versioned Store full-name key must not be treated as equivalent")
 	}
 }
 

@@ -9,7 +9,7 @@ func mergeAppxInventoryPackages(
 	storeUpdateVersions map[string]string,
 ) []Package {
 	markStoreInventoryAvailable(managers)
-	if managers[managerStore].Available {
+	if storeLegacyDetectorRollbackEnabled() && managers[managerStore].Available {
 		var resolveResults map[string]CommandResult
 		var changed bool
 		appxPackages, resolveResults, changed = resolveStoreAppxPackages(state, appxPackages, true, storeSearch)
@@ -24,12 +24,17 @@ func mergeAppxInventoryPackages(
 		}
 	}
 	for i := range appxPackages {
-		appxPackages[i] = applyStoreUpdateVersion(appxPackages[i], storeUpdateVersions, managers[managerStore].Available)
+		if storeLegacyDetectorRollbackEnabled() {
+			appxPackages[i] = applyStoreUpdateVersion(appxPackages[i], storeUpdateVersions, managers[managerStore].Available)
+		}
 		appxPackages[i].Key = packageKey(managerStore, appxPackages[i].ID)
 		appxPackages[i].Installed = true
 		if appxPackages[i].UpdateSupported {
 			appxPackages[i].AutoUpdate = packageAutoUpdateEnabled(*state, appxPackages[i])
 		}
+	}
+	if storeNewDetectorActive() {
+		return append(packages, appxPackages...)
 	}
 	return mergeStoreAppxPackages(packages, appxPackages)
 }

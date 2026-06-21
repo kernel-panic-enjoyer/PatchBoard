@@ -32,6 +32,15 @@ func updateResultsFailureNotice(results []UpdateResult) string {
 	return limitNoticeText(message) + " See Session Log for full output."
 }
 
+func updateResultsAcceptedNotVerified(results []UpdateResult) bool {
+	for _, item := range results {
+		if item.Result.Code == storeUpdateAcceptedNotVerifiedCode {
+			return true
+		}
+	}
+	return false
+}
+
 func commandFailureNotice(prefix string, result CommandResult) string {
 	if result.OK {
 		return ""

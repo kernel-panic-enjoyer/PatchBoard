@@ -14,7 +14,12 @@ func setAutoUpdate(global *bool, packageKeys []string, packageEnabled *bool) (St
 	if packageEnabled != nil {
 		for _, key := range packageKeys {
 			if _, _, err := splitPackageKey(key); err == nil {
-				state.AutoUpdatePackages[normalizeAutoUpdatePackageKey(key)] = *packageEnabled
+				normalized := normalizeAutoUpdatePackageKey(key)
+				if normalized == "" {
+					appLog("Auto-update package key ignored because it is not an exact canonical target: %s.", key)
+					continue
+				}
+				state.AutoUpdatePackages[normalized] = *packageEnabled
 			}
 		}
 	}

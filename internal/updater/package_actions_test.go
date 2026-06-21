@@ -20,7 +20,6 @@ func TestStoreUpdateTargetCandidatesIncludeStableAndMetadataTargets(t *testing.T
 		"Vendor.App_1.2.3.4_x64__abc123",
 		"Vendor.App",
 		"Vendor.App_abc123",
-		"Vendor App",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("unexpected Store targets:\n got %#v\nwant %#v", got, want)
@@ -53,7 +52,7 @@ func TestStoreUpdateTriesAlternateMetadataTarget(t *testing.T) {
 	}
 }
 
-func TestStoreUpdateSearchesFreshTargetAfterDirectTargetsMiss(t *testing.T) {
+func TestStoreUpdateDoesNotSearchFreshTargetAfterDirectTargetsMiss(t *testing.T) {
 	var targets []string
 	restoreActions := replacePackageActionHooks(
 		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
@@ -77,14 +76,30 @@ func TestStoreUpdateSearchesFreshTargetAfterDirectTargetsMiss(t *testing.T) {
 	pkg := Package{Manager: managerStore, ID: "Stale.Store.ID", Name: "Vendor App"}
 	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
 
-	if !result.OK {
-		t.Fatalf("expected Store search fallback to succeed, got %#v", result)
+	if result.OK {
+		t.Fatalf("Store target miss should not be rescued by display-name search, got %#v", result)
 	}
-	if strings.Join(queries, "|") != "Vendor App" {
-		t.Fatalf("expected one Store search query, got %#v", queries)
+	if len(queries) != 0 {
+		t.Fatalf("Store update must not run hidden display-name searches, got %#v", queries)
 	}
-	if !containsString(targets, "Stale.Store.ID") || !containsString(targets, "Fresh.Store.ID") || !strings.Contains(result.Command, "store search fallback") {
-		t.Fatalf("expected stale direct target and fresh search target, targets=%#v result=%#v", targets, result)
+	if !containsString(targets, "Stale.Store.ID") || containsString(targets, "Fresh.Store.ID") || strings.Contains(result.Command, "store search fallback") {
+		t.Fatalf("unexpected Store target sequence after target miss, targets=%#v result=%#v", targets, result)
+	}
+}
+
+func TestAssessedStoreUpdateUsesOnlyExactVerifiedTarget(t *testing.T) {
+	pkg := Package{
+		Manager:                    managerStore,
+		ID:                         "9NVERIFIED",
+		Name:                       "Display Name Must Not Be Used",
+		Match:                      "Package.Family_abc123",
+		UpdateState:                string(StoreUpdateAvailable),
+		StoreProductID:             "9NVERIFIED",
+		ExactActionTargetAvailable: true,
+	}
+	got := storeUpdateTargetCandidates(pkg)
+	if strings.Join(got, "|") != "9NVERIFIED" {
+		t.Fatalf("assessed Store package must use only exact verified target, got %#v", got)
 	}
 }
 
@@ -614,7 +629,7 @@ func TestPackageActionCommandDoesNotResetWingetSourceForNonSourceRepairFailure(t
 	}
 }
 
-func TestPackageForUpdateUsesEquivalentStoreInventoryMetadata(t *testing.T) {
+func TestPackageForUpdateUsesExactStoreInventoryMetadata(t *testing.T) {
 	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             packageKey(managerStore, "Vendor.App_abc123"),
 		Manager:         managerStore,
@@ -624,10 +639,14 @@ func TestPackageForUpdateUsesEquivalentStoreInventoryMetadata(t *testing.T) {
 		UpdateSupported: true,
 	}}}}}
 
-	got := app.packageForUpdate(managerStore, "Vendor.App_1.2.3.4_x64__abc123")
+	got := app.packageForUpdate(managerStore, "Vendor.App_abc123")
 
 	if got.Name != "Vendor App" || got.Match != "Vendor.App" || got.ID != "Vendor.App_abc123" {
-		t.Fatalf("expected inventory metadata for equivalent Store key, got %#v", got)
+		t.Fatalf("expected inventory metadata for exact Store key, got %#v", got)
+	}
+	miss := app.packageForUpdate(managerStore, "Vendor.App_1.2.3.4_x64__abc123")
+	if miss.Name == "Vendor App" {
+		t.Fatalf("versioned Store full name must not match PFN metadata: %#v", miss)
 	}
 }
 

@@ -100,6 +100,21 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .section-heading{justify-content:space-between;margin-bottom:12px}
 .section-heading h2{margin:0;font-size:21px;line-height:1.2;letter-spacing:0}
 .muted{color:var(--muted)}
+.store-health-panel{border-left:4px solid var(--blue)}
+.store-health-body{display:grid;gap:10px}
+.health-summary{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.health-summary strong{font-size:16px}
+.health-metrics{display:flex;gap:8px;flex-wrap:wrap}
+.diagnostic-details{margin-top:8px}
+.diagnostic-details summary{cursor:pointer;color:var(--muted);font-weight:800}
+.diagnostic-list{display:grid;gap:6px;margin:8px 0 0;padding:0;list-style:none}
+.diagnostic-list li{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-strong);overflow-wrap:anywhere}
+.state-badge{text-transform:capitalize}
+.state-available{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 38%,var(--line))}
+.state-current{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,var(--line))}
+.state-unknown,.state-stale{color:var(--blue);border-color:color-mix(in srgb,var(--blue) 38%,var(--line))}
+.state-conflict,.state-inapplicable{color:var(--red);border-color:color-mix(in srgb,var(--red) 38%,var(--line))}
+.state-pending{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 38%,var(--line))}
 .notice{border-left:4px solid var(--blue);max-height:96px;overflow:auto;overflow-wrap:anywhere;white-space:normal}
 .toast-region{position:fixed;right:18px;bottom:18px;z-index:20;display:grid;gap:10px;width:min(360px,calc(100vw - 28px));pointer-events:none}
 .toast{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:12px 12px 14px 14px;overflow:hidden;border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;background:color-mix(in srgb,var(--surface) 96%,var(--bg));box-shadow:var(--shadow);pointer-events:auto;--toast-accent:var(--blue)}
@@ -147,6 +162,7 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
   .result-status.failed{color:var(--red)}
   .result-status.skipped{color:var(--muted)}
   .result-status.cancelled{color:var(--amber)}
+  .result-status.accepted_not_verified{color:var(--amber)}
   .package-id{display:inline-block;max-width:100%;padding:2px 5px;border:1px solid var(--line);border-radius:5px;background:var(--input);font:12px/1.45 Consolas,"Cascadia Mono","Courier New",monospace;color:var(--text);white-space:normal;overflow-wrap:anywhere}
   .install-route{display:block;margin-top:6px;max-width:210px}
   .update-options{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 16px 12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-strong)}

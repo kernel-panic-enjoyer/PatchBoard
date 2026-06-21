@@ -34,8 +34,42 @@ type Package struct {
 	MatchReason      string `json:"match_reason,omitempty"`
 	ActionBackend    string `json:"action_backend,omitempty"`
 
+	UpdateState                string                        `json:"update_state,omitempty"`
+	UpdateReason               string                        `json:"update_reason,omitempty"`
+	ObservedAt                 string                        `json:"observed_at,omitempty"`
+	Stale                      bool                          `json:"stale,omitempty"`
+	ScanID                     string                        `json:"scan_id,omitempty"`
+	ExactIdentityAvailable     bool                          `json:"exact_identity_available,omitempty"`
+	ExactActionTargetAvailable bool                          `json:"exact_action_target_available,omitempty"`
+	ProviderSummaries          []StorePackageProviderSummary `json:"provider_summaries,omitempty"`
+	InstalledPackageFamilyName string                        `json:"installed_package_family_name,omitempty"`
+	StoreProductID             string                        `json:"store_product_id,omitempty"`
+	InstalledVersion           string                        `json:"installed_version,omitempty"`
+	OfferedVersion             string                        `json:"offered_version,omitempty"`
+	Applicability              string                        `json:"applicability,omitempty"`
+
 	AllowUnknownVersionUpdate bool `json:"-"`
 	AllowPinnedUpdate         bool `json:"-"`
+}
+
+type StorePackageProviderSummary struct {
+	Name       string `json:"name"`
+	Health     string `json:"health"`
+	Kind       string `json:"kind"`
+	ObservedAt string `json:"observed_at,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+type StoreScanHealthSummary struct {
+	Active        bool                          `json:"active"`
+	Healthy       bool                          `json:"healthy"`
+	Authoritative bool                          `json:"authoritative"`
+	ScanID        string                        `json:"scan_id,omitempty"`
+	Status        string                        `json:"status,omitempty"`
+	ObservedAt    string                        `json:"observed_at,omitempty"`
+	Reason        string                        `json:"reason,omitempty"`
+	Counts        map[string]int                `json:"counts,omitempty"`
+	Providers     []StorePackageProviderSummary `json:"providers,omitempty"`
 }
 
 type PackageLookup struct {
@@ -46,7 +80,8 @@ type PackageLookup struct {
 
 type Inventory struct {
 	PackageLookup
-	Scan InventoryScanSummary `json:"scan"`
+	Scan            InventoryScanSummary   `json:"scan"`
+	StoreScanHealth StoreScanHealthSummary `json:"store_scan_health,omitempty"`
 }
 
 type UpdateResult struct {
@@ -189,6 +224,10 @@ func packageKey(manager, id string) string {
 }
 
 func packageAutoUpdateEnabled(state State, pkg Package) bool {
+	if pkg.Manager == managerStore && storeNewDetectorActive() {
+		key := storePackageAutoUpdateKey(pkg)
+		return key != "" && state.AutoUpdatePackages[key]
+	}
 	if state.AutoUpdatePackages[pkg.Key] {
 		return true
 	}
@@ -211,6 +250,11 @@ func equivalentPackageKeys(left, right string) bool {
 		return false
 	}
 	if leftManager == managerStore {
+		if storeNewDetectorActive() {
+			leftNormalized := normalizeAutoUpdatePackageKey(left)
+			rightNormalized := normalizeAutoUpdatePackageKey(right)
+			return leftNormalized != "" && strings.EqualFold(leftNormalized, rightNormalized)
+		}
 		return strings.EqualFold(stableStoreActionID(leftID), stableStoreActionID(rightID))
 	}
 	return leftID == rightID

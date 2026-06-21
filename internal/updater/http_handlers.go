@@ -26,6 +26,19 @@ func validatePackageKey(key string) error {
 
 func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/store/diagnostics/export":
+		if !requireMethod(w, r, http.MethodGet) {
+			return
+		}
+		data, err := buildStoreDiagnosticsExport(r.Context(), loadState())
+		if err != nil {
+			writeAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+storeDiagnosticsExportFilename(time.Now())+`"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
 	case "/api/logs/export":
 		if !requireMethod(w, r, http.MethodGet) {
 			return
@@ -116,6 +129,10 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 
 func logExportFilename(now time.Time) string {
 	return now.Format("2006-01-02_15-04-05") + "_windows-updater-webui-logs.zip"
+}
+
+func storeDiagnosticsExportFilename(now time.Time) string {
+	return now.Format("2006-01-02_15-04-05") + "_store-diagnostics.json"
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {

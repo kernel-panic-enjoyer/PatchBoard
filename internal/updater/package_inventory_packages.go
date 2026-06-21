@@ -5,7 +5,10 @@ import "strings"
 func packagesFromManagerInventory(state State, managers map[string]ManagerStatus, inventory managerInventory) []Package {
 	packages := make([]Package, 0, len(inventory.installed))
 	for _, pkg := range inventory.installed {
-		packages = append(packages, packageFromManagerInventory(state, managers, inventory, pkg))
+		adapted, ok := packageFromManagerInventory(state, managers, inventory, pkg)
+		if ok {
+			packages = append(packages, adapted)
+		}
 	}
 	return packages
 }
@@ -41,10 +44,13 @@ func packagesFromNativeStoreUpdates(state State, updates []Package) []Package {
 	return packages
 }
 
-func packageFromManagerInventory(state State, managers map[string]ManagerStatus, inventory managerInventory, pkg Package) Package {
+func packageFromManagerInventory(state State, managers map[string]ManagerStatus, inventory managerInventory, pkg Package) (Package, bool) {
 	displayManager := inventory.manager
 	if inventory.manager == managerWinget {
 		displayManager = wingetSourceManager(pkg.Source)
+	}
+	if displayManager == managerStore && storeNewDetectorActive() {
+		return Package{}, false
 	}
 	available := inventory.updates[packageKey(displayManager, strings.ToLower(pkg.ID))]
 	updateDetail := inventory.updateDetails[packageKey(displayManager, strings.ToLower(pkg.ID))]
@@ -68,5 +74,5 @@ func packageFromManagerInventory(state State, managers map[string]ManagerStatus,
 	} else if displayManager == managerStore {
 		pkg.ActionBackend = backendWingetMSStoreFallback
 	}
-	return pkg
+	return pkg, true
 }

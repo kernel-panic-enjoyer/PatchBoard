@@ -1,0 +1,224 @@
+package updater
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestParseStorePackagedInventoryResponse(t *testing.T) {
+	scan := testNativeInventoryScan("scan-1", "S-1-5-21-test-1001")
+	data := `{
+		"protocol_version":1,
+		"scan_id":"scan-1",
+		"user_sid":"S-1-5-21-test-1001",
+		"started_at":"2026-06-21T10:00:00Z",
+		"completed_at":"2026-06-21T10:00:01Z",
+		"complete":true,
+		"records":[{
+			"user_sid":"S-1-5-21-test-1001",
+			"package_family_name":"OpenAI.Codex_abc",
+			"package_full_name":"OpenAI.Codex_1.2.3.4_x64__abc",
+			"identity_name":"OpenAI.Codex",
+			"publisher":"CN=OpenAI",
+			"publisher_id":"abc",
+			"version":{"major":1,"minor":2,"build":3,"revision":4},
+			"processor_architecture":"X64",
+			"install_location":"C:\\Program Files\\WindowsApps\\OpenAI.Codex",
+			"package_type":"Windows.ApplicationModel.Package",
+			"is_bundle":true,
+			"status":{"ok":true},
+			"display_name":"Codex"
+		}]
+	}`
+	inventory, err := parseStorePackagedInventoryResponse([]byte(data), scan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inventory.Scan.CompletionStatus != StoreScanCompleted {
+		t.Fatalf("completion = %q, want %q", inventory.Scan.CompletionStatus, StoreScanCompleted)
+	}
+	if len(inventory.Records) != 1 || inventory.Records[0].Version.String() != "1.2.3.4" {
+		t.Fatalf("unexpected records: %#v", inventory.Records)
+	}
+	if got := inventory.Records[0].Classification; got != storePackageClassBundle {
+		t.Fatalf("classification = %q, want bundle", got)
+	}
+	if len(inventory.Families) != 1 || !inventory.Families[0].ProductLike {
+		t.Fatalf("unexpected families: %#v", inventory.Families)
+	}
+}
+
+func TestParseStorePackagedInventoryRejectsMalformedAndWrongUserResponses(t *testing.T) {
+	scan := testNativeInventoryScan("scan-1", "S-1-5-21-test-1001")
+	tests := []struct {
+		name string
+		data string
+	}{
+		{"malformed", `{"protocol_version":`},
+		{"unknown field", `{"protocol_version":1,"scan_id":"scan-1","user_sid":"S-1-5-21-test-1001","complete":true,"records":[],"extra":true}`},
+		{"wrong user", `{"protocol_version":1,"scan_id":"scan-1","user_sid":"S-1-5-21-test-1002","complete":true,"records":[]}`},
+		{"wrong scan", `{"protocol_version":1,"scan_id":"scan-2","user_sid":"S-1-5-21-test-1001","complete":true,"records":[]}`},
+		{"missing pfn", `{"protocol_version":1,"scan_id":"scan-1","user_sid":"S-1-5-21-test-1001","complete":true,"records":[{"user_sid":"S-1-5-21-test-1001","package_full_name":"A_1.0.0.0_x64__abc","identity_name":"A","version":{},"status":{"ok":true}}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseStorePackagedInventoryResponse([]byte(tt.data), scan); err == nil {
+				t.Fatal("expected parse rejection")
+			}
+		})
+	}
+}
+
+func TestGroupStorePackagedAppFamiliesUsesPFNIdentity(t *testing.T) {
+	userSID := "S-1-5-21-test-1001"
+	records := []StorePackagedAppRecord{
+		testNativeRecord(userSID, "Vendor.App_abc", "Vendor.App_1.0.0.0_x64__abc", "Same Name", StorePackageVersion{Major: 1}, storePackageClassMain),
+		testNativeRecord(userSID, "Other.App_xyz", "Other.App_1.0.0.0_x64__xyz", "Same Name", StorePackageVersion{Major: 1}, storePackageClassMain),
+	}
+	families := groupStorePackagedAppFamilies(records)
+	if len(families) != 2 {
+		t.Fatalf("families = %d, want 2: %#v", len(families), families)
+	}
+}
+
+func TestGroupStorePackagedAppFamiliesMultipleVersionsPickNewestPrimary(t *testing.T) {
+	userSID := "S-1-5-21-test-1001"
+	records := []StorePackagedAppRecord{
+		testNativeRecord(userSID, "Vendor.App_abc", "Vendor.App_2.0.0.0_x64__abc", "Vendor App", StorePackageVersion{Major: 2}, storePackageClassMain),
+		testNativeRecord(userSID, "Vendor.App_abc", "Vendor.App_10.0.0.0_x64__abc", "Vendor App", StorePackageVersion{Major: 10}, storePackageClassMain),
+	}
+	families := groupStorePackagedAppFamilies(records)
+	if len(families) != 1 {
+		t.Fatalf("families = %d, want 1", len(families))
+	}
+	if got := families[0].Primary.Version.String(); got != "10.0.0.0" {
+		t.Fatalf("primary version = %s, want 10.0.0.0", got)
+	}
+}
+
+func TestNativeStorePackagesSkipFrameworkResourceAndOptionalOnlyFamilies(t *testing.T) {
+	userSID := "S-1-5-21-test-1001"
+	inventory := StorePackagedAppInventory{
+		Records: []StorePackagedAppRecord{
+			testNativeRecord(userSID, "Framework.Lib_abc", "Framework.Lib_1.0.0.0_x64__abc", "Framework", StorePackageVersion{Major: 1}, storePackageClassFramework),
+			testNativeRecord(userSID, "Resource.Pack_abc", "Resource.Pack_1.0.0.0_x64__abc", "Resource", StorePackageVersion{Major: 1}, storePackageClassResource),
+			testNativeRecord(userSID, "Main.App_abc", "Main.App_1.0.0.0_x64__abc", "Main App", StorePackageVersion{Major: 1}, storePackageClassMain),
+		},
+	}
+	inventory.Families = groupStorePackagedAppFamilies(inventory.Records)
+	packages := packagesFromNativeStorePackagedInventory(defaultState(), inventory)
+	if len(packages) != 1 {
+		t.Fatalf("packages = %d, want 1: %#v", len(packages), packages)
+	}
+	if packages[0].ID != "Main.App_abc" || packages[0].Match != "Main.App_1.0.0.0_x64__abc" {
+		t.Fatalf("unexpected package identity adapter: %#v", packages[0])
+	}
+}
+
+func TestCompareStorePackagedInventoryDiagnostics(t *testing.T) {
+	userSID := "S-1-5-21-test-1001"
+	native := StorePackagedAppInventory{
+		Records: []StorePackagedAppRecord{
+			testNativeRecord(userSID, "Native.Only_abc", "Native.Only_1.0.0.0_x64__abc", "Native Only", StorePackageVersion{Major: 1}, storePackageClassMain),
+			testNativeRecord(userSID, "Version.Diff_abc", "Version.Diff_2.0.0.0_x64__abc", "Version Diff", StorePackageVersion{Major: 2}, storePackageClassMain),
+			testNativeRecord(userSID, "Framework.Lib_abc", "Framework.Lib_1.0.0.0_x64__abc", "Framework", StorePackageVersion{Major: 1}, storePackageClassFramework),
+		},
+	}
+	native.Families = groupStorePackagedAppFamilies(native.Records)
+	legacy := []Package{
+		{Match: "Legacy.Only_abc", Version: "1.0.0.0"},
+		{Match: "Version.Diff_abc", Version: "1.0.0.0"},
+		{Match: "Framework.Lib_abc", Version: "1.0.0.0"},
+	}
+	comparison := compareStorePackagedInventory(native, legacy, CommandResult{OK: true})
+	if !storeInventoryContainsString(comparison.MissingNativePFNs, "Legacy.Only_abc") {
+		t.Fatalf("missing native diagnostics absent: %#v", comparison)
+	}
+	if !storeInventoryContainsString(comparison.MissingLegacyPFNs, "Native.Only_abc") {
+		t.Fatalf("missing legacy diagnostics absent: %#v", comparison)
+	}
+	if len(comparison.VersionDifferences) != 1 || !strings.Contains(comparison.VersionDifferences[0], "Version.Diff_abc") {
+		t.Fatalf("version diagnostics absent: %#v", comparison)
+	}
+	if len(comparison.ClassificationNotes) != 1 || !strings.Contains(comparison.ClassificationNotes[0], "Framework.Lib_abc") {
+		t.Fatalf("classification diagnostics absent: %#v", comparison)
+	}
+}
+
+func TestBrokerStorePackagedAppInventoryProviderTimeoutAndPartialErrors(t *testing.T) {
+	scan := testNativeInventoryScan("scan-1", "S-1-5-21-test-1001")
+	provider := brokerStorePackagedAppInventoryProvider{
+		Path: "broker.exe",
+		Runner: func(ctx context.Context, path string, input []byte) ([]byte, []byte, error) {
+			return nil, []byte("timeout"), context.DeadlineExceeded
+		},
+	}
+	inventory, result := provider.Inventory(context.Background(), scan)
+	if result.OK || !inventory.Partial || len(inventory.Errors) == 0 {
+		t.Fatalf("expected partial timeout result, inventory=%#v result=%#v", inventory, result)
+	}
+}
+
+func TestBrokerStorePackagedAppInventoryProviderParsesSuccessfulResponse(t *testing.T) {
+	scan := testNativeInventoryScan("scan-1", "S-1-5-21-test-1001")
+	provider := brokerStorePackagedAppInventoryProvider{
+		Path: "broker.exe",
+		Runner: func(ctx context.Context, path string, input []byte) ([]byte, []byte, error) {
+			if !strings.Contains(string(input), `"scan_id":"scan-1"`) {
+				return nil, nil, errors.New("request did not contain scan id")
+			}
+			return []byte(`{"protocol_version":1,"scan_id":"scan-1","user_sid":"S-1-5-21-test-1001","complete":true,"records":[{"user_sid":"S-1-5-21-test-1001","package_family_name":"App_abc","package_full_name":"App_1.0.0.0_x64__abc","identity_name":"App","version":{"major":1},"status":{"ok":true}}]}`), nil, nil
+		},
+	}
+	inventory, result := provider.Inventory(context.Background(), scan)
+	if !result.OK || len(inventory.Records) != 1 {
+		t.Fatalf("expected successful parse, inventory=%#v result=%#v", inventory, result)
+	}
+}
+
+func testNativeInventoryScan(scanID, userSID string) StoreScanGeneration {
+	now := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
+	return StoreScanGeneration{
+		ScanID:           scanID,
+		UserSID:          userSID,
+		StartedAt:        now,
+		CompletedAt:      now.Add(time.Second),
+		CompletionStatus: StoreScanCompleted,
+	}
+}
+
+func testNativeRecord(userSID, pfn, fullName, display string, version StorePackageVersion, classification string) StorePackagedAppRecord {
+	record := StorePackagedAppRecord{
+		UserSID:           userSID,
+		PackageFamilyName: pfn,
+		PackageFullName:   fullName,
+		IdentityName:      strings.Split(fullName, "_")[0],
+		Version:           version,
+		DisplayName:       display,
+		Status:            StorePackageStatus{OK: true},
+	}
+	switch classification {
+	case storePackageClassBundle:
+		record.IsBundle = true
+	case storePackageClassFramework:
+		record.IsFramework = true
+	case storePackageClassResource:
+		record.IsResourcePackage = true
+	case storePackageClassOptional:
+		record.IsOptional = true
+	}
+	record.Classification = classifyStorePackagedApp(record)
+	return record
+}
+
+func storeInventoryContainsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}

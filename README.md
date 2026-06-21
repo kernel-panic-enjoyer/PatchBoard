@@ -6,16 +6,18 @@ and Microsoft Store apps.
 ## Features
 
 - Runs as a local-only WebUI on `127.0.0.1`.
-- Relaunches itself as administrator when needed.
+- Runs the WebUI in the interactive user session and uses elevation only for actions that require it.
 - Detects winget, Chocolatey, and the native Store CLI.
-- Lists installed winget, Chocolatey, and Store/AppX packages in one table.
-- Detects available updates and enables update buttons only for packages with updates.
+- Lists installed winget, Chocolatey, and current-user Store packaged apps in one table.
+- Uses the new Microsoft Store assessment model by default. Store status is `Unknown` unless the app has a fresh, complete, exact, current-user scan.
+- Detects available updates and enables update buttons only for packages with updates and exact action targets.
 - Searches for installable packages and filters out truncated winget IDs.
 - Installs packages from winget, Chocolatey, or Store after an explicit button click.
 - Updates individual packages, selected packages, or all packages.
 - Supports Start with Windows through Windows Task Scheduler.
 - Supports opt-in daily auto-update for individual packages or all packages.
-- Scans Windows uninstall registry plus winget/Store inventory and reports apps newly detected since the previous scan.
+- Scans Windows uninstall registry plus managed package inventory and reports apps newly detected since the previous scan.
+- Exports Store diagnostics from the WebUI scan-health panel without raw user SIDs, tokens, credentials, or personal install paths.
 - Includes a dark/light WebUI theme with no separate frontend JavaScript dependency.
 
 ## Project Layout
@@ -47,9 +49,9 @@ go build -ldflags="-H=windowsgui" -o "%TEMP%\WindowsUpdaterWebUI.exe" .
 
 Double-click `WindowsUpdaterWebUI.exe`.
 
-The executable starts the local WebUI, opens a tokenized browser URL, and uses
-Windows UAC to relaunch as administrator when needed. No batch file, script
-launcher, Python runtime, VBS launcher, or C# launcher is required.
+The executable starts the local WebUI and opens a tokenized browser URL. UAC is
+requested only for privileged operations. No batch file, script launcher, Python
+runtime, VBS launcher, or C# launcher is required.
 
 For development without UAC:
 
@@ -65,3 +67,6 @@ go run . --no-elevate
 - Missing Store CLI opens Microsoft Store and Windows Update surfaces.
 - Missing Chocolatey installs through winget when winget is available; otherwise the app opens the Chocolatey install page.
 - State is stored under `%LOCALAPPDATA%\WindowsUpdaterWebUI` by default.
+- Emergency Store detector rollback for one release cycle is explicit:
+  `UPDATER_STORE_LEGACY_DETECTOR=1`. Without that flag, legacy Store display-name
+  resolution and fuzzy Store update heuristics do not produce update truth.

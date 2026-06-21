@@ -7,12 +7,16 @@ import (
 )
 
 const (
-	jobStateQueued     = "queued"
-	jobStateRunning    = "running"
-	jobStateRefreshing = "refreshing"
-	jobStateSucceeded  = "succeeded"
-	jobStateFailed     = "failed"
-	jobStateCancelled  = "cancelled"
+	jobStateQueued              = "queued"
+	jobStateStarting            = "starting"
+	jobStateRunning             = "running"
+	jobStateAccepted            = "accepted"
+	jobStateVerifying           = "verifying"
+	jobStateRefreshing          = "refreshing"
+	jobStateSucceeded           = "succeeded"
+	jobStateAcceptedNotVerified = "accepted_not_verified"
+	jobStateFailed              = "failed"
+	jobStateCancelled           = "cancelled"
 
 	jobTypeInstall          = "install"
 	jobTypeUpdate           = "update"

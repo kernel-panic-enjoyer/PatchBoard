@@ -57,23 +57,18 @@ func runStoreUpdatePackageWithFallbackContext(ctx context.Context, pkg Package) 
 
 func runNativeStoreUpdate(ctx context.Context, pkg Package) CommandResult {
 	candidates := storeUpdateTargetCandidates(pkg)
-	result := runPackageUpdateCandidates(ctx, candidates, "store target", func(target string) CommandResult {
+	return runPackageUpdateCandidates(ctx, candidates, "store target", func(target string) CommandResult {
 		return runStoreUpdateCommandWithApplyFallback(ctx, target)
 	})
-	if result.OK || ctx.Err() != nil || !shouldTryAlternatePackageTarget(result) {
-		return result
-	}
-	searchFallback := runStoreSearchUpdateFallback(ctx, pkg, candidates)
-	if searchFallback.Command == "" {
-		return result
-	}
-	return mergeCommandResults(result, searchFallback, "store search fallback")
 }
 
 func runWingetStoreUpdateFallback(ctx context.Context, pkg Package) CommandResult {
 	return runWingetUpgradePackageWithInstallFallbackContext(ctx, managerStore, pkg)
 }
 
+// runStoreSearchUpdateFallback is retained only for the explicit legacy Store
+// rollback path. The default Store detector and update executor must never call
+// it because Store identity cannot be established from display-name search.
 func runStoreSearchUpdateFallback(ctx context.Context, pkg Package, attempted []string) CommandResult {
 	query := strings.TrimSpace(pkg.Name)
 	if query == "" || len(query) > 160 || containsBlockedPackageActionChar(query) {

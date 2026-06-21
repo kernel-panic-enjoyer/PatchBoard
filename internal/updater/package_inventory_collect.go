@@ -1,6 +1,9 @@
 package updater
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 type managerInventoryCollector struct {
 	manager   string
@@ -54,23 +57,37 @@ func collectInventoryInputs(managers map[string]ManagerStatus) inventoryInputs {
 	inputs := inventoryInputs{}
 	inventoryCh := make(chan managerInventory, len(managedPackageManagers))
 	var wg sync.WaitGroup
+	useNativeStoreInventory := nativeStoreInventoryEnabled()
+	dualRunNativeStoreInventory := nativeStoreInventoryDualRunEnabled()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		inputs.appxPackages, inputs.appxResult = appxInstalled()
-	}()
+	if !useNativeStoreInventory || dualRunNativeStoreInventory {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			inputs.appxPackages, inputs.appxResult = appxInstalled()
+			inputs.legacyAppxPackages = append([]Package(nil), inputs.appxPackages...)
+		}()
+	}
+	if useNativeStoreInventory || dualRunNativeStoreInventory {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			inputs.storePackagedInventory, inputs.storePackagedResult = collectNativeStorePackagedInventory()
+		}()
+	}
 	if managers[managerStore].Available {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inputs.nativeStoreInstalled, inputs.nativeStoreInstalledResult = storeInstalled()
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inputs.nativeStoreUpdates, inputs.nativeStoreUpdatePackages, inputs.nativeStoreUpdatesResult = storeUpdates()
-		}()
+		if storeLegacyDetectorRollbackEnabled() {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				inputs.nativeStoreInstalled, inputs.nativeStoreInstalledResult = storeInstalled()
+			}()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				inputs.nativeStoreUpdates, inputs.nativeStoreUpdatePackages, inputs.nativeStoreUpdatesResult = storeUpdates()
+			}()
+		}
 	}
 	for _, collector := range managerInventoryCollectors {
 		if !managers[collector.manager].Available {
@@ -85,9 +102,32 @@ func collectInventoryInputs(managers map[string]ManagerStatus) inventoryInputs {
 	}
 
 	wg.Wait()
+	if useNativeStoreInventory {
+		if inputs.storePackagedResult.OK {
+			state := loadState()
+			inputs.appxPackages = packagesFromNativeStorePackagedInventory(state, inputs.storePackagedInventory)
+			inputs.appxResult = inputs.storePackagedResult
+		} else if !dualRunNativeStoreInventory {
+			inputs.appxPackages = nil
+			inputs.appxResult = inputs.storePackagedResult
+		}
+	}
+	if dualRunNativeStoreInventory {
+		inputs.storePackagedComparison = compareStorePackagedInventory(inputs.storePackagedInventory, inputs.legacyAppxPackages, inputs.storePackagedResult)
+	}
 	close(inventoryCh)
 	for inventory := range inventoryCh {
 		inputs.managerInventories = append(inputs.managerInventories, inventory)
 	}
 	return inputs
+}
+
+func collectNativeStorePackagedInventory() (StorePackagedAppInventory, CommandResult) {
+	userSID, err := currentUserSID()
+	if err != nil {
+		result := validationCommandResult("native Store inventory", err)
+		return StorePackagedAppInventory{Partial: true, Errors: []string{err.Error()}}, result
+	}
+	scan := newStorePackagedAppScan(userSID)
+	return storePackagedAppInventoryProvider().Inventory(context.Background(), scan)
 }

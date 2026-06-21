@@ -75,6 +75,14 @@ func TestUpdateJobRejectsSelectedUnknownVersionPackage(t *testing.T) {
 	}
 }
 
+func TestUpdateJobRejectsSelectedStorePackageWithoutAssessment(t *testing.T) {
+	app := testUpdateJobApp()
+	_, _, err := app.updateJobPackages([]string{packageKey(managerStore, "Missing.Store_abc123")}, UpdateOptions{})
+	if err == nil || !strings.Contains(err.Error(), "has no exact verified Store update target") {
+		t.Fatalf("expected selected Store package without assessment to be rejected, got %v", err)
+	}
+}
+
 func TestUpdateJobAllowsSelectedUnknownVersionPackageWithGlobalOption(t *testing.T) {
 	app := testUpdateJobApp()
 	packages, mode, err := app.updateJobPackages([]string{"winget:Vendor.Unknown"}, UpdateOptions{AllowUnknownVersion: true, AllowPinned: true})
@@ -285,21 +293,21 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 	}()
 
 	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
-		Key:             "store:Vendor.App_abc123",
-		Manager:         managerStore,
-		ID:              "Vendor.App_abc123",
+		Key:             "winget:Vendor.App",
+		Manager:         managerWinget,
+		ID:              "Vendor.App",
 		Name:            "Vendor App",
 		Match:           "Vendor.App",
 		UpdateAvailable: true,
 		UpdateSupported: true,
-		ActionBackend:   backendStoreCLIResolved,
+		ActionBackend:   "winget",
 	}}}}}
-	if _, err := app.startUpdateJob([]string{"store:Vendor.App_abc123"}); err != nil {
+	if _, err := app.startUpdateJob([]string{"winget:Vendor.App"}); err != nil {
 		t.Fatal(err)
 	}
 	waitForUpdateJobStopped(t, app)
 
-	if got.Manager != managerStore || got.ID != "Vendor.App_abc123" || got.Match != "Vendor.App" || got.ActionBackend != backendStoreCLIResolved {
+	if got.Manager != managerWinget || got.ID != "Vendor.App" || got.Match != "Vendor.App" || got.ActionBackend != "winget" {
 		t.Fatalf("expected full package metadata in update runner, got %#v", got)
 	}
 }
