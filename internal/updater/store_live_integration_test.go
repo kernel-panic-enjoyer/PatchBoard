@@ -291,12 +291,8 @@ func TestLiveVP9ExactUpdateExecution(t *testing.T) {
 
 func ensureLiveWorkspaceDirs(t *testing.T) {
 	t.Helper()
-	root := workspaceRootForTest(t)
-	if os.Getenv("UPDATER_BINARY_DIR") == "" {
-		t.Setenv("UPDATER_BINARY_DIR", filepath.Join(root, ".tmp-bin", "live-store-broker"))
-	}
 	if os.Getenv("UPDATER_STATE_DIR") == "" {
-		t.Setenv("UPDATER_STATE_DIR", filepath.Join(root, ".tmp-bin", "live-state"))
+		t.Setenv("UPDATER_STATE_DIR", filepath.Join(t.TempDir(), "live-state"))
 	}
 }
 

@@ -8,7 +8,10 @@ Status: Active
 
 Use a medium-integrity Go WebUI/coordinator in the interactive user's session. Keep Microsoft Store inventory, Store catalog checks, and ordinary Store actions in that user context. Delegate only admin-required winget, Chocolatey, scheduler, and system actions to the typed elevated worker.
 
-Use a C#/.NET WinRT broker for current-user packaged-app inventory. The broker is embedded in the Go executable and extracted at runtime.
+Use direct in-process Go WinRT/AppModel calls for current-user packaged-app
+inventory. The coordinator calls
+`Windows.Management.Deployment.PackageManager.FindPackagesForUser("")` through
+the Windows Runtime ABI while remaining in the interactive user's session.
 
 ## Identity Rules
 
@@ -28,7 +31,7 @@ Use a C#/.NET WinRT broker for current-user packaged-app inventory. The broker i
 
 ## Providers
 
-- Native current-user packaged inventory broker enumerates installed Store package families.
+- Native current-user packaged inventory enumerates installed Store package families through Go WinRT/AppModel calls.
 - Store CLI exact provider verifies PFN/Product ID with `store show <PFN>` and checks exact update state with Store CLI commands.
 - Store CLI aggregate provider uses `store updates --apply false` only when output contains explicit exact PFN/Product ID evidence or explicit no-update coverage.
 - WinGet msstore evidence is accepted only when it can be associated to the installed PFN exactly.
@@ -40,10 +43,8 @@ Store scan state is persisted transactionally. Published scan generations are im
 
 ## Distribution
 
-The normal build first compiles `native/store-inventory-broker/Program.cs` with
-`dev/scripts/Build-StoreInventoryBroker.ps1`, then embeds
-`internal/updater/assets/broker/WindowsUpdater.StoreInventoryBroker.exe`.
-Runtime extraction writes the broker beside the app or under `UPDATER_BINARY_DIR`.
+The normal build produces one Go executable. No C# inventory sidecar is compiled,
+embedded, extracted, or launched for Microsoft Store inventory.
 
 ## Known Gaps
 

@@ -56,10 +56,9 @@ func appTempDir() (string, error) {
 	}
 
 	candidates := []string{}
-	if override := os.Getenv("UPDATER_BINARY_DIR"); override != "" {
-		candidates = append(candidates, filepath.Join(override, "tmp"))
+	if value := os.TempDir(); value != "" {
+		candidates = append(candidates, filepath.Join(value, appDirName))
 	}
-	candidates = append(candidates, filepath.Join(appRoot(), ".tmp"))
 
 	for _, candidate := range candidates {
 		if err := os.MkdirAll(candidate, 0o755); err == nil && canWriteDir(candidate) {

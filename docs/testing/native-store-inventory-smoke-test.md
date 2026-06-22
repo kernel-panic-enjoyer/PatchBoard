@@ -2,33 +2,15 @@
 
 Scope: manual validation for the current-user packaged-application inventory provider.
 
-## Build Broker
-
-Requires a Windows SDK/.NET Framework machine. Build the broker directly into
-the repo-embedded asset path with the workspace script so temporary and final
-binaries stay under the workspace:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\dev\scripts\Build-StoreInventoryBroker.ps1
-```
-
-Build the app with repo-local Go cache and temporary directories:
+## Build
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1
 ```
 
-The app embeds the script-built broker asset and extracts it at runtime to:
-
-```text
-dist\bin\WindowsUpdater.StoreInventoryBroker.exe
-```
-
-Alternatively, for diagnostics only, set an explicit repo-local broker path:
-
-```powershell
-$env:UPDATER_STORE_INVENTORY_BROKER="$PWD\internal\updater\assets\broker\WindowsUpdater.StoreInventoryBroker.exe"
-```
+The app uses in-process Go WinRT/AppModel calls for current-user packaged-app
+inventory. It should not build, extract, or launch
+`WindowsUpdater.StoreInventoryBroker.exe`.
 
 ## Diagnostic Dual Run
 
@@ -45,7 +27,7 @@ Expected result: comparison diagnostics are produced, but no Store update state 
 
 1. Set `UPDATER_NATIVE_STORE_INVENTORY=1`.
 2. Start the app without elevation.
-3. Confirm no PowerShell AppX inventory command is run for normal Store inventory.
+3. Confirm no PowerShell AppX inventory command and no Store inventory sidecar process is run for normal Store inventory.
 4. Confirm Store packages are grouped by package family name and framework/resource/optional-only families are not shown as independent Store products.
 5. Confirm Store update detection is not added by this phase.
 
@@ -59,9 +41,9 @@ Expected result: current-user native inventory is available behind the flag, wit
 
 Expected result: native responses with the wrong user SID are rejected.
 
-## Broker Failure
+## Direct Provider Failure
 
-1. Set `UPDATER_STORE_INVENTORY_BROKER` to a missing or crashing executable.
+1. Force a provider failure with a local diagnostic build or debugger.
 2. Enable dual-run.
 3. Refresh inventory.
 

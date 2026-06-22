@@ -8,7 +8,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-& (Join-Path $PSScriptRoot 'Set-WorkspaceBinaryPaths.ps1') -Root $root | Out-Null
 Set-Location $root
 
 if ([string]::IsNullOrWhiteSpace($Exe)) {
@@ -17,15 +16,14 @@ if ([string]::IsNullOrWhiteSpace($Exe)) {
 $Exe = (Resolve-Path $Exe).Path
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$stateDir = Join-Path $root ".state\smoke-$stamp"
-$binDir = Join-Path $root ".tmp-bin\smoke-$stamp"
-$tmpDir = Join-Path $root ".tmp\smoke-$stamp"
-New-Item -ItemType Directory -Force $stateDir, $binDir, $tmpDir | Out-Null
+$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "WindowsUpdaterWebUI\smoke-$stamp"
+$stateDir = Join-Path $smokeRoot 'state'
+$tmpDir = Join-Path $smokeRoot 'tmp'
+New-Item -ItemType Directory -Force $stateDir, $tmpDir | Out-Null
 
 $env:UPDATER_PORT = [string]$Port
 $env:UPDATER_TOKEN = $Token
 $env:UPDATER_STATE_DIR = $stateDir
-$env:UPDATER_BINARY_DIR = $binDir
 $env:UPDATER_TEMP_DIR = $tmpDir
 $env:UPDATER_STORE_PROVIDER_TIMEOUT_SECONDS = [string]$StoreProviderTimeoutSeconds
 $env:TEMP = $tmpDir
@@ -90,7 +88,6 @@ Set-SmokeEnvironment $startInfo @{
     UPDATER_PORT = [string]$Port
     UPDATER_TOKEN = $Token
     UPDATER_STATE_DIR = $stateDir
-    UPDATER_BINARY_DIR = $binDir
     UPDATER_TEMP_DIR = $tmpDir
     UPDATER_STORE_PROVIDER_TIMEOUT_SECONDS = [string]$StoreProviderTimeoutSeconds
     TEMP = $tmpDir
@@ -154,9 +151,9 @@ try {
         pid                 = $process.Id
         port                = $Port
         state_dir           = $stateDir
-        binary_dir          = $binDir
+        temp_dir            = $tmpDir
         store_provider_timeout_seconds = $StoreProviderTimeoutSeconds
-        broker_exists       = Test-Path (Join-Path $binDir 'bin\WindowsUpdater.StoreInventoryBroker.exe')
+        store_inventory_backend = 'go-winrt'
         package_count       = @($packages.packages).Count
         loading             = [bool]$packages.loading
         store_health        = $health.status

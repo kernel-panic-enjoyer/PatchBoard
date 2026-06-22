@@ -1,7 +1,5 @@
 # Binaries for programs and plugins
 *.exe
-!internal/updater/assets/broker/
-!internal/updater/assets/broker/WindowsUpdater.StoreInventoryBroker.exe
 *.exe~
 *.dll
 *.so
@@ -23,17 +21,8 @@ profile.cov
 go.work
 go.work.sum
 
-# Local app state and caches
+# Local app state
 .state/
-.dotnet/
-.gobin/
-.gocache/
-.gomodcache/
-.gopath/
-.gotmp/
-.nuget/
-.tmp/
-.tmp-bin/
 __pycache__/
 *.pyc
 .pytest_cache/

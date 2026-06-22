@@ -10,9 +10,6 @@ import (
 //go:embed assets/app.ico
 var appIconICO []byte
 
-//go:embed assets/broker/WindowsUpdater.StoreInventoryBroker.exe
-var embeddedStoreInventoryBroker []byte
-
 //go:embed assets/ui.css
 var uiCSS string
 

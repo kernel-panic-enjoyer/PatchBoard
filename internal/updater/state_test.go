@@ -32,15 +32,16 @@ func TestAppTempDirOverride(t *testing.T) {
 	}
 }
 
-func TestAppTempDirUsesBinaryDirWhenConfigured(t *testing.T) {
-	dir := t.TempDir()
+func TestAppTempDirUsesSystemTempByDefault(t *testing.T) {
+	root := t.TempDir()
 	t.Setenv("UPDATER_TEMP_DIR", "")
-	t.Setenv("UPDATER_BINARY_DIR", dir)
+	t.Setenv("TMP", root)
+	t.Setenv("TEMP", root)
 	got, err := appTempDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "tmp")
+	want := filepath.Join(root, appDirName)
 	if got != want {
 		t.Fatalf("expected temp dir %s, got %s", want, got)
 	}

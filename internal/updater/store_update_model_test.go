@@ -8,7 +8,7 @@ import (
 func TestReconcileStoreUpdate(t *testing.T) {
 	identity := StoreInstalledIdentity{UserSID: "S-1-5-21-test-1001", PackageFamilyName: "OpenAI.Codex_123abc"}
 	otherIdentity := StoreInstalledIdentity{UserSID: "S-1-5-21-test-1002", PackageFamilyName: identity.PackageFamilyName}
-	storeProvider := StoreProviderIdentity{ID: "store-broker", Name: "Store broker", Backend: "winrt"}
+	storeProvider := StoreProviderIdentity{ID: "store-winrt", Name: "Store WinRT", Backend: "winrt"}
 	wingetProvider := StoreProviderIdentity{ID: "winget-msstore", Name: "WinGet msstore", Backend: "winget"}
 	scan := completedStoreScan("scan-1", identity.UserSID, storeProvider, wingetProvider)
 	olderScan := completedStoreScan("scan-0", identity.UserSID, storeProvider)
