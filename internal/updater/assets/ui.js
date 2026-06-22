@@ -956,7 +956,17 @@
     }
     return '<button class="auto-package toggle-button" type="button" data-key="' + attr(pkg.key) + '" data-package-name="' + attr(pkg.name) + '" data-enabled="' + (pkg.auto_update ? 'true' : 'false') + '" aria-pressed="' + (pkg.auto_update ? 'true' : 'false') + '" aria-label="Auto-update for ' + attr(pkg.name) + '"' + (updateBusy ? ' disabled' : '') + '><span>' + (pkg.auto_update ? 'On' : 'Off') + '</span></button>';
   }
-  function packageAvailableCell(pkg){
+  function packageAvailableCell(pkg, options){
+    options = options || {};
+    var showStatusBadge = options.statusBadge !== false;
+    var compact = options.compact === true;
+    function withOptionalBadge(text, muted){
+      var content = muted ? '<span class="muted">' + html(text) + '</span>' : html(text);
+      if(!showStatusBadge){
+        return content;
+      }
+      return stateBadge(pkg) + '<br>' + content;
+    }
     if(storeAssessmentActive(pkg)){
       var state = storeUpdateState(pkg);
       var offered = pkg.offered_version || pkg.available_version || "";
@@ -976,10 +986,16 @@
       }else{
         text = stateLabel(state);
       }
-      return stateBadge(pkg) + '<br><span class="muted">' + html(text) + '</span>';
+      if(compact && (state === "current" || state === "unknown")){
+        return '<span class="muted">-</span>';
+      }
+      return withOptionalBadge(text, state !== "available");
     }
     if(pkg.manager === "store"){
-      return stateBadge(pkg) + '<br><span class="muted">Unknown</span>';
+      if(compact){
+        return '<span class="muted">-</span>';
+      }
+      return withOptionalBadge("Unknown", true);
     }
     var available = html(pkg.available_version);
     return available;
@@ -1059,7 +1075,7 @@
 	target.innerHTML = page.items.map(function(pkg){
 		var rowStatus = pkg.manager === "store" ? stateBadge(pkg) : (pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : ((pkg.unknown_version || pkg.pinned) && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>')));
     var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
-		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + packageAvailableCell(pkg) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
+		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg) + '</td><td>' + html(pkg.version) + '</td><td>' + packageAvailableCell(pkg, {statusBadge:false, compact:true}) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td>' + installedAction(pkg) + '</td></tr>';
 	}).join("");
     renderPager(page, status, prev, next, installedSearchQuery ? " matches" : "");
   }

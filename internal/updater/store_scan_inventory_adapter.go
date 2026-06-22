@@ -106,10 +106,15 @@ func applyPublishedStoreAssessmentsToInventory(state State, inventory Inventory,
 }
 
 func packageFromPublishedStoreAssessment(state State, assessment StorePublishedAssessment, family StorePackagedAppFamily, scanProviders []StorePackageProviderSummary) Package {
-	name := assessment.Identity.PackageFamilyName
+	name := friendlyAppxName(assessment.Identity.PackageFamilyName, "")
 	version := assessment.InstalledVersion
 	if family.Identity.PackageFamilyName != "" {
-		name = firstNonEmpty(family.DisplayName, family.Primary.IdentityName, family.Identity.PackageFamilyName)
+		name = firstNonEmpty(
+			family.DisplayName,
+			friendlyAppxName(family.Primary.IdentityName, family.Primary.DisplayName),
+			friendlyAppxName(family.Identity.PackageFamilyName, ""),
+			name,
+		)
 		version = firstNonEmpty(version, family.Primary.Version.String())
 	}
 	pkg := Package{

@@ -36,10 +36,7 @@ func inventoryPackageSortGroup(pkg Package) int {
 	if pkg.UpdateAvailable || pkg.UpdateState == string(StoreUpdateAvailable) {
 		return 0
 	}
-	if pkg.ActionBackend == backendAppXInventory && strings.EqualFold(pkg.UpdateState, string(StoreUpdateUnknown)) {
-		return 2
-	}
-	if pkg.ActionBackend == backendAppXInventory && pkg.UpdateState == "" {
+	if pkg.ActionBackend == backendAppXInventory {
 		return 2
 	}
 	return 1

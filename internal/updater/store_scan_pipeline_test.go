@@ -1081,6 +1081,27 @@ func TestStoreTransactionalScanFeatureFlagAndInventoryAdapter(t *testing.T) {
 	}
 }
 
+func TestPublishedStoreAssessmentUsesFriendlyPFNPresentationFallback(t *testing.T) {
+	state := defaultState()
+	pkg := packageFromPublishedStoreAssessment(state, StorePublishedAssessment{
+		StoreUpdateAssessment: StoreUpdateAssessment{
+			State:            StoreUpdateCurrent,
+			Identity:         StoreInstalledIdentity{UserSID: "S-1-5-21-adapter", PackageFamilyName: "19568ShareX.ShareX_egrzcvs15399j"},
+			ScanID:           "scan-friendly-name",
+			Reason:           "authoritative negative",
+			InstalledVersion: "20.2.0.0",
+		},
+		ObservedAt: time.Date(2026, 6, 22, 17, 0, 0, 0, time.UTC),
+	}, StorePackagedAppFamily{}, nil)
+
+	if pkg.Name != "ShareX" {
+		t.Fatalf("package assessment name = %q, want ShareX", pkg.Name)
+	}
+	if pkg.InstalledPackageFamilyName != "19568ShareX.ShareX_egrzcvs15399j" {
+		t.Fatalf("canonical PFN was not preserved: %#v", pkg)
+	}
+}
+
 func newTestStoreScanStore(t *testing.T) *StoreScanStore {
 	t.Helper()
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())

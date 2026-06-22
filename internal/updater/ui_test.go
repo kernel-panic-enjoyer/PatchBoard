@@ -242,6 +242,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`id="installed-page-status"`,
 		`packageMatchesInstalledSearch`,
 		`packageAvailableCell`,
+		`packageAvailableCell(pkg, {statusBadge:false, compact:true})`,
 		`packageNameCell(pkg, {diagnostics:true})`,
 		`managersRendered`,
 		`renderUpdatesTable`,

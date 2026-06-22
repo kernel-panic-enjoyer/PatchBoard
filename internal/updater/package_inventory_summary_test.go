@@ -2,8 +2,14 @@ package updater
 
 import "testing"
 
-func TestSortInventoryPackagesPushesUnknownAppxInventoryRowsLast(t *testing.T) {
+func TestSortInventoryPackagesPushesAppxInventoryRowsLast(t *testing.T) {
 	packages := []Package{
+		{
+			Name:          "Current-AppX",
+			Manager:       managerStore,
+			ActionBackend: backendAppXInventory,
+			UpdateState:   string(StoreUpdateCurrent),
+		},
 		{
 			Name:          "App-Resolver",
 			Manager:       managerStore,
@@ -30,7 +36,7 @@ func TestSortInventoryPackagesPushesUnknownAppxInventoryRowsLast(t *testing.T) {
 
 	sortInventoryPackages(packages)
 
-	if packages[0].Name != "chocolatey" || packages[1].Name != "GitHub CLI" || packages[2].Name != "Codex" || packages[3].Name != "App-Resolver" {
+	if packages[0].Name != "chocolatey" || packages[1].Name != "GitHub CLI" || packages[2].Name != "Codex" || packages[3].Name != "App-Resolver" || packages[4].Name != "Current-AppX" {
 		t.Fatalf("unexpected package order: %#v", packages)
 	}
 }
