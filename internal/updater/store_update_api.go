@@ -119,7 +119,10 @@ func applyStoreAssessmentCompatibility(pkg Package) Package {
 	if pkg.UpdateState == "" {
 		return pkg
 	}
-	pkg.UpdateAvailable = pkg.UpdateState == string(StoreUpdateAvailable)
+	pkg.UpdateAvailable = pkg.UpdateState == string(StoreUpdateAvailable) && !pkg.Stale
+	if pkg.Manager == managerStore {
+		pkg.UpdateAvailable = pkg.UpdateAvailable && pkg.ExactActionTargetAvailable
+	}
 	if pkg.InstalledVersion == "" {
 		pkg.InstalledVersion = pkg.Version
 	}
@@ -132,7 +135,7 @@ func applyStoreAssessmentCompatibility(pkg Package) Package {
 	if !pkg.UpdateAvailable && pkg.UpdateState != string(StoreUpdatePending) {
 		pkg.AvailableVersion = ""
 	}
-	if pkg.Manager == managerStore && pkg.UpdateState == string(StoreUpdateAvailable) && !pkg.ExactActionTargetAvailable {
+	if pkg.Manager == managerStore && pkg.UpdateState == string(StoreUpdateAvailable) && (pkg.Stale || !pkg.ExactActionTargetAvailable) {
 		pkg.UpdateSupported = false
 	}
 	return pkg

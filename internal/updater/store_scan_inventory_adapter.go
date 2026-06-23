@@ -152,12 +152,17 @@ func applyPublishedStoreAssessmentToPackage(pkg Package, assessment StorePublish
 	pkg.OfferedVersion = assessment.AvailableVersion
 	pkg.Applicability = assessment.Applicability
 	pkg.ProviderSummaries = providerSummariesFromEvidence(assessment.Evidence, assessment.ObservedAt, scanProviders)
-	pkg.UpdateAvailable = assessment.State == StoreUpdateAvailable
+	pkg.UpdateAvailable = assessment.State == StoreUpdateAvailable && !assessment.Stale && assessment.ExactActionTargetAvailable
 	pkg.AvailableVersion = assessment.AvailableVersion
+	if !pkg.UpdateAvailable && assessment.State != StoreUpdatePending {
+		pkg.AvailableVersion = ""
+	}
 	if pkg.UpdateAvailable && !assessment.ExactActionTargetAvailable {
 		pkg.UpdateSupported = false
 	} else if pkg.UpdateAvailable {
 		pkg.UpdateSupported = true
+	} else if assessment.Stale {
+		pkg.UpdateSupported = false
 	}
 	if (assessment.StoreProductID != "" || assessment.UpdateID != "") && assessment.ExactActionTargetAvailable {
 		pkg.ActionBackend = backendStoreCLI

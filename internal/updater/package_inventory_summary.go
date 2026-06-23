@@ -33,7 +33,7 @@ func inventoryPackageSortGroup(pkg Package) int {
 	if pkg.Manager != managerStore {
 		return 0
 	}
-	if pkg.UpdateAvailable || pkg.UpdateState == string(StoreUpdateAvailable) {
+	if pkg.UpdateAvailable {
 		return 0
 	}
 	if pkg.ActionBackend == backendAppXInventory {

@@ -54,6 +54,17 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       </div>
     </section>
 
+    <section id="package-diagnostics-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="package-diagnostics-modal-title">
+      <div class="modal-backdrop" data-package-diagnostics-close></div>
+      <div class="modal-panel package-diagnostics-modal" role="document">
+        <div class="modal-header">
+          <div><span class="panel-kicker">Update diagnostics</span><h2 id="package-diagnostics-modal-title">Package diagnostics</h2></div>
+          <button id="package-diagnostics-close" class="ghost" type="button" data-package-diagnostics-close><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></span><span>Close</span></button>
+        </div>
+        <div id="package-diagnostics-body" class="package-diagnostics-body" aria-live="polite"></div>
+      </div>
+    </section>
+
     <section class="dashboard-hero">
       <div class="hero-copy">
         <span class="eyebrow">Updates first</span>

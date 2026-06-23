@@ -92,7 +92,8 @@ func TestStoreAssessmentAPISerializesStates(t *testing.T) {
 	byID := map[string]Package{}
 	for _, pkg := range response.Packages {
 		byID[pkg.ID] = pkg
-		if pkg.Manager == managerStore && pkg.UpdateAvailable != (pkg.UpdateState == string(StoreUpdateAvailable)) {
+		wantUpdateAvailable := pkg.UpdateState == string(StoreUpdateAvailable) && !pkg.Stale && pkg.ExactActionTargetAvailable
+		if pkg.Manager == managerStore && pkg.UpdateAvailable != wantUpdateAvailable {
 			t.Fatalf("%s UpdateAvailable=%v state=%s", pkg.ID, pkg.UpdateAvailable, pkg.UpdateState)
 		}
 	}
@@ -113,6 +114,9 @@ func TestStoreAssessmentAPISerializesStates(t *testing.T) {
 	}
 	if !byID["stale"].Stale {
 		t.Fatal("expected stale positive update to remain marked stale")
+	}
+	if byID["stale"].UpdateAvailable || byID["stale"].UpdateSupported {
+		t.Fatalf("stale Store evidence must not be exposed as updateable: %#v", byID["stale"])
 	}
 	if byID["no-target"].UpdateSupported || packageAllowedInBulkUpdate(byID["no-target"], UpdateOptions{}) {
 		t.Fatal("Store package without exact target must not be updateable")
@@ -208,10 +212,10 @@ func TestStoreAssessmentRetainsStalePositiveDuringIncompleteRescan(t *testing.T)
 	app.inventoryFetchedAt = now
 
 	got := requestPackages(t, app).Packages[0]
-	if got.UpdateState != string(StoreUpdateAvailable) || !got.UpdateAvailable || !got.Stale {
+	if got.UpdateState != string(StoreUpdateAvailable) || got.UpdateAvailable || !got.Stale || got.UpdateSupported {
 		t.Fatalf("expected retained stale positive update, got %#v", got)
 	}
-	if got.AvailableVersion != "1.1.0" || got.ScanID != "previous-scan" {
+	if got.AvailableVersion != "" || got.OfferedVersion != "1.1.0" || got.ScanID != "previous-scan" {
 		t.Fatalf("cached update details were not retained: %#v", got)
 	}
 }
@@ -310,7 +314,7 @@ func TestTransactionalStoreAssessmentAPIStalePositiveAndBrowserReload(t *testing
 	if !response.Loading {
 		t.Fatal("expected loading snapshot to survive browser reload during scanning")
 	}
-	if got.UpdateState != string(StoreUpdateAvailable) || !got.UpdateAvailable || !got.Stale {
+	if got.UpdateState != string(StoreUpdateAvailable) || got.UpdateAvailable || !got.Stale || got.UpdateSupported {
 		t.Fatalf("expected retained stale positive during incomplete rescan, got %#v", got)
 	}
 	if response.StoreScanHealth.Healthy || response.StoreScanHealth.Authoritative {
@@ -325,6 +329,10 @@ func TestStoreAssessmentBrowserSmokeStrings(t *testing.T) {
 	surface := uiJS + "\n" + uiCSS
 	for _, expected := range []string{
 		"storeUpdateState",
+		`return storeUpdateState(pkg) === "available" && !pkg.stale;`,
+		"return packageHasUpdate(pkg);",
+		"Stale evidence",
+		`? "Stale"`,
 		"storeScanHealth",
 		"store_scan_health",
 		"latestStoreScanHealth",
@@ -339,6 +347,15 @@ func TestStoreAssessmentBrowserSmokeStrings(t *testing.T) {
 	} {
 		if !strings.Contains(surface, expected) {
 			t.Fatalf("UI assets missing %q", expected)
+		}
+	}
+	for _, unexpected := range []string{
+		`Available (stale)`,
+		`Available (Stale)`,
+		`stateLabel(state) + " (stale)"`,
+	} {
+		if strings.Contains(surface, unexpected) {
+			t.Fatalf("UI assets should not render stale Store evidence as %q", unexpected)
 		}
 	}
 }

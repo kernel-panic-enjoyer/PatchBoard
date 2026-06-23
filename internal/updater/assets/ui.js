@@ -738,7 +738,11 @@
   function stateBadge(pkg){
     var state = storeUpdateState(pkg);
     var className = "state-" + (pkg && pkg.stale ? "stale" : state);
-    var label = pkg && pkg.stale ? stateLabel(state) + " (stale)" : stateLabel(state);
+    var label = pkg && pkg.stale ? "Stale" : stateLabel(state);
+    if(storeAssessmentActive(pkg) && state === "available" && !pkg.stale && !packageHasExactStoreTarget(pkg)){
+      className = "state-unknown";
+      label = "Target unavailable";
+    }
     return '<span class="badge state-badge ' + attr(className) + '">' + html(label) + '</span>';
   }
   function packageHasExactStoreTarget(pkg){
@@ -752,20 +756,24 @@
     return storeUpdateState(pkg) === "available" && !pkg.stale;
   }
   function packageHasUpdate(pkg){
-    if(storeAssessmentActive(pkg)){ return storeUpdateState(pkg) === "available"; }
+    if(storeAssessmentActive(pkg)){ return packageHasFreshStoreAssessment(pkg) && packageHasExactStoreTarget(pkg); }
     if(pkg && pkg.manager === "store"){ return false; }
     return !!pkg.update_available;
   }
   function packageNeedsUpdateAttention(pkg){
     if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return true; }
     if(!storeAssessmentActive(pkg)){ return !!pkg.update_available; }
-    var state = storeUpdateState(pkg);
-    return state === "available" || state === "pending" || state === "conflict" || state === "inapplicable" || !!pkg.stale;
+    return packageHasUpdate(pkg);
   }
   function packageReasonText(pkg){
     return String((pkg && pkg.update_reason) || "").trim();
   }
   function providerDiagnosticsMarkup(pkg){
+    var list = providerDiagnosticsListMarkup(pkg);
+    if(!list){ return ""; }
+    return '<details class="diagnostic-details"><summary>Update diagnostics</summary>' + list + '</details>';
+  }
+  function providerDiagnosticsListMarkup(pkg){
     var summaries = (pkg && pkg.provider_summaries) || [];
     if(!packageReasonText(pkg) && summaries.length === 0){ return ""; }
     var items = [];
@@ -778,7 +786,7 @@
       if(summary.error){ text += " - " + summary.error; }
       items.push('<li>' + html(text) + '</li>');
     });
-    return '<details class="diagnostic-details"><summary>Update diagnostics</summary><ul class="diagnostic-list">' + items.join("") + '</ul></details>';
+    return '<ul class="diagnostic-list">' + items.join("") + '</ul>';
   }
   function defaultStoreHealthCounts(){
     return {available:0,current:0,unknown:0,conflict:0,inapplicable:0,pending:0,stale:0};
@@ -836,12 +844,16 @@
     var health = storeScanHealth();
     return !health.active || health.healthy;
   }
+  function updateModalOpenState(){
+    var openModal = document.querySelector(".modal:not(.hidden)");
+    document.body.classList.toggle("modal-open", !!openModal);
+  }
   function openStoreStatusModal(){
     var modal = $("store-status-modal");
     if(!modal){ return; }
     renderStoreScanHealth();
     modal.classList.remove("hidden");
-    document.body.classList.add("modal-open");
+    updateModalOpenState();
     var closeButton = $("store-status-close");
     if(closeButton){ closeButton.focus(); }
   }
@@ -849,7 +861,53 @@
     var modal = $("store-status-modal");
     if(!modal){ return; }
     modal.classList.add("hidden");
-    document.body.classList.remove("modal-open");
+    updateModalOpenState();
+  }
+  function packageByKey(key){
+    key = String(key || "");
+    for(var i = 0; i < packages.length; i++){
+      if(packages[i] && String(packages[i].key || "") === key){ return packages[i]; }
+    }
+    return null;
+  }
+  function packageDiagnosticsButton(pkg){
+    if(!storeAssessmentActive(pkg) || (!packageReasonText(pkg) && !(pkg.provider_summaries || []).length)){ return ""; }
+    return '<button class="ghost diagnostics-button" type="button" data-package-diagnostics-open data-key="' + attr(pkg.key) + '" aria-label="Show update diagnostics for ' + attr(pkg.name || pkg.id || "package") + '">' + icon("alert") + '<span>Diagnostics</span></button>';
+  }
+  function packageDiagnosticField(label, value){
+    value = String(value || "").trim();
+    if(!value){ return ""; }
+    return '<div class="diagnostic-field"><span>' + html(label) + '</span>' + html(value) + '</div>';
+  }
+  function openPackageDiagnosticsModal(key){
+    var pkg = packageByKey(key);
+    var modal = $("package-diagnostics-modal");
+    var title = $("package-diagnostics-modal-title");
+    var body = $("package-diagnostics-body");
+    if(!pkg || !modal || !body){ return; }
+    if(title){ title.textContent = pkg.name || pkg.id || "Package diagnostics"; }
+    var fields = [
+      packageDiagnosticField("Manager", managerLabel(pkg.manager)),
+      packageDiagnosticField("Backend", backendLabel(pkg.action_backend || pkg.source || pkg.manager)),
+      packageDiagnosticField("Package family", pkg.installed_package_family_name),
+      packageDiagnosticField("Product ID", pkg.store_product_id),
+      packageDiagnosticField("Scan ID", pkg.scan_id),
+      packageDiagnosticField("Observed", pkg.observed_at)
+    ].join("");
+    body.innerHTML =
+      '<div class="health-summary">' + stateBadge(pkg) + '<strong>' + html(packageReasonText(pkg) || stateLabel(storeUpdateState(pkg))) + '</strong></div>' +
+      (fields ? '<div class="diagnostic-grid">' + fields + '</div>' : '') +
+      (providerDiagnosticsListMarkup(pkg) || '<p class="muted">No provider diagnostics are attached to this package.</p>');
+    modal.classList.remove("hidden");
+    updateModalOpenState();
+    var closeButton = $("package-diagnostics-close");
+    if(closeButton){ closeButton.focus(); }
+  }
+  function closePackageDiagnosticsModal(){
+    var modal = $("package-diagnostics-modal");
+    if(!modal){ return; }
+    modal.classList.add("hidden");
+    updateModalOpenState();
   }
   function renderStoreScanHealth(){
     var target = $("store-scan-health-body");
@@ -1004,7 +1062,7 @@
     if(pkg.pinned){
       secondary += " - pinned";
     }
-    var diagnostics = options.diagnostics && storeAssessmentActive(pkg) ? providerDiagnosticsMarkup(pkg) : "";
+    var diagnostics = options.diagnostics && storeAssessmentActive(pkg) ? packageDiagnosticsButton(pkg) : "";
     return '<strong>' + html(pkg.name || "Store app") + '</strong><br><span class="muted">' + html(secondary) + '</span>' + diagnostics;
   }
 	function managerCell(pkg){
@@ -1035,7 +1093,11 @@
       var state = storeUpdateState(pkg);
       var offered = pkg.offered_version || pkg.available_version || "";
       var text = "";
-      if(state === "available"){
+      if(pkg.stale){
+        text = "Stale evidence";
+      }else if(state === "available" && !packageHasExactStoreTarget(pkg)){
+        text = "Exact target unavailable";
+      }else if(state === "available"){
         text = offered ? offered : "Update available";
       }else if(state === "pending"){
         text = offered ? offered + " pending" : "Pending verification";
@@ -1053,7 +1115,7 @@
       if(compact && (state === "current" || state === "unknown")){
         return '<span class="muted">-</span>';
       }
-      return withOptionalBadge(text, state !== "available");
+      return withOptionalBadge(text, state !== "available" || pkg.stale || !packageHasExactStoreTarget(pkg));
     }
     if(pkg.manager === "store"){
       if(compact){
@@ -2089,6 +2151,16 @@
       closeStoreStatusModal();
       return;
     }
+    var openPackageDiagnostics = event.target.closest("[data-package-diagnostics-open]");
+    if(openPackageDiagnostics){
+      openPackageDiagnosticsModal(openPackageDiagnostics.dataset.key);
+      return;
+    }
+    var closePackageDiagnostics = event.target.closest("[data-package-diagnostics-close]");
+    if(closePackageDiagnostics){
+      closePackageDiagnosticsModal();
+      return;
+    }
     var toastClose = event.target.closest(".toast-close");
     if(toastClose){
       var toast = toastClose.closest(".toast");
@@ -2106,8 +2178,13 @@
     }
   });
   document.addEventListener("keydown", function(event){
-    var modal = $("store-status-modal");
-    if(event.key === "Escape" && modal && !modal.classList.contains("hidden")){
+    var storeModal = $("store-status-modal");
+    var packageModal = $("package-diagnostics-modal");
+    if(event.key === "Escape" && packageModal && !packageModal.classList.contains("hidden")){
+      closePackageDiagnosticsModal();
+      return;
+    }
+    if(event.key === "Escape" && storeModal && !storeModal.classList.contains("hidden")){
       closeStoreStatusModal();
       return;
     }

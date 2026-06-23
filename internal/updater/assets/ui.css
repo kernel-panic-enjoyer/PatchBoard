@@ -107,6 +107,7 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .modal-header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}
 .modal-header h2{margin:2px 0 0;font-size:22px;line-height:1.2}
 .store-health-modal{border-left:4px solid var(--blue)}
+.package-diagnostics-modal{border-left:4px solid var(--amber)}
 .store-health-summary-text{display:flex;align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:14px}
 .store-health-modal>.store-health-summary-text{margin-bottom:12px}
 .store-health-actions{justify-content:flex-end;margin-bottom:12px}
@@ -119,6 +120,11 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .diagnostic-details summary{cursor:pointer;color:var(--muted);font-weight:800}
 .diagnostic-list{display:grid;gap:6px;margin:8px 0 0;padding:0;list-style:none}
 .diagnostic-list li{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-strong);overflow-wrap:anywhere}
+.diagnostics-button{margin-top:8px;min-height:30px;padding:5px 10px}
+.package-diagnostics-body{display:grid;gap:12px}
+.diagnostic-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.diagnostic-field{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-strong);overflow-wrap:anywhere}
+.diagnostic-field span{display:block;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
 .state-badge{text-transform:capitalize}
 .state-available{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 38%,var(--line))}
 .state-current{color:var(--green);border-color:color-mix(in srgb,var(--green) 38%,var(--line))}
@@ -223,6 +229,7 @@ pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-
   .modal{padding:12px}
   .modal-panel{width:100%;max-height:calc(100vh - 24px)}
   .modal-header{display:grid}
+  .diagnostic-grid{grid-template-columns:1fr}
   .session-log{width:100%;min-width:0}
   .toast-region{right:12px;bottom:12px;left:12px;width:auto}
 }

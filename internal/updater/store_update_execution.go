@@ -252,11 +252,14 @@ func exactStoreUpdateRequestFromPackage(ctx context.Context, pkg Package) (Store
 	if pkg.Manager != managerStore {
 		return StoreExactUpdateRequest{}, errors.New("exact Store update execution requires a Store package")
 	}
-	if strings.ToLower(strings.TrimSpace(pkg.UpdateState)) != string(StoreUpdateAvailable) || !pkg.UpdateAvailable {
+	if strings.ToLower(strings.TrimSpace(pkg.UpdateState)) != string(StoreUpdateAvailable) {
 		return StoreExactUpdateRequest{}, errors.New("Store update requires a fresh available assessment")
 	}
 	if pkg.Stale {
 		return StoreExactUpdateRequest{}, errors.New("Store update requires a fresh assessment; stale updates must be rescanned first")
+	}
+	if !pkg.UpdateAvailable {
+		return StoreExactUpdateRequest{}, errors.New("Store update requires a fresh available assessment")
 	}
 	pfn := storeInstalledPackageFamilyName(pkg)
 	if pfn == "" {

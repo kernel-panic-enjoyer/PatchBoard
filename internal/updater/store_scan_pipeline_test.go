@@ -1081,6 +1081,43 @@ func TestStoreTransactionalScanFeatureFlagAndInventoryAdapter(t *testing.T) {
 	}
 }
 
+func TestPublishedStoreAssessmentStalePositiveIsDiagnosticOnly(t *testing.T) {
+	state := defaultState()
+	pfn := "OpenAI.Codex_abc123"
+	inventory := Inventory{PackageLookup: PackageLookup{Packages: []Package{{
+		Key:             packageKey(managerStore, pfn),
+		Manager:         managerStore,
+		ID:              pfn,
+		Name:            "Codex",
+		Version:         "1.0.0",
+		Source:          sourceNativeAppX,
+		UpdateSupported: true,
+	}}}}
+	assessment := StorePublishedAssessment{
+		StoreUpdateAssessment: StoreUpdateAssessment{
+			State:            StoreUpdateAvailable,
+			Identity:         StoreInstalledIdentity{UserSID: "S-1-5-21-adapter", PackageFamilyName: pfn},
+			ScanID:           "previous-scan",
+			Reason:           "retained previous positive update because the latest scan was incomplete",
+			InstalledVersion: "1.0.0",
+			AvailableVersion: "1.1.0",
+		},
+		ObservedAt:                 time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
+		Stale:                      true,
+		StoreProductID:             "9NCODEX",
+		ExactActionTargetAvailable: true,
+		Applicability:              "applicable",
+	}
+	adapted := applyPublishedStoreAssessmentsToInventory(state, inventory, []StorePublishedAssessment{assessment}, nil, nil)
+	got := adapted.Packages[0]
+	if got.UpdateState != string(StoreUpdateAvailable) || !got.Stale {
+		t.Fatalf("stale assessment state was not preserved for diagnostics: %#v", got)
+	}
+	if got.UpdateAvailable || got.UpdateSupported || got.AvailableVersion != "" || got.OfferedVersion != "1.1.0" {
+		t.Fatalf("stale assessment must not be exposed as an available update: %#v", got)
+	}
+}
+
 func TestPublishedStoreAssessmentUsesFriendlyPFNPresentationFallback(t *testing.T) {
 	state := defaultState()
 	pkg := packageFromPublishedStoreAssessment(state, StorePublishedAssessment{

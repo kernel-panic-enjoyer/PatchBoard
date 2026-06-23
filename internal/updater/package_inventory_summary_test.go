@@ -40,3 +40,33 @@ func TestSortInventoryPackagesPushesAppxInventoryRowsLast(t *testing.T) {
 		t.Fatalf("unexpected package order: %#v", packages)
 	}
 }
+
+func TestSortInventoryPackagesDoesNotPromoteStaleStoreEvidence(t *testing.T) {
+	packages := []Package{
+		{
+			Name:            "Stale Store Evidence",
+			Manager:         managerStore,
+			ActionBackend:   backendAppXInventory,
+			UpdateState:     string(StoreUpdateAvailable),
+			Stale:           true,
+			UpdateAvailable: false,
+		},
+		{
+			Name:            "Fresh Store Update",
+			Manager:         managerStore,
+			ActionBackend:   backendStoreCLI,
+			UpdateState:     string(StoreUpdateAvailable),
+			UpdateAvailable: true,
+		},
+		{
+			Name:    "Managed Winget Package",
+			Manager: managerWinget,
+		},
+	}
+
+	sortInventoryPackages(packages)
+
+	if packages[0].Name != "Fresh Store Update" || packages[1].Name != "Managed Winget Package" || packages[2].Name != "Stale Store Evidence" {
+		t.Fatalf("unexpected package order: %#v", packages)
+	}
+}
