@@ -27,13 +27,8 @@ Store updates require:
 
 The app does not retry by display name or Store search result rank.
 
-## Emergency Rollback
+## Legacy Detector Removed
 
-For one release cycle, the legacy Store detector can be enabled explicitly:
-
-```cmd
-set UPDATER_STORE_LEGACY_DETECTOR=1
-```
-
-Do not treat rollback output as identity-safe Store evidence. Use it only to
-compare behavior while diagnosing a release issue.
+The display-name Store detector has been retired. If exact Store providers fail,
+the app reports `Unknown` with diagnostics instead of falling back to fuzzy
+Store searches or legacy AppX merge heuristics.

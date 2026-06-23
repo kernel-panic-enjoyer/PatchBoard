@@ -301,7 +301,6 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`pkg.action_backend`,
 		`Inventory only`,
 		`Store apps detected via`,
-		`store-cli-resolved`,
 	} {
 		if !strings.Contains(surface, expected) {
 			t.Fatalf("rendered page or embedded assets did not contain %q", expected)

@@ -14,18 +14,12 @@ type managerInventory struct {
 }
 
 type inventoryInputs struct {
-	managerInventories         []managerInventory
-	appxPackages               []Package
-	legacyAppxPackages         []Package
-	appxResult                 CommandResult
-	storePackagedInventory     StorePackagedAppInventory
-	storePackagedResult        CommandResult
-	storePackagedComparison    StorePackagedInventoryComparison
-	nativeStoreInstalled       []Package
-	nativeStoreInstalledResult CommandResult
-	nativeStoreUpdates         map[string]string
-	nativeStoreUpdatePackages  []Package
-	nativeStoreUpdatesResult   CommandResult
+	managerInventories      []managerInventory
+	appxPackages            []Package
+	appxResult              CommandResult
+	storePackagedInventory  StorePackagedAppInventory
+	storePackagedResult     CommandResult
+	storePackagedComparison StorePackagedInventoryComparison
 }
 
 var inventoryGetter = getInventory
@@ -50,27 +44,10 @@ func getInventory() Inventory {
 		len(inputs.storePackagedComparison.NativeErrors) > 0 {
 		commandResults["native_store_inventory_compare"] = storePackagedInventoryComparisonResult(inputs.storePackagedComparison)
 	}
-	if inputs.nativeStoreInstalledResult.Command != "" {
-		commandResults["store_installed"] = inputs.nativeStoreInstalledResult
-	}
-	if inputs.nativeStoreUpdatesResult.Command != "" {
-		commandResults["store_updates"] = inputs.nativeStoreUpdatesResult
-		if storeLegacyDetectorRollbackEnabled() {
-			mergeUpdateVersions(storeUpdateVersions, inputs.nativeStoreUpdates)
-		}
-	}
-
 	for _, inventory := range inputs.managerInventories {
 		commandResults[inventory.listKey] = inventory.listResult
 		commandResults[inventory.updateKey] = inventory.updateResult
-		if inventory.manager == managerWinget && storeLegacyDetectorRollbackEnabled() {
-			mergeWingetStoreUpdateVersions(storeUpdateVersions, inventory.updates)
-		}
 		packages = append(packages, packagesFromManagerInventory(state, managers, inventory)...)
-	}
-	if managers[managerStore].Available && storeLegacyDetectorRollbackEnabled() {
-		packages = append(packages, packagesFromNativeStoreInstalled(state, inputs.nativeStoreInstalled)...)
-		packages = mergeStoreNativeUpdatePackages(packages, packagesFromNativeStoreUpdates(state, inputs.nativeStoreUpdatePackages))
 	}
 
 	if inputs.appxResult.OK || len(inputs.appxPackages) > 0 {
@@ -87,13 +64,6 @@ func getInventory() Inventory {
 		Scan: inventoryScanSummary(state, sourceCounts),
 	}
 	inventory = applyStoreTransactionalScanPipeline(context.Background(), state, inventory)
-	var changed bool
-	inventory, changed = applyStoreUpdateAssessmentProjection(&state, inventory)
-	if changed {
-		if err := saveAppState(state); err != nil {
-			appLog("Failed to save Store update assessment cache: %s", err)
-		}
-	}
 	sortInventoryPackages(inventory.Packages)
 	return inventory
 }

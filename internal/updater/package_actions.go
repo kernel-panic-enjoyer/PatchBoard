@@ -15,7 +15,6 @@ const (
 )
 
 var packageActionCommandRunner = runCommandContext
-var packageActionStoreSearch = storeSearch
 var packageActionManagerAvailable = func(manager string) bool {
 	return detectManager(manager).Available
 }
@@ -121,10 +120,8 @@ func updatePackageWithMetadataContext(ctx context.Context, pkg Package) CommandR
 	case managerStore:
 		if pkg.UpdateState != "" {
 			result = runExactStoreUpdateWithVerification(ctx, pkg)
-		} else if storeNewDetectorActive() {
-			result = validationCommandResult("update", errors.New("Store update requires the new exact assessment path; legacy Store update fallback is disabled"))
 		} else {
-			result = runStoreUpdatePackageWithFallbackContext(ctx, pkg)
+			result = validationCommandResult("update", errors.New("Store update requires the exact assessment path"))
 		}
 	case managerWinget:
 		result = runWingetUpgradePackageWithInstallFallbackContext(ctx, manager, pkg)

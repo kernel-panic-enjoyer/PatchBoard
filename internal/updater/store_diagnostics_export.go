@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 )
@@ -76,25 +75,22 @@ func buildStoreDiagnosticsExport(ctx context.Context, state State) ([]byte, erro
 		DetectorMode:        "new",
 		AutoUpdateMigration: sanitizeStoreAutoUpdateMigration(state.StoreAutoUpdateMigration),
 	}
-	if storeLegacyDetectorRollbackEnabled() {
-		export.DetectorMode = "legacy-rollback"
-	}
 	userSID, sidErr := currentUserSID()
 	if sidErr != nil {
 		export.Errors = append(export.Errors, sanitizeProviderDiagnostic(sidErr.Error()))
 	} else {
 		export.UserScopeHash = hashSensitiveID(userSID)
 	}
-	store, err := openDefaultStoreScanStore()
+	repository, err := openDefaultStoreScanRepository()
 	if err != nil {
 		export.Errors = append(export.Errors, sanitizeProviderDiagnostic(err.Error()))
 		return json.MarshalIndent(export, "", "  ")
 	}
-	defer store.Close()
+	defer repository.Close()
 	if userSID == "" {
 		return json.MarshalIndent(export, "", "  ")
 	}
-	scan, ok, err := store.LatestPublishedScan(ctx, userSID)
+	snapshot, ok, err := repository.LoadLatestPublishedSnapshot(ctx, userSID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +98,15 @@ func buildStoreDiagnosticsExport(ctx context.Context, state State) ([]byte, erro
 		export.Errors = append(export.Errors, "no published Store scan is available")
 		return json.MarshalIndent(export, "", "  ")
 	}
+	applyStoreDiagnosticsSnapshot(&export, snapshot)
+	return json.MarshalIndent(export, "", "  ")
+}
+
+func applyStoreDiagnosticsSnapshot(export *StoreDiagnosticsExport, snapshot StoreScanSnapshot) {
+	if export == nil {
+		return
+	}
+	scan := snapshot.Scan
 	export.Scan = StoreDiagnosticsScan{
 		ScanID:         scan.ScanID,
 		StartedAt:      formatStoreScanTime(scan.StartedAt),
@@ -111,76 +116,54 @@ func buildStoreDiagnosticsExport(ctx context.Context, state State) ([]byte, erro
 		Architecture:   scan.Architecture,
 		Status:         string(scan.CompletionStatus),
 	}
-	providers, providerErr := store.LatestPublishedProviderSummaries(ctx, userSID)
-	if providerErr == nil {
-		export.Providers = providers
-	} else {
-		export.Errors = append(export.Errors, sanitizeProviderDiagnostic(providerErr.Error()))
+	export.Providers = providerSummariesFromRuns(snapshot.ProviderRuns)
+	for _, family := range snapshot.Inventory.Families {
+		export.Packages = append(export.Packages, StoreDiagnosticsPackage{
+			PackageFamilyName: family.Identity.PackageFamilyName,
+			DisplayName:       family.DisplayName,
+			ProductLike:       family.ProductLike,
+		})
 	}
-	if err := store.populateDiagnostics(ctx, scan.ScanID, userSID, &export); err != nil {
-		return nil, err
-	}
-	return json.MarshalIndent(export, "", "  ")
-}
-
-func (store *StoreScanStore) populateDiagnostics(ctx context.Context, scanID, userSID string, export *StoreDiagnosticsExport) error {
-	if store == nil || store.db == nil || export == nil {
-		return errors.New("Store diagnostics store is unavailable")
-	}
-	familyRows, err := store.db.QueryContext(ctx, `SELECT package_family_name, COALESCE(display_name,''), product_like FROM installed_package_families WHERE scan_id = ? AND user_sid = ? ORDER BY package_family_name`, scanID, userSID)
-	if err != nil {
-		return err
-	}
-	defer familyRows.Close()
-	for familyRows.Next() {
-		var item StoreDiagnosticsPackage
-		var productLike int
-		if err := familyRows.Scan(&item.PackageFamilyName, &item.DisplayName, &productLike); err != nil {
-			return err
+	for _, run := range snapshot.ProviderRuns {
+		for _, observation := range run.Observations {
+			productID, updateID := "", ""
+			targetVerified := false
+			if observation.Target != nil {
+				productID = observation.Target.ProductID
+				updateID = observation.Target.UpdateID
+				targetVerified = observation.Target.ExactFor(observation.Identity)
+			}
+			export.Observations = append(export.Observations, StoreDiagnosticsObservation{
+				Provider:          observation.Provider.Key(),
+				PackageFamilyName: observation.Identity.PackageFamilyName,
+				Kind:              string(observation.Kind),
+				Health:            string(observation.Health),
+				ObservedAt:        formatStoreScanTime(observation.ObservedAt),
+				InstalledVersion:  observation.InstalledVersion,
+				AvailableVersion:  observation.AvailableVersion,
+				CatalogVersion:    observation.CatalogVersion,
+				ProductID:         productID,
+				UpdateID:          updateID,
+				TargetVerified:    targetVerified,
+				Diagnostics:       sanitizeProviderDiagnostic(observation.Diagnostics),
+			})
 		}
-		item.ProductLike = productLike != 0
-		export.Packages = append(export.Packages, item)
 	}
-	if err := familyRows.Err(); err != nil {
-		return err
+	for _, assessment := range snapshot.Assessments {
+		export.Assessments = append(export.Assessments, StoreDiagnosticsAssessment{
+			PackageFamilyName:          assessment.Identity.PackageFamilyName,
+			State:                      string(assessment.State),
+			Reason:                     sanitizeProviderDiagnostic(assessment.Reason),
+			InstalledVersion:           assessment.InstalledVersion,
+			AvailableVersion:           assessment.AvailableVersion,
+			Stale:                      assessment.Stale,
+			ProductID:                  assessment.StoreProductID,
+			UpdateID:                   assessment.UpdateID,
+			ExactActionTargetAvailable: assessment.ExactActionTargetAvailable,
+			Applicability:              assessment.Applicability,
+			ObservedAt:                 formatStoreScanTime(assessment.ObservedAt),
+		})
 	}
-
-	observationRows, err := store.db.QueryContext(ctx, `SELECT provider_id, package_family_name, kind, health, observed_at, COALESCE(installed_version,''), COALESCE(available_version,''), COALESCE(catalog_version,''), COALESCE(product_id,''), COALESCE(update_id,''), target_verified, COALESCE(diagnostics,'') FROM provider_observations WHERE scan_id = ? AND user_sid = ? ORDER BY package_family_name, provider_id, id`, scanID, userSID)
-	if err != nil {
-		return err
-	}
-	defer observationRows.Close()
-	for observationRows.Next() {
-		var item StoreDiagnosticsObservation
-		var verified int
-		if err := observationRows.Scan(&item.Provider, &item.PackageFamilyName, &item.Kind, &item.Health, &item.ObservedAt, &item.InstalledVersion, &item.AvailableVersion, &item.CatalogVersion, &item.ProductID, &item.UpdateID, &verified, &item.Diagnostics); err != nil {
-			return err
-		}
-		item.TargetVerified = verified != 0
-		item.Diagnostics = sanitizeProviderDiagnostic(item.Diagnostics)
-		export.Observations = append(export.Observations, item)
-	}
-	if err := observationRows.Err(); err != nil {
-		return err
-	}
-
-	assessmentRows, err := store.db.QueryContext(ctx, `SELECT package_family_name, state, COALESCE(reason,''), COALESCE(installed_version,''), COALESCE(available_version,''), stale, COALESCE(product_id,''), COALESCE(update_id,''), exact_action_target_available, COALESCE(applicability,''), observed_at FROM update_assessments WHERE scan_id = ? AND user_sid = ? ORDER BY package_family_name`, scanID, userSID)
-	if err != nil {
-		return err
-	}
-	defer assessmentRows.Close()
-	for assessmentRows.Next() {
-		var item StoreDiagnosticsAssessment
-		var stale, exact int
-		if err := assessmentRows.Scan(&item.PackageFamilyName, &item.State, &item.Reason, &item.InstalledVersion, &item.AvailableVersion, &stale, &item.ProductID, &item.UpdateID, &exact, &item.Applicability, &item.ObservedAt); err != nil {
-			return err
-		}
-		item.Stale = stale != 0
-		item.ExactActionTargetAvailable = exact != 0
-		item.Reason = sanitizeProviderDiagnostic(item.Reason)
-		export.Assessments = append(export.Assessments, item)
-	}
-	return assessmentRows.Err()
 }
 
 func sanitizeStoreAutoUpdateMigration(report StoreAutoUpdateMigrationReport) StoreAutoUpdateMigrationReport {

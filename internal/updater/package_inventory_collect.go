@@ -57,38 +57,12 @@ func collectInventoryInputs(managers map[string]ManagerStatus) inventoryInputs {
 	inputs := inventoryInputs{}
 	inventoryCh := make(chan managerInventory, len(managedPackageManagers))
 	var wg sync.WaitGroup
-	useNativeStoreInventory := nativeStoreInventoryEnabled()
-	dualRunNativeStoreInventory := nativeStoreInventoryDualRunEnabled()
 
-	if !useNativeStoreInventory || dualRunNativeStoreInventory {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inputs.appxPackages, inputs.appxResult = appxInstalled()
-			inputs.legacyAppxPackages = append([]Package(nil), inputs.appxPackages...)
-		}()
-	}
-	if useNativeStoreInventory || dualRunNativeStoreInventory {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			inputs.storePackagedInventory, inputs.storePackagedResult = collectNativeStorePackagedInventory()
-		}()
-	}
-	if managers[managerStore].Available {
-		if storeLegacyDetectorRollbackEnabled() {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				inputs.nativeStoreInstalled, inputs.nativeStoreInstalledResult = storeInstalled()
-			}()
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				inputs.nativeStoreUpdates, inputs.nativeStoreUpdatePackages, inputs.nativeStoreUpdatesResult = storeUpdates()
-			}()
-		}
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		inputs.storePackagedInventory, inputs.storePackagedResult = collectNativeStorePackagedInventory()
+	}()
 	for _, collector := range managerInventoryCollectors {
 		if !managers[collector.manager].Available {
 			continue
@@ -102,18 +76,13 @@ func collectInventoryInputs(managers map[string]ManagerStatus) inventoryInputs {
 	}
 
 	wg.Wait()
-	if useNativeStoreInventory {
-		if inputs.storePackagedResult.OK {
-			state := loadState()
-			inputs.appxPackages = packagesFromNativeStorePackagedInventory(state, inputs.storePackagedInventory)
-			inputs.appxResult = inputs.storePackagedResult
-		} else if !dualRunNativeStoreInventory {
-			inputs.appxPackages = nil
-			inputs.appxResult = inputs.storePackagedResult
-		}
-	}
-	if dualRunNativeStoreInventory {
-		inputs.storePackagedComparison = compareStorePackagedInventory(inputs.storePackagedInventory, inputs.legacyAppxPackages, inputs.storePackagedResult)
+	if inputs.storePackagedResult.OK {
+		state := loadState()
+		inputs.appxPackages = packagesFromNativeStorePackagedInventory(state, inputs.storePackagedInventory)
+		inputs.appxResult = inputs.storePackagedResult
+	} else {
+		inputs.appxPackages = nil
+		inputs.appxResult = inputs.storePackagedResult
 	}
 	close(inventoryCh)
 	for inventory := range inventoryCh {

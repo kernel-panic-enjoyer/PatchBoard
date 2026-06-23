@@ -470,7 +470,7 @@ func executeStoreExactUpdateForTestWithContext(t *testing.T, ctx context.Context
 func preparePublishedExactStoreAssessment(t *testing.T, pkg Package) {
 	t.Helper()
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
-	store, err := openDefaultStoreScanStore()
+	store, err := openDefaultStoreScanRepository()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,13 @@ func preparePublishedExactStoreAssessment(t *testing.T, pkg Package) {
 			ProductLike: true,
 		}},
 	}
-	if _, err := store.PersistScan(context.Background(), storeScanPersistInput{Scan: scan, Inventory: inventory, Assessments: []StorePublishedAssessment{assessment}, Publish: true}); err != nil {
+	if _, err := store.PersistCompletedScanSnapshot(context.Background(), StoreScanSnapshot{
+		SchemaVersion: storeScanSchemaVersion,
+		Published:     true,
+		Scan:          scan,
+		Inventory:     inventory,
+		Assessments:   []StorePublishedAssessment{assessment},
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

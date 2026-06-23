@@ -67,4 +67,7 @@ if ($TimestampedOutput) {
 
 go build -ldflags='-H=windowsgui' -o $output .
 Assert-NativeSuccess "go build"
+$builtBinary = Get-Item -LiteralPath $output
+$builtMiB = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:N3}', ($builtBinary.Length / 1MB))
+Write-Output "Binary size: $($builtBinary.Length) bytes ($builtMiB MiB)"
 Write-Output $output

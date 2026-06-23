@@ -30,23 +30,26 @@ func readWingetApps() ([]ScannedApp, *CommandResult, error) {
 }
 
 func readAppxApps() ([]ScannedApp, *CommandResult, error) {
-	packages, result := appxInstalled()
-	if !result.OK && len(packages) == 0 {
+	inventory, result := collectNativeStorePackagedInventory()
+	if !result.OK && len(inventory.Families) == 0 {
 		errText := strings.TrimSpace(result.Stderr + result.Stdout)
 		if errText == "" {
-			errText = "Get-AppxPackage returned no inventory"
+			errText = "native Store inventory returned no inventory"
 		}
 		return nil, &result, errors.New(errText)
 	}
 	apps := []ScannedApp{}
-	for _, pkg := range packages {
-		stableID := stableAppxScanID(pkg)
+	for _, family := range inventory.Families {
+		if !family.ProductLike || !family.Identity.Resolved() {
+			continue
+		}
+		stableID := family.Identity.PackageFamilyName
 		apps = append(apps, ScannedApp{
 			Key:             "store:" + strings.ToLower(stableID),
-			Name:            pkg.Name,
-			Version:         pkg.Version,
+			Name:            firstNonEmpty(family.DisplayName, family.Primary.IdentityName, family.Identity.PackageFamilyName),
+			Version:         family.Primary.Version.String(),
 			Publisher:       "",
-			InstallLocation: pkg.ID,
+			InstallLocation: family.Primary.InstallLocation,
 			Source:          "store",
 			Manager:         "store",
 			PackageID:       stableID,

@@ -2,8 +2,6 @@ package updater
 
 import "time"
 
-const storeUpdateAssessmentModelEnabled = false
-
 type StoreInstalledIdentity struct {
 	UserSID           string `json:"user_sid"`
 	PackageFamilyName string `json:"package_family_name"`

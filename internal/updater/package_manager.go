@@ -111,7 +111,6 @@ const (
 
 	backendStoreCLI              = "store-cli"
 	backendAppXInventory         = "appx-inventory"
-	backendStoreCLIResolved      = "store-cli-resolved"
 	backendWingetMSStoreFallback = "winget-msstore-fallback"
 	inventoryBackendAppX         = "AppX"
 )
@@ -226,7 +225,7 @@ func packageKey(manager, id string) string {
 }
 
 func packageAutoUpdateEnabled(state State, pkg Package) bool {
-	if pkg.Manager == managerStore && storeNewDetectorActive() {
+	if pkg.Manager == managerStore {
 		key := storePackageAutoUpdateKey(pkg)
 		return key != "" && state.AutoUpdatePackages[key]
 	}
@@ -252,12 +251,9 @@ func equivalentPackageKeys(left, right string) bool {
 		return false
 	}
 	if leftManager == managerStore {
-		if storeNewDetectorActive() {
-			leftNormalized := normalizeAutoUpdatePackageKey(left)
-			rightNormalized := normalizeAutoUpdatePackageKey(right)
-			return leftNormalized != "" && strings.EqualFold(leftNormalized, rightNormalized)
-		}
-		return strings.EqualFold(stableStoreActionID(leftID), stableStoreActionID(rightID))
+		leftNormalized := normalizeAutoUpdatePackageKey(left)
+		rightNormalized := normalizeAutoUpdatePackageKey(right)
+		return leftNormalized != "" && strings.EqualFold(leftNormalized, rightNormalized)
 	}
 	return leftID == rightID
 }

@@ -630,7 +630,6 @@
     var labels = {
       "appx-inventory": "AppX inventory",
       "store-cli": "Store CLI",
-      "store-cli-resolved": "Store resolved",
       "winget-msstore-fallback": "winget Store fallback"
     };
     return labels[value] || value;
@@ -1748,7 +1747,7 @@
     if(pkg.manager === "store" && (pkg.action_backend === "winget-msstore-fallback" || pkg.source === "msstore")){
       return "Store action uses winget Microsoft Store fallback.";
     }
-    if(pkg.manager === "store" && (pkg.action_backend === "store-cli" || pkg.action_backend === "store-cli-resolved")){
+    if(pkg.manager === "store" && pkg.action_backend === "store-cli"){
       return "Store action uses native Store CLI.";
     }
     return "";

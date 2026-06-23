@@ -94,14 +94,6 @@ type StorePackagedAppFamily struct {
 	ProductLike bool                     `json:"product_like"`
 }
 
-func nativeStoreInventoryEnabled() bool {
-	return storeNewDetectorActive() || featureFlagEnabled("UPDATER_NATIVE_STORE_INVENTORY")
-}
-
-func nativeStoreInventoryDualRunEnabled() bool {
-	return featureFlagEnabled("UPDATER_NATIVE_STORE_INVENTORY_DUAL_RUN")
-}
-
 func featureFlagEnabled(name string) bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	return value == "1" || value == "true" || value == "yes" || value == "on"

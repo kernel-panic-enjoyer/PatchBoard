@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	storeExactUpdateRollbackFlag       = "UPDATER_STORE_LEGACY_UPDATE_EXECUTION"
 	storeExactUpdateVerifyTimeout      = 2 * time.Minute
 	storeExactUpdatePollInterval       = 3 * time.Second
 	storeUpdateAcceptedNotVerifiedCode = 202
@@ -98,10 +97,6 @@ func defaultStoreExactUpdateExecutor() StoreExactUpdateExecutor {
 		Timeout:   storeExactUpdateVerifyTimeout,
 		PollEvery: storeExactUpdatePollInterval,
 	}
-}
-
-func storeExactUpdateExecutionRollbackEnabled() bool {
-	return featureFlagEnabled(storeExactUpdateRollbackFlag)
 }
 
 func runExactStoreUpdateWithVerification(ctx context.Context, pkg Package) CommandResult {
@@ -246,9 +241,6 @@ func (executor StoreExactUpdateExecutor) verifyAcceptedAction(ctx context.Contex
 }
 
 func exactStoreUpdateRequestFromPackage(ctx context.Context, pkg Package) (StoreExactUpdateRequest, error) {
-	if storeExactUpdateExecutionRollbackEnabled() {
-		return StoreExactUpdateRequest{}, errors.New("exact Store update execution is disabled by rollback flag")
-	}
 	if pkg.Manager != managerStore {
 		return StoreExactUpdateRequest{}, errors.New("exact Store update execution requires a Store package")
 	}
@@ -311,16 +303,19 @@ func verifyPublishedStoreUpdateAssessment(ctx context.Context, request StoreExac
 	if !storeTransactionalScanEnabled() {
 		return nil
 	}
-	store, err := openStoreTransactionalStoreForInventory()
+	repository, err := openStoreTransactionalStoreForInventory()
 	if err != nil {
 		return fmt.Errorf("could not open Store assessment store: %w", err)
 	}
-	defer store.Close()
-	assessments, err := store.PublishedAssessments(ctx, request.Identity.UserSID)
+	defer repository.Close()
+	snapshot, ok, err := repository.LoadLatestPublishedSnapshot(ctx, request.Identity.UserSID)
 	if err != nil {
 		return fmt.Errorf("could not read Store assessments: %w", err)
 	}
-	for _, assessment := range assessments {
+	if !ok {
+		return errors.New("no published Store assessment matches the selected package identity")
+	}
+	for _, assessment := range snapshot.Assessments {
 		if !assessment.Identity.Equal(request.Identity) {
 			continue
 		}

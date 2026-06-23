@@ -1,152 +1,16 @@
 package updater
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
-
-const storeUpdateAssessmentFeatureFlag = "UPDATER_STORE_UPDATE_ASSESSMENT"
-
-var (
-	storeAssessmentNow            = func() time.Time { return time.Now().UTC() }
-	storeAssessmentCurrentUserSID = currentUserSID
-)
-
-func storeUpdateAssessmentEnabled() bool {
-	return storeUpdateAssessmentModelEnabled || featureFlagEnabled(storeUpdateAssessmentFeatureFlag)
-}
-
-func applyStoreUpdateAssessmentProjection(state *State, inventory Inventory) (Inventory, bool) {
-	if !storeUpdateAssessmentEnabled() {
-		return inventory, false
-	}
-	now := storeAssessmentNow().UTC().Truncate(time.Second)
-	userSID, sidErr := storeAssessmentCurrentUserSID()
-	scanID := fmt.Sprintf("store-api-%d", now.UnixNano())
-	changedState := false
-	for index := range inventory.Packages {
-		pkg := inventory.Packages[index]
-		if pkg.Manager != managerStore {
-			continue
-		}
-		projected, changed := projectStorePackageAssessment(state, pkg, inventory.CommandResults, userSID, sidErr, scanID, now)
-		inventory.Packages[index] = projected
-		changedState = changedState || changed
-	}
-	inventory.StoreScanHealth = buildStoreScanHealthSummary(inventory.Packages, nil)
-	return inventory, changedState
-}
-
-func projectStorePackageAssessment(
-	state *State,
-	pkg Package,
-	results map[string]CommandResult,
-	userSID string,
-	sidErr error,
-	scanID string,
-	now time.Time,
-) (Package, bool) {
-	if pkg.InstalledVersion == "" {
-		pkg.InstalledVersion = pkg.Version
-	}
-	if pkg.OfferedVersion == "" {
-		pkg.OfferedVersion = pkg.AvailableVersion
-	}
-	if pkg.ObservedAt == "" {
-		pkg.ObservedAt = formatAssessmentTime(now)
-	}
-	if pkg.ScanID == "" {
-		pkg.ScanID = scanID
-	}
-	if pkg.UpdateState != "" {
-		return applyExplicitStoreAssessment(state, pkg)
-	}
-
-	pfn := storeInstalledPackageFamilyName(pkg)
-	pkg.InstalledPackageFamilyName = pfn
-	pkg.ExactIdentityAvailable = userSID != "" && pfn != ""
-	pkg.ExactActionTargetAvailable = pkg.ExactActionTargetAvailable && (pkg.StoreProductID != "" || pkg.StoreUpdateID != "")
-	pkg.ProviderSummaries = providerSummariesForStorePackage(pkg, results, now, sidErr)
-	pkg.Applicability = "unknown"
-
-	if !pkg.ExactIdentityAvailable {
-		pkg.UpdateState = string(StoreUpdateUnknown)
-		if sidErr != nil {
-			pkg.UpdateReason = "Store scan user could not be identified: " + sanitizeProviderDiagnostic(sidErr.Error())
-		} else {
-			pkg.UpdateReason = "installed Store identity is unresolved; package family name is required"
-		}
-	} else if pkg.UpdateAvailable {
-		pkg.UpdateState = string(StoreUpdateUnknown)
-		pkg.UpdateReason = "legacy update evidence exists, but no exact verified Store action target is available"
-	} else {
-		pkg.UpdateState = string(StoreUpdateUnknown)
-		pkg.UpdateReason = "Store update coverage is not authoritative for this package"
-	}
-
-	if cached, ok := retainedStorePositiveAssessment(state, userSID, pfn); ok && storeAssessmentCanRetainPositive(pkg.UpdateState) {
-		pkg.UpdateState = cached.State
-		pkg.UpdateReason = "retained last known positive update because the latest Store scan is incomplete"
-		pkg.ObservedAt = cached.ObservedAt
-		pkg.Stale = true
-		pkg.ScanID = cached.ScanID
-		pkg.AvailableVersion = cached.OfferedVersion
-		pkg.OfferedVersion = cached.OfferedVersion
-		pkg.StoreProductID = cached.StoreProductID
-		pkg.StoreUpdateID = cached.StoreUpdateID
-		pkg.Applicability = firstNonEmpty(cached.Applicability, "unknown")
-		pkg.ExactActionTargetAvailable = cached.ExactActionTargetAvailable
-	}
-
-	pkg = applyStoreAssessmentCompatibility(pkg)
-	return pkg, cacheStorePositiveAssessment(state, pkg, userSID)
-}
-
-func applyExplicitStoreAssessment(state *State, pkg Package) (Package, bool) {
-	pkg.UpdateState = strings.ToLower(strings.TrimSpace(pkg.UpdateState))
-	pkg = applyStoreAssessmentCompatibility(pkg)
-	userSID := ""
-	if pkg.ExactIdentityAvailable {
-		if sid, err := storeAssessmentCurrentUserSID(); err == nil {
-			userSID = sid
-		}
-	}
-	return pkg, cacheStorePositiveAssessment(state, pkg, userSID)
-}
-
-func applyStoreAssessmentCompatibility(pkg Package) Package {
-	if pkg.UpdateState == "" {
-		return pkg
-	}
-	pkg.UpdateAvailable = pkg.UpdateState == string(StoreUpdateAvailable) && !pkg.Stale
-	if pkg.Manager == managerStore {
-		pkg.UpdateAvailable = pkg.UpdateAvailable && pkg.ExactActionTargetAvailable
-	}
-	if pkg.InstalledVersion == "" {
-		pkg.InstalledVersion = pkg.Version
-	}
-	if pkg.OfferedVersion == "" {
-		pkg.OfferedVersion = pkg.AvailableVersion
-	}
-	if pkg.UpdateAvailable && pkg.AvailableVersion == "" {
-		pkg.AvailableVersion = pkg.OfferedVersion
-	}
-	if !pkg.UpdateAvailable && pkg.UpdateState != string(StoreUpdatePending) {
-		pkg.AvailableVersion = ""
-	}
-	if pkg.Manager == managerStore && pkg.UpdateState == string(StoreUpdateAvailable) && (pkg.Stale || !pkg.ExactActionTargetAvailable) {
-		pkg.UpdateSupported = false
-	}
-	return pkg
-}
 
 func packageHasExactStoreUpdateTarget(pkg Package) bool {
 	if pkg.Manager != managerStore {
 		return true
 	}
 	if pkg.UpdateState == "" {
-		return !storeNewDetectorActive()
+		return false
 	}
 	return pkg.ExactActionTargetAvailable &&
 		storeInstalledPackageFamilyName(pkg) != "" &&
@@ -189,56 +53,6 @@ func looksLikePackageFamilyName(value string) bool {
 	return strings.Contains(value, ".")
 }
 
-func providerSummariesForStorePackage(pkg Package, results map[string]CommandResult, now time.Time, sidErr error) []StorePackageProviderSummary {
-	summaries := []StorePackageProviderSummary{}
-	observedAt := formatAssessmentTime(now)
-	if sidErr != nil {
-		summaries = append(summaries, StorePackageProviderSummary{
-			Name:       "current-user-context",
-			Health:     string(StoreProviderFailed),
-			Kind:       string(StoreObservationProviderFailure),
-			ObservedAt: observedAt,
-			Error:      sanitizeProviderDiagnostic(sidErr.Error()),
-		})
-	}
-	addResult := func(name string, result CommandResult, updateProvider bool) {
-		if result.Command == "" {
-			return
-		}
-		summary := StorePackageProviderSummary{Name: name, ObservedAt: observedAt}
-		if result.OK {
-			summary.Health = string(StoreProviderHealthy)
-			if updateProvider && pkg.UpdateAvailable {
-				summary.Kind = string(StoreObservationPositiveUpdateOffer)
-			} else if updateProvider {
-				summary.Kind = string(StoreObservationIncompleteResult)
-				summary.Error = "provider output is not an authoritative negative"
-			} else {
-				summary.Kind = string(StoreObservationIncompleteResult)
-			}
-		} else {
-			summary.Health = string(StoreProviderFailed)
-			summary.Kind = string(StoreObservationProviderFailure)
-			summary.Error = sanitizeProviderDiagnostic(firstNonEmpty(result.Stderr, result.Stdout))
-		}
-		summaries = append(summaries, summary)
-	}
-	addResult("Store CLI updates", results["store_updates"], true)
-	addResult("WinGet msstore", results["winget_upgrade"], true)
-	addResult("Store inventory", results["appx_inventory"], false)
-	addResult("Native Store inventory", results["native_store_inventory"], false)
-	if len(summaries) == 0 {
-		summaries = append(summaries, StorePackageProviderSummary{
-			Name:       "Store assessment",
-			Health:     string(StoreProviderIncomplete),
-			Kind:       string(StoreObservationIncompleteResult),
-			ObservedAt: observedAt,
-			Error:      "no authoritative Store update provider evidence is attached to this scan",
-		})
-	}
-	return summaries
-}
-
 func sanitizeProviderDiagnostic(value string) string {
 	value = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(value, "\r", " "), "\n", " "))
 	value = strings.Join(strings.Fields(value), " ")
@@ -246,63 +60,6 @@ func sanitizeProviderDiagnostic(value string) string {
 		value = strings.TrimSpace(value[:217]) + "..."
 	}
 	return value
-}
-
-func retainedStorePositiveAssessment(state *State, userSID, pfn string) (StoreUpdateAssessmentCacheEntry, bool) {
-	if state == nil || state.StoreUpdateAssessmentCache == nil || userSID == "" || pfn == "" {
-		return StoreUpdateAssessmentCacheEntry{}, false
-	}
-	entry, ok := state.StoreUpdateAssessmentCache[storeAssessmentCacheKey(userSID, pfn)]
-	if !ok || entry.State != string(StoreUpdateAvailable) {
-		return StoreUpdateAssessmentCacheEntry{}, false
-	}
-	return entry, true
-}
-
-func storeAssessmentCanRetainPositive(state string) bool {
-	switch state {
-	case string(StoreUpdateUnknown), string(StoreUpdateConflict):
-		return true
-	default:
-		return false
-	}
-}
-
-func cacheStorePositiveAssessment(state *State, pkg Package, userSID string) bool {
-	if state == nil || pkg.Manager != managerStore || pkg.UpdateState != string(StoreUpdateAvailable) || pkg.Stale || !pkg.ExactActionTargetAvailable {
-		return false
-	}
-	pfn := strings.TrimSpace(pkg.InstalledPackageFamilyName)
-	if pfn == "" || userSID == "" {
-		return false
-	}
-	if state.StoreUpdateAssessmentCache == nil {
-		state.StoreUpdateAssessmentCache = map[string]StoreUpdateAssessmentCacheEntry{}
-	}
-	key := storeAssessmentCacheKey(userSID, pfn)
-	entry := StoreUpdateAssessmentCacheEntry{
-		UserSID:                    userSID,
-		PackageFamilyName:          pfn,
-		ScanID:                     pkg.ScanID,
-		State:                      pkg.UpdateState,
-		Reason:                     pkg.UpdateReason,
-		ObservedAt:                 pkg.ObservedAt,
-		InstalledVersion:           pkg.InstalledVersion,
-		OfferedVersion:             firstNonEmpty(pkg.OfferedVersion, pkg.AvailableVersion),
-		StoreProductID:             pkg.StoreProductID,
-		StoreUpdateID:              pkg.StoreUpdateID,
-		Applicability:              pkg.Applicability,
-		ExactActionTargetAvailable: pkg.ExactActionTargetAvailable,
-	}
-	if state.StoreUpdateAssessmentCache[key] == entry {
-		return false
-	}
-	state.StoreUpdateAssessmentCache[key] = entry
-	return true
-}
-
-func storeAssessmentCacheKey(userSID, pfn string) string {
-	return strings.ToLower(strings.TrimSpace(userSID)) + "|" + strings.ToLower(strings.TrimSpace(pfn))
 }
 
 func formatAssessmentTime(value time.Time) string {
@@ -445,20 +202,4 @@ func conciseStoreHealthReason(reasons []string) string {
 		}
 	}
 	return strings.Join(parts, " | ")
-}
-
-func newStoreAPIScanGeneration(userSID string, now time.Time) StoreScanGeneration {
-	systemContext := currentStoreScanSystemContext()
-	return StoreScanGeneration{
-		ScanID:           fmt.Sprintf("store-api-%d", now.UnixNano()),
-		UserSID:          userSID,
-		StartedAt:        now,
-		CompletedAt:      now,
-		WindowsVersion:   systemContext.WindowsVersion,
-		WindowsBuild:     systemContext.WindowsBuild,
-		Architecture:     systemContext.Architecture,
-		ProviderVersions: map[string]string{"store-api-assessment": "1"},
-		ProviderHealth:   map[string]StoreProviderHealth{"store-api-assessment": StoreProviderIncomplete},
-		CompletionStatus: StoreScanIncomplete,
-	}
 }

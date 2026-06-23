@@ -44,7 +44,7 @@ func findPackageForUpdateRetry(packages []Package, original Package) (Package, b
 	originalKeyNormalized := normalizeAutoUpdatePackageKey(originalKey)
 	originalID := strings.TrimSpace(original.ID)
 	originalPFN := strings.TrimSpace(storeInstalledPackageFamilyName(original))
-	if original.Manager == managerStore && storeNewDetectorActive() {
+	if original.Manager == managerStore {
 		for i := range packages {
 			pkg := packages[i]
 			if pkg.Manager != managerStore {

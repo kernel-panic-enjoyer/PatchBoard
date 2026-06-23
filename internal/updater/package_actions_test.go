@@ -7,139 +7,6 @@ import (
 	"time"
 )
 
-func TestStoreUpdateTargetCandidatesIncludeStableAndMetadataTargets(t *testing.T) {
-	pkg := Package{
-		Manager: managerStore,
-		ID:      "Vendor.App_1.2.3.4_x64__abc123",
-		Name:    "Vendor App",
-		Match:   "Vendor.App_abc123",
-	}
-
-	got := storeUpdateTargetCandidates(pkg)
-	want := []string{
-		"Vendor.App_1.2.3.4_x64__abc123",
-		"Vendor.App",
-		"Vendor.App_abc123",
-	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("unexpected Store targets:\n got %#v\nwant %#v", got, want)
-	}
-}
-
-func TestStoreUpdateTriesAlternateMetadataTarget(t *testing.T) {
-	var targets []string
-	restore := replacePackageActionHooks(
-		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			target := packageActionTargetFromArgs(args)
-			targets = append(targets, target)
-			if target == "Vendor.App_abc123" {
-				return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: "already up to date"}
-			}
-			return CommandResult{Code: 1, Command: strings.Join(args, " "), Stderr: "Could not find installed product metadata"}
-		},
-		func(manager string) bool { return manager == managerStore },
-	)
-	defer restore()
-
-	pkg := Package{Manager: managerStore, ID: "9BADTARGET", Name: "Vendor App", Match: "Vendor.App_abc123"}
-	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
-
-	if !result.OK {
-		t.Fatalf("expected alternate Store target to succeed, got %#v", result)
-	}
-	if strings.Join(targets, "|") != "9BADTARGET|Vendor.App_abc123" {
-		t.Fatalf("unexpected Store target sequence: %#v", targets)
-	}
-}
-
-func TestStoreUpdateDoesNotSearchFreshTargetAfterDirectTargetsMiss(t *testing.T) {
-	var targets []string
-	restoreActions := replacePackageActionHooks(
-		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			target := packageActionTargetFromArgs(args)
-			targets = append(targets, target)
-			if target == "Fresh.Store.ID" {
-				return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: "already up to date"}
-			}
-			return CommandResult{Code: 1, Command: strings.Join(args, " "), Stderr: "Could not find installed product metadata"}
-		},
-		func(manager string) bool { return manager == managerStore },
-	)
-	defer restoreActions()
-	var queries []string
-	restoreSearch := replaceStoreSearchHook(func(query string) ([]Package, CommandResult) {
-		queries = append(queries, query)
-		return []Package{{Name: "Vendor App", ID: "Fresh.Store.ID", Manager: managerStore}}, CommandResult{OK: true, Command: "store search " + query}
-	})
-	defer restoreSearch()
-
-	pkg := Package{Manager: managerStore, ID: "Stale.Store.ID", Name: "Vendor App"}
-	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
-
-	if result.OK {
-		t.Fatalf("Store target miss should not be rescued by display-name search, got %#v", result)
-	}
-	if len(queries) != 0 {
-		t.Fatalf("Store update must not run hidden display-name searches, got %#v", queries)
-	}
-	if !containsString(targets, "Stale.Store.ID") || containsString(targets, "Fresh.Store.ID") || strings.Contains(result.Command, "store search fallback") {
-		t.Fatalf("unexpected Store target sequence after target miss, targets=%#v result=%#v", targets, result)
-	}
-}
-
-func TestAssessedStoreUpdateUsesOnlyExactVerifiedTarget(t *testing.T) {
-	pkg := Package{
-		Manager:                    managerStore,
-		ID:                         "9NVERIFIED",
-		Name:                       "Display Name Must Not Be Used",
-		Match:                      "Package.Family_abc123",
-		UpdateState:                string(StoreUpdateAvailable),
-		StoreProductID:             "9NVERIFIED",
-		StoreUpdateID:              "Package.Family_abc123",
-		ExactActionTargetAvailable: true,
-	}
-	got := storeUpdateTargetCandidates(pkg)
-	if strings.Join(got, "|") != "9NVERIFIED|Package.Family_abc123" {
-		t.Fatalf("assessed Store package must use only exact verified target, got %#v", got)
-	}
-}
-
-func TestAssessedStoreUpdateDoesNotFallBackToWingetMSStore(t *testing.T) {
-	var commands []string
-	var targets []string
-	restore := replacePackageActionHooks(
-		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			commands = append(commands, strings.Join(args, " "))
-			targets = append(targets, packageActionTargetFromArgs(args))
-			return CommandResult{Code: 1, Command: strings.Join(args, " "), Stderr: "Could not find installed product metadata"}
-		},
-		func(manager string) bool { return manager == managerStore || manager == managerWinget },
-	)
-	defer restore()
-
-	pkg := Package{
-		Manager:                    managerStore,
-		ID:                         "9NVERIFIED",
-		Name:                       "Display Name Must Not Be Used",
-		UpdateState:                string(StoreUpdateAvailable),
-		StoreProductID:             "9NVERIFIED",
-		StoreUpdateID:              "Package.Family_abc123",
-		ExactActionTargetAvailable: true,
-	}
-	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
-	if result.OK {
-		t.Fatalf("expected exact Store update target failure, got %#v", result)
-	}
-	for _, command := range commands {
-		if strings.Contains(command, "winget") {
-			t.Fatalf("assessed Store update must not fall back to winget msstore, commands=%#v result=%#v", commands, result)
-		}
-	}
-	if strings.Join(targets, "|") != "9NVERIFIED|Package.Family_abc123" {
-		t.Fatalf("expected only exact Store targets, targets=%#v commands=%#v result=%#v", targets, commands, result)
-	}
-}
-
 func TestStoreUpdateRetriesWithoutApplyWhenApplyFlagUnsupported(t *testing.T) {
 	var commands []string
 	restore := replacePackageActionHooks(
@@ -155,8 +22,7 @@ func TestStoreUpdateRetriesWithoutApplyWhenApplyFlagUnsupported(t *testing.T) {
 	)
 	defer restore()
 
-	pkg := Package{Manager: managerStore, ID: "OpenAI.Codex", Name: "Codex", UpdateAvailable: true, UpdateSupported: true}
-	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
+	result := runStoreUpdateCommandWithApplyFallback(context.Background(), "OpenAI.Codex_abc123")
 
 	if !result.OK {
 		t.Fatalf("expected Store update retry without apply to succeed, got %#v", result)
@@ -177,13 +43,7 @@ func TestStoreUpdateDoesNotDropApplyForPackageTargetMiss(t *testing.T) {
 		func(manager string) bool { return manager == managerStore },
 	)
 	defer restore()
-	restoreSearch := replaceStoreSearchHook(func(query string) ([]Package, CommandResult) {
-		return nil, CommandResult{Code: 1, Command: "store search " + query, Stderr: "no match"}
-	})
-	defer restoreSearch()
-
-	pkg := Package{Manager: managerStore, ID: "Missing.Store.ID", Name: "Missing Store App", UpdateAvailable: true, UpdateSupported: true}
-	result := runStoreUpdatePackageWithFallbackContext(context.Background(), pkg)
+	result := runStoreUpdateCommandWithApplyFallback(context.Background(), "Missing.Store.ID")
 
 	if result.OK {
 		t.Fatalf("target miss should not become success, got %#v", result)

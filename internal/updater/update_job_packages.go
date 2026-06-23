@@ -96,7 +96,7 @@ func packageHasFreshStoreAvailableAssessment(pkg Package) bool {
 		return true
 	}
 	if pkg.UpdateState == "" {
-		return !storeNewDetectorActive()
+		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(pkg.UpdateState), string(StoreUpdateAvailable)) && !pkg.Stale
 }
@@ -153,7 +153,7 @@ func updateJobPackageKeys(packages []Package) []string {
 }
 
 func normalizedJobPackageKey(pkg Package) string {
-	if pkg.Manager == managerStore && storeNewDetectorActive() {
+	if pkg.Manager == managerStore {
 		return storePackagePublicKey(pkg)
 	}
 	if pkg.Key != "" {
@@ -173,7 +173,7 @@ func normalizeJobRequestPackageKey(key string) string {
 	if err != nil {
 		return key
 	}
-	if manager == managerStore && storeNewDetectorActive() {
+	if manager == managerStore {
 		if _, pfn, ok := splitCanonicalStoreAutoUpdateKey(key); ok {
 			return packageKey(managerStore, pfn)
 		}

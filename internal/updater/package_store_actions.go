@@ -2,7 +2,6 @@ package updater
 
 import (
 	"context"
-	"strings"
 )
 
 func storeUpdateCommand(target string, apply bool) []string {
@@ -44,66 +43,6 @@ func runStoreInstallWithFallbackContext(ctx context.Context, id string) CommandR
 	return storeActionUnavailableResult("install")
 }
 
-func runStoreUpdatePackageWithFallbackContext(ctx context.Context, pkg Package) CommandResult {
-	if packageActionManagerAvailable(managerStore) {
-		result := runNativeStoreUpdate(ctx, pkg)
-		if result.OK || ctx.Err() != nil {
-			return result
-		}
-		if pkg.UpdateState != "" {
-			return result
-		}
-		if !packageActionManagerAvailable(managerWinget) {
-			return result
-		}
-		appLog("Store update for %q failed; trying winget msstore fallback.", updateJobPackageName(pkg))
-		return mergeCommandResults(result, runWingetStoreUpdateFallback(ctx, pkg), "winget msstore fallback")
-	}
-	if packageActionManagerAvailable(managerWinget) {
-		return runWingetStoreUpdateFallback(ctx, pkg)
-	}
-	return storeActionUnavailableResult("update")
-}
-
-func runNativeStoreUpdate(ctx context.Context, pkg Package) CommandResult {
-	candidates := storeUpdateTargetCandidates(pkg)
-	return runPackageUpdateCandidates(ctx, candidates, "store target", func(target string) CommandResult {
-		return runStoreUpdateCommandWithApplyFallback(ctx, target)
-	})
-}
-
-func runWingetStoreUpdateFallback(ctx context.Context, pkg Package) CommandResult {
-	return runWingetUpgradePackageWithInstallFallbackContext(ctx, managerStore, pkg)
-}
-
-// runStoreSearchUpdateFallback is retained only for the explicit legacy Store
-// rollback path. The default Store detector and update executor must never call
-// it because Store identity cannot be established from display-name search.
-func runStoreSearchUpdateFallback(ctx context.Context, pkg Package, attempted []string) CommandResult {
-	query := strings.TrimSpace(pkg.Name)
-	if query == "" || len(query) > 160 || containsBlockedPackageActionChar(query) {
-		return CommandResult{}
-	}
-	appLog("Store update targets for %q missed; searching Store for a fresh update target.", query)
-	results, searchResult := packageActionStoreSearch(query)
-	if !searchResult.OK || ctx.Err() != nil {
-		return searchResult
-	}
-	match, ok := chooseStoreResolution(pkg, results)
-	if !ok {
-		return CommandResult{Command: searchResult.Command, Code: 1, Stderr: "Store search did not return a confident update target."}
-	}
-	target := strings.TrimSpace(match.ID)
-	if target == "" {
-		target = strings.TrimSpace(match.Name)
-	}
-	if target == "" || updateTargetAlreadyAttempted(target, attempted) {
-		return CommandResult{Command: searchResult.Command, Code: 1, Stderr: "Store search returned no new update target."}
-	}
-	updateResult := runStoreUpdateCommandWithApplyFallback(ctx, target)
-	return mergeCommandResults(searchResult, updateResult, "store search resolved update")
-}
-
 func runStoreUpdateCommandWithApplyFallback(ctx context.Context, target string) CommandResult {
 	result := runPackageActionCommand(ctx, managerStore, packageActionTimeout, storeUpdateCommand(target, true)...)
 	result = normalizeStoreUpdateCommandResult(result)
@@ -137,13 +76,4 @@ func storeUpdateOutputIndicatesFailure(output string) bool {
 		"could not find installed product metadata",
 		"failed to read input in non-interactive mode",
 	})
-}
-
-func updateTargetAlreadyAttempted(target string, attempted []string) bool {
-	for _, existing := range attempted {
-		if strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(target)) {
-			return true
-		}
-	}
-	return false
 }

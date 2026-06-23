@@ -1,6 +1,31 @@
 package updater
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
+
+type legacyStateFields struct {
+	AssessmentCache map[string]legacyAssessmentCacheEntry `json:"store_update_assessment_cache"`
+}
+
+type legacyAssessmentCacheEntry struct {
+	UserSID                    string `json:"user_sid"`
+	PackageFamilyName          string `json:"package_family_name"`
+	StoreProductID             string `json:"store_product_id,omitempty"`
+	ExactActionTargetAvailable bool   `json:"exact_action_target_available"`
+}
+
+func readLegacyStateFields(data []byte) legacyStateFields {
+	var legacy legacyStateFields
+	if len(data) == 0 {
+		return legacy
+	}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return legacyStateFields{}
+	}
+	return legacy
+}
 
 func migrateStoreScanApps(state *State) {
 	for key, app := range state.WingetApps {
@@ -41,11 +66,11 @@ func normalizeStoreScanAppKeys(state *State) {
 	state.StoreApps = normalized
 }
 
-func normalizeAutoUpdatePackageKeys(state *State) {
+func normalizeAutoUpdatePackageKeys(state *State, legacyAssessments map[string]legacyAssessmentCacheEntry) {
 	normalized := map[string]bool{}
 	report := StoreAutoUpdateMigrationReport{LastRun: utcNow()}
 	for key, enabled := range state.AutoUpdatePackages {
-		normalizedKey, entry, disabled := migrateAutoUpdatePackageKey(state, key)
+		normalizedKey, entry, disabled := migrateAutoUpdatePackageKey(state, key, legacyAssessments)
 		if normalizedKey == "" {
 			if disabled {
 				report.Disabled = append(report.Disabled, entry)
@@ -63,7 +88,7 @@ func normalizeAutoUpdatePackageKeys(state *State) {
 	}
 }
 
-func migrateAutoUpdatePackageKey(state *State, key string) (string, StoreAutoUpdateMigrationEntry, bool) {
+func migrateAutoUpdatePackageKey(state *State, key string, legacyAssessments map[string]legacyAssessmentCacheEntry) (string, StoreAutoUpdateMigrationEntry, bool) {
 	now := utcNow()
 	entry := StoreAutoUpdateMigrationEntry{LegacyKey: key, MigratedAt: now}
 	manager, id, err := splitPackageKey(key)
@@ -71,13 +96,13 @@ func migrateAutoUpdatePackageKey(state *State, key string) (string, StoreAutoUpd
 		entry.Reason = "invalid package key"
 		return "", entry, true
 	}
-	if manager != managerStore || storeLegacyDetectorRollbackEnabled() {
+	if manager != managerStore {
 		normalized := normalizeAutoUpdatePackageKey(key)
 		if normalized == "" {
 			normalized = key
 		}
 		entry.CanonicalKey = normalized
-		entry.Reason = "non-Store or rollback package key retained"
+		entry.Reason = "non-Store package key retained"
 		return normalized, entry, false
 	}
 	if _, _, ok := splitCanonicalStoreAutoUpdateKey(key); ok {
@@ -97,7 +122,7 @@ func migrateAutoUpdatePackageKey(state *State, key string) (string, StoreAutoUpd
 		entry.Reason = "migrated exact package family name for current user"
 		return entry.CanonicalKey, entry, false
 	}
-	if match, ok := exactAssessmentForStoreProductID(state, id); ok {
+	if match, ok := exactAssessmentForStoreProductID(legacyAssessments, id); ok {
 		entry.PackageFamilyName = match.PackageFamilyName
 		entry.CanonicalKey = canonicalStoreAutoUpdateKey(match.UserSID, match.PackageFamilyName)
 		entry.Reason = "migrated exact Store Product ID from verified assessment cache"
@@ -107,14 +132,14 @@ func migrateAutoUpdatePackageKey(state *State, key string) (string, StoreAutoUpd
 	return "", entry, true
 }
 
-func exactAssessmentForStoreProductID(state *State, productID string) (StoreUpdateAssessmentCacheEntry, bool) {
+func exactAssessmentForStoreProductID(legacyAssessments map[string]legacyAssessmentCacheEntry, productID string) (legacyAssessmentCacheEntry, bool) {
 	productID = strings.TrimSpace(productID)
-	if state == nil || productID == "" {
-		return StoreUpdateAssessmentCacheEntry{}, false
+	if productID == "" {
+		return legacyAssessmentCacheEntry{}, false
 	}
-	var match StoreUpdateAssessmentCacheEntry
+	var match legacyAssessmentCacheEntry
 	count := 0
-	for _, entry := range state.StoreUpdateAssessmentCache {
+	for _, entry := range legacyAssessments {
 		if !entry.ExactActionTargetAvailable || !strings.EqualFold(strings.TrimSpace(entry.StoreProductID), productID) {
 			continue
 		}
@@ -133,10 +158,6 @@ func normalizeAutoUpdatePackageKey(key string) string {
 		return key
 	}
 	if manager == managerStore {
-		if storeLegacyDetectorRollbackEnabled() {
-			id = stableStoreActionID(id)
-			return packageKey(manager, id)
-		}
 		if _, _, ok := splitCanonicalStoreAutoUpdateKey(key); ok {
 			return strings.ToLower(key)
 		}

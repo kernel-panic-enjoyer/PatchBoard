@@ -3,18 +3,8 @@ package updater
 import "strings"
 
 const (
-	storeLegacyDetectorRollbackFlag = "UPDATER_STORE_LEGACY_DETECTOR"
-	storeCutoverDisableScanFlag     = "UPDATER_STORE_DISABLE_TRANSACTIONAL_SCAN"
-	storeAutoUpdateKeySeparator     = "~"
+	storeAutoUpdateKeySeparator = "~"
 )
-
-func storeLegacyDetectorRollbackEnabled() bool {
-	return featureFlagEnabled(storeLegacyDetectorRollbackFlag)
-}
-
-func storeNewDetectorActive() bool {
-	return !storeLegacyDetectorRollbackEnabled()
-}
 
 func canonicalStoreAutoUpdateKey(userSID, pfn string) string {
 	userSID = strings.TrimSpace(userSID)

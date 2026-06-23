@@ -7,78 +7,84 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
+var testStoreScanIDCounter int64
+
 func TestStoreScanPipelineInterruptedTransactionKeepsPreviousGeneration(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-pipeline"
 	pfn := "OpenAI.Codex_abc123"
 	pipeline := newTestStoreScanPipeline(store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
 	pipeline.NewScanID = func(time.Time) string { return "scan-interrupted" }
-	pipeline.BeforeCommit = func(context.Context, storeScanPersistInput) error {
+	pipeline.BeforeCommit = func(context.Context, StoreScanSnapshot) error {
 		return errors.New("boom before commit")
 	}
 	if _, err := pipeline.Run(context.Background()); err == nil {
 		t.Fatal("expected interrupted scan error")
 	}
-	if assessments, err := store.PublishedAssessments(context.Background(), userSID); err != nil || len(assessments) != 0 {
-		t.Fatalf("interrupted transaction published assessments: assessments=%#v err=%v", assessments, err)
+	if snapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID); err != nil || ok {
+		t.Fatalf("interrupted transaction published snapshot: snapshot=%#v ok=%t err=%v", snapshot, ok, err)
 	}
 }
 
-func TestStoreScanDatabaseMigrationAndJSONStateImport(t *testing.T) {
+func TestStoreScanOldStateFixturePreservesDurablePreferences(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", dir)
-	state := defaultState()
-	state.Theme = "light"
-	state.AutoUpdateGlobal = true
-	state.StoreUpdateAssessmentCache[storeAssessmentCacheKey("S-1-5-21-json", "OpenAI.Codex_abc123")] = StoreUpdateAssessmentCacheEntry{
-		UserSID:                    "S-1-5-21-json",
-		PackageFamilyName:          "OpenAI.Codex_abc123",
-		ScanID:                     "json-scan",
-		State:                      string(StoreUpdateAvailable),
-		Reason:                     "json positive",
-		ObservedAt:                 "2026-06-21T10:00:00Z",
-		InstalledVersion:           "1.0.0",
-		OfferedVersion:             "1.1.0",
-		StoreProductID:             "9NCODEX",
-		Applicability:              "applicable",
-		ExactActionTargetAvailable: true,
-	}
-	if err := saveState(state); err != nil {
+	raw := `{
+  "created_at": "2026-06-14T12:00:00Z",
+  "updated_at": "2026-06-14T12:00:00Z",
+  "auto_update_global": true,
+  "auto_update_packages": {
+    "winget:Git.Git": true,
+    "store:s-1-5-21-json~openai.codex_abc123": true
+  },
+  "registry_apps": {},
+  "winget_apps": {},
+  "store_apps": {},
+  "store_resolve_cache": {
+    "legacy": {"appx_version":"1.0.0","store_id":"9NOLD","resolved":true,"resolved_at":"2026-06-14T12:00:00Z"}
+  },
+  "store_update_assessment_cache": {
+    "json": {
+      "user_sid": "S-1-5-21-json",
+      "package_family_name": "OpenAI.Codex_abc123",
+      "scan_id": "json-scan",
+      "state": "available",
+      "reason": "json positive",
+      "observed_at": "2026-06-21T10:00:00Z",
+      "installed_version": "1.0.0",
+      "offered_version": "1.1.0",
+      "store_product_id": "9NCODEX",
+      "applicability": "applicable",
+      "exact_action_target_available": true
+    }
+  },
+  "unknown_future_field": {"must":"not break startup"},
+  "theme": "light"
+}`
+	if err := os.WriteFile(filepath.Join(dir, "state.json"), []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	store, err := openStoreScanStore(filepath.Join(dir, "store-scans.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != storeScanSchemaVersion {
-		t.Fatalf("schema version=%d, want %d", version, storeScanSchemaVersion)
-	}
-	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM update_assessments WHERE scan_id = 'json-scan' AND package_family_name = 'OpenAI.Codex_abc123'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Fatalf("expected JSON assessment cache migration, count=%d", count)
-	}
-	var providerVersionColumns int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('provider_runs') WHERE name = 'provider_version'`).Scan(&providerVersionColumns); err != nil {
-		t.Fatal(err)
-	}
-	if providerVersionColumns != 1 {
-		t.Fatal("provider_runs migration did not add provider_version column")
 	}
 	loaded := loadState()
 	if loaded.Theme != "light" || !loaded.AutoUpdateGlobal {
-		t.Fatalf("JSON migration altered unrelated settings: %#v", loaded)
+		t.Fatalf("old state fixture did not preserve durable settings: %#v", loaded)
+	}
+	if !loaded.AutoUpdatePackages["winget:Git.Git"] || !loaded.AutoUpdatePackages["store:s-1-5-21-json~openai.codex_abc123"] {
+		t.Fatalf("auto-update preferences were not preserved: %#v", loaded.AutoUpdatePackages)
+	}
+	if err := saveState(loaded); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(saved), "store_update_assessment_cache") {
+		t.Fatalf("legacy assessment cache should be omitted after load/save migration: %s", saved)
 	}
 }
 
@@ -105,50 +111,23 @@ func TestStoreScanPipelineRecordsSystemContext(t *testing.T) {
 	})
 	defer restoreContext()
 
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	result := runTestPipeline(t, store, "S-1-5-21-context", "OpenAI.Codex_abc123", negativeProvider("OpenAI.Codex_abc123", "1.0.0"))
 
 	if result.Scan.WindowsVersion != "Windows 11 24H2" || result.Scan.WindowsBuild != "10.0.26200.8655" || result.Scan.Architecture != "arm64" {
 		t.Fatalf("scan context was not recorded: %#v", result.Scan)
 	}
-	persisted, ok, err := store.LatestPublishedScan(context.Background(), "S-1-5-21-context")
+	persisted, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), "S-1-5-21-context")
 	if err != nil || !ok {
 		t.Fatalf("latest scan not persisted: scan=%#v ok=%t err=%v", persisted, ok, err)
 	}
-	if persisted.WindowsVersion != "Windows 11 24H2" || persisted.WindowsBuild != "10.0.26200.8655" || persisted.Architecture != "arm64" {
-		t.Fatalf("persisted scan context was not recorded: %#v", persisted)
-	}
-}
-
-func TestStoreScanCorruptDatabaseRecoveryPolicy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "store-scans.sqlite")
-	if err := os.WriteFile(path, []byte("not sqlite"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	store, err := openStoreScanStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	matches, err := filepath.Glob(path + ".corrupt.*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected one corrupt backup, got %#v", matches)
-	}
-	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != storeScanSchemaVersion {
-		t.Fatalf("recovered schema version=%d", version)
+	if persisted.Scan.WindowsVersion != "Windows 11 24H2" || persisted.Scan.WindowsBuild != "10.0.26200.8655" || persisted.Scan.Architecture != "arm64" {
+		t.Fatalf("persisted scan context was not recorded: %#v", persisted.Scan)
 	}
 }
 
 func TestStoreScanRetentionPrunesOldGenerationsForUser(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-retention"
 	pfn := "OpenAI.Codex_abc123"
 	base := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
@@ -170,38 +149,25 @@ func TestStoreScanRetentionPrunesOldGenerationsForUser(t *testing.T) {
 			},
 			ObservedAt: scan.CompletedAt,
 		}
-		if _, err := store.PersistScan(context.Background(), storeScanPersistInput{
-			Scan:        scan,
-			Inventory:   testStoreInventory(scan, pfn, "1.0.0"),
-			Assessments: []StorePublishedAssessment{assessment},
-			Publish:     true,
+		if _, err := store.PersistCompletedScanSnapshot(context.Background(), StoreScanSnapshot{
+			SchemaVersion: storeScanSchemaVersion,
+			Published:     true,
+			Scan:          scan,
+			Inventory:     testStoreInventory(scan, pfn, "1.0.0"),
+			Assessments:   []StorePublishedAssessment{assessment},
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM scan_runs WHERE user_sid = ?`, userSID).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != storeScanRetentionRunsUser {
-		t.Fatalf("scan retention kept %d rows, want %d", count, storeScanRetentionRunsUser)
-	}
-	var oldestCount int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM scan_runs WHERE scan_id = ?`, "scan-retention-00").Scan(&oldestCount); err != nil {
-		t.Fatal(err)
-	}
-	if oldestCount != 0 {
-		t.Fatal("oldest scan generation was not pruned")
-	}
-	scan, ok, err := store.LatestPublishedScan(context.Background(), userSID)
-	if err != nil || !ok || scan.ScanID != fmt.Sprintf("scan-retention-%02d", storeScanRetentionRunsUser+4) {
-		t.Fatalf("latest published scan not preserved: scan=%#v ok=%v err=%v", scan, ok, err)
+	snapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID)
+	if err != nil || !ok || snapshot.Scan.ScanID != fmt.Sprintf("scan-retention-%02d", storeScanRetentionRunsUser+4) {
+		t.Fatalf("latest published scan not preserved: snapshot=%#v ok=%v err=%v", snapshot, ok, err)
 	}
 }
 
 func TestStoreScanRejectsTwoSimultaneousRequests(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	block := make(chan struct{})
 	started := make(chan struct{})
 	userSID := "S-1-5-21-concurrent"
@@ -227,7 +193,7 @@ func TestStoreScanRejectsTwoSimultaneousRequests(t *testing.T) {
 }
 
 func TestStoreScanOlderCompletionDoesNotPublishOverNewerScan(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-order"
 	restore := replaceStoreScanSID(userSID)
 	defer restore()
@@ -245,14 +211,14 @@ func TestStoreScanOlderCompletionDoesNotPublishOverNewerScan(t *testing.T) {
 	if result, err := older.Run(context.Background()); err != nil || result.Published {
 		t.Fatalf("older stale scan should persist but not publish: result=%#v err=%v", result, err)
 	}
-	scan, ok, err := store.LatestPublishedScan(context.Background(), userSID)
-	if err != nil || !ok || scan.ScanID != "newer-scan" {
-		t.Fatalf("latest published scan=%#v ok=%v err=%v", scan, ok, err)
+	snapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID)
+	if err != nil || !ok || snapshot.Scan.ScanID != "newer-scan" {
+		t.Fatalf("latest published scan=%#v ok=%v err=%v", snapshot.Scan, ok, err)
 	}
 }
 
 func TestStoreScanCrossUserEvidenceBecomesUnknown(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-user-a"
 	pfn := "OpenAI.Codex_abc123"
 	provider := fakeCatalogProvider{id: "wrong-user", fn: func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily) StoreCatalogProviderRun {
@@ -276,7 +242,7 @@ func TestStoreScanCrossUserEvidenceBecomesUnknown(t *testing.T) {
 }
 
 func TestStoreScanProviderPartialFailureIsUnknown(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	result := runTestPipeline(t, store, "S-1-5-21-partial", "OpenAI.Codex_abc123", failingProvider("catalog unavailable"))
 	if got := result.Assessments[0]; got.State != StoreUpdateUnknown || got.Stale {
 		t.Fatalf("partial provider assessment=%#v", got)
@@ -284,7 +250,7 @@ func TestStoreScanProviderPartialFailureIsUnknown(t *testing.T) {
 }
 
 func TestStoreScanOptionalProviderFailureDoesNotAllowCurrent(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-optional-failure"
 	pfn := "OpenAI.Codex_abc123"
 	pipeline := newTestStoreScanPipeline(store, userSID, pfn, negativeProvider(pfn, "1.0.0"))
@@ -314,7 +280,7 @@ func TestStoreScanOptionalProviderFailureDoesNotAllowCurrent(t *testing.T) {
 }
 
 func TestStoreScanRequiredProviderPackageFailurePreventsOtherCurrent(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-required-package-failure"
 	healthyPFN := "OpenAI.Codex_abc123"
 	failedPFN := "Vendor.Broken_abc123"
@@ -358,7 +324,7 @@ func TestStoreScanRequiredProviderPackageFailurePreventsOtherCurrent(t *testing.
 }
 
 func TestStoreScanOptionalExactFailureDoesNotBlockUnrelatedCurrentWithAggregateCoverage(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-optional-exact-unrelated"
 	currentPFN := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	failedPFN := "Vendor.Broken_abc123"
@@ -431,7 +397,7 @@ func TestStoreScanOptionalExactFailureDoesNotBlockUnrelatedCurrentWithAggregateC
 }
 
 func TestStoreScanFreshPositiveSurvivesUnrelatedIncompletePackage(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-positive-unrelated-failure"
 	updatePFN := "OpenAI.Codex_abc123"
 	failedPFN := "Vendor.Broken_abc123"
@@ -481,7 +447,7 @@ func TestStoreScanFreshPositiveSurvivesUnrelatedIncompletePackage(t *testing.T) 
 }
 
 func TestStoreScanOptionalExactPositiveSurvivesRequiredProviderIncompleteForSamePackage(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-optional-positive-required-incomplete"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	productID := "9N4D0MSMP0PT"
@@ -543,7 +509,7 @@ func TestStoreScanOptionalExactPositiveSurvivesRequiredProviderIncompleteForSame
 }
 
 func TestStoreScanWingetExactPositiveSurvivesRequiredProviderIncompleteForSamePackage(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-winget-positive-required-incomplete"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	productID := "9N4D0MSMP0PT"
@@ -605,7 +571,7 @@ func TestStoreScanWingetExactPositiveSurvivesRequiredProviderIncompleteForSamePa
 }
 
 func TestStoreScanWingetNonExactPositivePreventsCurrent(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-winget-unresolved-positive"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	aggregateProvider := StoreProviderIdentity{ID: storeCLIUpdatesProviderID, Name: "Store CLI aggregate updates", Backend: backendStoreCLI}
@@ -647,7 +613,7 @@ func TestStoreScanWingetNonExactPositivePreventsCurrent(t *testing.T) {
 }
 
 func TestStoreScanPublishesVerifiedProductIDForAuthoritativeNegative(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-current-product-id"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	productID := "9N4D0MSMP0PT"
@@ -700,17 +666,17 @@ func TestStoreScanPublishesVerifiedProductIDForAuthoritativeNegative(t *testing.
 	if got.ExactActionTargetAvailable {
 		t.Fatalf("current assessment must not become updateable just because Product ID is known: %#v", got)
 	}
-	persisted, err := store.PublishedAssessments(context.Background(), userSID)
-	if err != nil {
+	persistedSnapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID)
+	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if len(persisted) != 1 || persisted[0].StoreProductID != productID || persisted[0].ExactActionTargetAvailable {
-		t.Fatalf("persisted assessment lost verified Product ID or changed target availability: %#v", persisted)
+	if len(persistedSnapshot.Assessments) != 1 || persistedSnapshot.Assessments[0].StoreProductID != productID || persistedSnapshot.Assessments[0].ExactActionTargetAvailable {
+		t.Fatalf("persisted assessment lost verified Product ID or changed target availability: %#v", persistedSnapshot.Assessments)
 	}
 }
 
 func TestStoreScanPublishesVerifiedProductIDForUnknownIncompleteAssessment(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-unknown-product-id"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	productID := "9N4D0MSMP0PT"
@@ -753,7 +719,7 @@ func TestStoreScanPublishesVerifiedProductIDForUnknownIncompleteAssessment(t *te
 }
 
 func TestStoreScanDoesNotPublishConflictingVerifiedProductIDs(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-conflicting-product-id"
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	providerID := StoreProviderIdentity{ID: storeCLIExactProviderID, Name: "Store CLI exact catalog", Backend: backendStoreCLI}
@@ -811,7 +777,7 @@ func TestStoreScanDoesNotPublishConflictingVerifiedProductIDs(t *testing.T) {
 }
 
 func TestStoreScanPositiveHysteresisRetainsUpdateOnIncompleteScan(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-hysteresis"
 	pfn := "OpenAI.Codex_abc123"
 	first := runTestPipeline(t, store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
@@ -825,7 +791,7 @@ func TestStoreScanPositiveHysteresisRetainsUpdateOnIncompleteScan(t *testing.T) 
 }
 
 func TestStoreScanHealthyRetractionStopsPositiveHysteresis(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-retraction"
 	pfn := "OpenAI.Codex_abc123"
 	first := runTestPipeline(t, store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
@@ -859,7 +825,7 @@ func TestStoreScanHealthyRetractionStopsPositiveHysteresis(t *testing.T) {
 }
 
 func TestStoreScanIncompleteRetractionDoesNotClearPreviousPositive(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-incomplete-retraction"
 	pfn := "OpenAI.Codex_abc123"
 	otherPFN := "Vendor.Broken_abc123"
@@ -903,7 +869,7 @@ func TestStoreScanIncompleteRetractionDoesNotClearPreviousPositive(t *testing.T)
 }
 
 func TestStoreScanIncompleteInapplicableDoesNotClearPreviousPositive(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-incomplete-inapplicable"
 	pfn := "OpenAI.Codex_abc123"
 	otherPFN := "Vendor.Broken_abc123"
@@ -947,7 +913,7 @@ func TestStoreScanIncompleteInapplicableDoesNotClearPreviousPositive(t *testing.
 }
 
 func TestStoreScanConflictResolution(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-conflict"
 	pfn := "OpenAI.Codex_abc123"
 	result := runTestPipeline(t, store, userSID, pfn, positiveAndNegativeProvider(pfn))
@@ -957,7 +923,7 @@ func TestStoreScanConflictResolution(t *testing.T) {
 }
 
 func TestStoreScanCancellationDoesNotPublish(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-cancel"
 	pfn := "OpenAI.Codex_abc123"
 	ctx, cancel := context.WithCancel(context.Background())
@@ -970,8 +936,8 @@ func TestStoreScanCancellationDoesNotPublish(t *testing.T) {
 	if _, err := pipeline.Run(ctx); err == nil {
 		t.Fatal("expected cancelled scan to fail before publish")
 	}
-	if assessments, err := store.PublishedAssessments(context.Background(), userSID); err != nil || len(assessments) != 0 {
-		t.Fatalf("cancelled scan published assessments=%#v err=%v", assessments, err)
+	if snapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID); err != nil || ok {
+		t.Fatalf("cancelled scan published snapshot=%#v ok=%t err=%v", snapshot, ok, err)
 	}
 }
 
@@ -991,7 +957,7 @@ func TestConfiguredStoreProviderTimeoutFromEnvironment(t *testing.T) {
 }
 
 func TestStoreScanPreviousGenerationFallbackOnFatalInventoryFailure(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-fallback"
 	restore := replaceStoreScanSID(userSID)
 	defer restore()
@@ -1013,17 +979,17 @@ func TestStoreScanPreviousGenerationFallbackOnFatalInventoryFailure(t *testing.T
 	if result.Published {
 		t.Fatalf("fatal inventory scan should not publish: %#v", result)
 	}
-	assessments, err := store.PublishedAssessments(context.Background(), userSID)
-	if err != nil {
+	snapshot, ok, err := store.LoadLatestPublishedSnapshot(context.Background(), userSID)
+	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if len(assessments) != 1 || assessments[0].State != StoreUpdateAvailable || assessments[0].ScanID != first.Scan.ScanID {
-		t.Fatalf("previous generation fallback broken: %#v", assessments)
+	if len(snapshot.Assessments) != 1 || snapshot.Assessments[0].State != StoreUpdateAvailable || snapshot.Assessments[0].ScanID != first.Scan.ScanID {
+		t.Fatalf("previous generation fallback broken: %#v", snapshot.Assessments)
 	}
 }
 
 func TestStoreScanInapplicableAndUnresolvedIdentity(t *testing.T) {
-	store := newTestStoreScanStore(t)
+	store := newTestStoreScanRepository(t)
 	userSID := "S-1-5-21-states"
 	pfn := "OpenAI.Codex_abc123"
 	inapplicable := runTestPipeline(t, store, userSID, pfn, inapplicableProvider(pfn))
@@ -1039,15 +1005,6 @@ func TestStoreScanInapplicableAndUnresolvedIdentity(t *testing.T) {
 func TestStoreTransactionalScanFeatureFlagAndInventoryAdapter(t *testing.T) {
 	if !storeTransactionalScanEnabled() {
 		t.Fatal("transactional Store scan pipeline must be enabled by default after cutover")
-	}
-	t.Setenv(storeLegacyDetectorRollbackFlag, "1")
-	if storeTransactionalScanEnabled() {
-		t.Fatal("legacy rollback flag should disable transactional Store scan")
-	}
-	t.Setenv(storeLegacyDetectorRollbackFlag, "")
-	t.Setenv(storeCutoverDisableScanFlag, "1")
-	if storeTransactionalScanEnabled() {
-		t.Fatal("explicit disable flag should disable transactional Store scan")
 	}
 	state := defaultState()
 	pfn := "OpenAI.Codex_abc123"
@@ -1139,10 +1096,10 @@ func TestPublishedStoreAssessmentUsesFriendlyPFNPresentationFallback(t *testing.
 	}
 }
 
-func newTestStoreScanStore(t *testing.T) *StoreScanStore {
+func newTestStoreScanRepository(t *testing.T) StoreScanRepository {
 	t.Helper()
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
-	store, err := openStoreScanStore(filepath.Join(t.TempDir(), "store-scans.sqlite"))
+	store, err := openStoreScanFileRepository(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1150,18 +1107,20 @@ func newTestStoreScanStore(t *testing.T) *StoreScanStore {
 	return store
 }
 
-func newTestStoreScanPipeline(store *StoreScanStore, userSID, pfn string, provider StoreCatalogProvider) *StoreScanPipeline {
+func newTestStoreScanPipeline(store StoreScanRepository, userSID, pfn string, provider StoreCatalogProvider) *StoreScanPipeline {
 	return &StoreScanPipeline{
-		Store:             store,
+		Repository:        store,
 		InventoryProvider: fakeInventoryProvider{inventory: testStoreInventory(StoreScanGeneration{ScanID: "placeholder", UserSID: userSID, StartedAt: time.Now().UTC(), CompletedAt: time.Now().UTC(), CompletionStatus: StoreScanCompleted}, pfn, "1.0.0")},
 		CatalogProviders:  []StoreCatalogProvider{provider},
 		ProviderTimeout:   500 * time.Millisecond,
 		Now:               fixedPipelineTimes(time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC), time.Date(2026, 6, 21, 12, 0, 1, 0, time.UTC), time.Date(2026, 6, 21, 12, 0, 2, 0, time.UTC)),
-		NewScanID:         func(now time.Time) string { return "scan-" + strings.ReplaceAll(pfn, ".", "-") + fmtTimeForID(now) },
+		NewScanID: func(now time.Time) string {
+			return fmt.Sprintf("scan-%s%s-%06d", strings.ReplaceAll(pfn, ".", "-"), fmtTimeForID(now), atomic.AddInt64(&testStoreScanIDCounter, 1))
+		},
 	}
 }
 
-func runTestPipeline(t *testing.T, store *StoreScanStore, userSID, pfn string, provider StoreCatalogProvider) StoreScanResult {
+func runTestPipeline(t *testing.T, store StoreScanRepository, userSID, pfn string, provider StoreCatalogProvider) StoreScanResult {
 	t.Helper()
 	restore := replaceStoreScanSID(userSID)
 	defer restore()

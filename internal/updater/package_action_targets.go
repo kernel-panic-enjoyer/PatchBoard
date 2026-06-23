@@ -28,21 +28,6 @@ func runPackageUpdateCandidates(ctx context.Context, candidates []string, label 
 	return merged
 }
 
-func storeUpdateTargetCandidates(pkg Package) []string {
-	if pkg.Manager == managerStore && pkg.UpdateState != "" {
-		return uniqueUpdateTargets([]string{
-			pkg.StoreProductID,
-			pkg.StoreUpdateID,
-		})
-	}
-	return uniqueUpdateTargets([]string{
-		pkg.ID,
-		stableStoreActionID(pkg.ID),
-		pkg.Match,
-		stableStoreActionID(pkg.Match),
-	})
-}
-
 func wingetUpdateTargetCandidates(pkg Package) []string {
 	return uniqueUpdateTargets([]string{
 		pkg.ID,

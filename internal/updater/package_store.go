@@ -9,68 +9,6 @@ func parseStoreSearch(output string) []Package {
 	return parseStorePackageTable(output)
 }
 
-func parseStoreUpdates(output string) map[string]string {
-	updates := map[string]string{}
-	for _, pkg := range parseStoreUpdatePackages(output) {
-		if pkg.ID == "" {
-			continue
-		}
-		available := pkg.AvailableVersion
-		if available == "" {
-			available = pkg.Version
-		}
-		if available != "" {
-			updates[packageKey(managerStore, strings.ToLower(pkg.ID))] = available
-		}
-	}
-	return updates
-}
-
-func parseStoreInstalled(output string) []Package {
-	packages := parseStorePackageTable(output)
-	for i := range packages {
-		packages[i].Key = packageKey(managerStore, packages[i].ID)
-		packages[i].Manager = managerStore
-		packages[i].Source = sourceStoreCLI
-		packages[i].Installed = true
-		packages[i].UpdateSupported = true
-		packages[i].ActionBackend = backendStoreCLI
-	}
-	return packages
-}
-
-func parseStoreUpdatePackages(output string) []Package {
-	rows := parseStorePackageTable(output)
-	packages := make([]Package, 0, len(rows))
-	for _, row := range rows {
-		id := strings.TrimSpace(row.ID)
-		name := strings.TrimSpace(row.Name)
-		if id == "" {
-			id = name
-		}
-		if name == "" {
-			name = id
-		}
-		if id == "" {
-			continue
-		}
-		available := latestPackageVersion(row)
-		packages = append(packages, Package{
-			Key:              packageKey(managerStore, id),
-			ID:               id,
-			Name:             name,
-			AvailableVersion: available,
-			UpdateAvailable:  true,
-			UpdateSupported:  true,
-			Installed:        true,
-			Manager:          managerStore,
-			Source:           sourceStoreCLI,
-			ActionBackend:    backendStoreCLI,
-		})
-	}
-	return packages
-}
-
 func parseStorePackageTable(output string) []Package {
 	lines := strings.Split(output, "\n")
 	headerSeen := false
@@ -420,15 +358,4 @@ func appendStoreBoxContinuation(row, continuation []string) []string {
 func storeSearch(query string) ([]Package, CommandResult) {
 	result := runCommand(90*time.Second, managerCommand(managerStore, "search", query)...)
 	return parseStoreSearch(result.Stdout + "\n" + result.Stderr), result
-}
-
-func storeInstalled() ([]Package, CommandResult) {
-	result := runCommand(120*time.Second, managerCommand(managerStore, "installed")...)
-	return parseStoreInstalled(result.Stdout + "\n" + result.Stderr), result
-}
-
-func storeUpdates() (map[string]string, []Package, CommandResult) {
-	result := runCommand(120*time.Second, storeUpdatesCommand()...)
-	output := result.Stdout + "\n" + result.Stderr
-	return parseStoreUpdates(output), parseStoreUpdatePackages(output), result
 }

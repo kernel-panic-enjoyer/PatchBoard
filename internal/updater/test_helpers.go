@@ -43,14 +43,6 @@ func replacePackageActionHooks(
 	}
 }
 
-func replaceStoreSearchHook(search storeSearchFunc) func() {
-	oldSearch := packageActionStoreSearch
-	packageActionStoreSearch = search
-	return func() {
-		packageActionStoreSearch = oldSearch
-	}
-}
-
 func packageActionTargetFromArgs(args []string) string {
 	for i, arg := range args {
 		if arg == "--id" && i+1 < len(args) {

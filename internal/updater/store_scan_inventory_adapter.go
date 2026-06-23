@@ -8,7 +8,7 @@ import (
 
 var (
 	runStoreTransactionalScanForInventory   = runDefaultStoreScanPipeline
-	openStoreTransactionalStoreForInventory = openDefaultStoreScanStore
+	openStoreTransactionalStoreForInventory = openDefaultStoreScanRepository
 )
 
 func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inventory Inventory) Inventory {
@@ -21,37 +21,34 @@ func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inven
 	} else if !result.Published {
 		appLog("Store transactional scan %s completed but was not published.", result.Scan.ScanID)
 	}
-	return applyPublishedStoreScanAssessments(ctx, state, inventory, result.Inventory)
+	return applyPublishedStoreScanAssessments(ctx, state, inventory)
 }
 
-func applyPublishedStoreScanAssessments(ctx context.Context, state State, inventory Inventory, resultInventory StorePackagedAppInventory) Inventory {
+func applyPublishedStoreScanAssessments(ctx context.Context, state State, inventory Inventory) Inventory {
 	if !storeTransactionalScanEnabled() {
 		return inventory
 	}
-	store, openErr := openStoreTransactionalStoreForInventory()
+	repository, openErr := openStoreTransactionalStoreForInventory()
 	if openErr != nil {
 		appLog("Could not open Store scan store: %s", openErr)
 		inventory.StoreScanHealth = StoreScanHealthSummary{Active: true, Healthy: false, Authoritative: false, Status: string(StoreScanFailed), Reason: sanitizeProviderDiagnostic(openErr.Error())}
 		return inventory
 	}
-	defer store.Close()
+	defer repository.Close()
 	userSID, sidErr := storeScanCurrentUserSID()
 	if sidErr != nil {
 		appLog("Could not load Store scan assessments because current user SID is unavailable: %s", sidErr)
 		inventory.StoreScanHealth = StoreScanHealthSummary{Active: true, Healthy: false, Authoritative: false, Status: string(StoreScanFailed), Reason: sanitizeProviderDiagnostic(sidErr.Error())}
 		return inventory
 	}
-	assessments, err := store.PublishedAssessments(ctx, userSID)
+	snapshot, ok, err := repository.LoadLatestPublishedSnapshot(ctx, userSID)
 	if err != nil {
 		appLog("Could not load published Store scan assessments: %s", err)
 		inventory.StoreScanHealth = StoreScanHealthSummary{Active: true, Healthy: false, Authoritative: false, Status: string(StoreScanFailed), Reason: sanitizeProviderDiagnostic(err.Error())}
 		return inventory
 	}
-	providerSummaries, providerErr := store.LatestPublishedProviderSummaries(ctx, userSID)
-	if providerErr != nil {
-		appLog("Could not load published Store provider diagnostics: %s", providerErr)
-	}
-	if len(assessments) == 0 {
+	providerSummaries := providerSummariesFromRuns(snapshot.ProviderRuns)
+	if !ok || len(snapshot.Assessments) == 0 {
 		inventory.StoreScanHealth = buildStoreScanHealthSummary(inventory.Packages, providerSummaries)
 		if !inventory.StoreScanHealth.Active {
 			inventory.StoreScanHealth = StoreScanHealthSummary{
@@ -66,12 +63,10 @@ func applyPublishedStoreScanAssessments(ctx context.Context, state State, invent
 		return inventory
 	}
 	familyNames := map[string]StorePackagedAppFamily{}
-	if resultInventory.Scan.UserSID == userSID {
-		for _, family := range resultInventory.Families {
-			familyNames[strings.ToLower(family.Identity.PackageFamilyName)] = family
-		}
+	for _, family := range snapshot.Inventory.Families {
+		familyNames[strings.ToLower(family.Identity.PackageFamilyName)] = family
 	}
-	inventory = applyPublishedStoreAssessmentsToInventory(state, inventory, assessments, familyNames, providerSummaries)
+	inventory = applyPublishedStoreAssessmentsToInventory(state, inventory, snapshot.Assessments, familyNames, providerSummaries)
 	inventory.StoreScanHealth = buildStoreScanHealthSummary(inventory.Packages, providerSummaries)
 	return inventory
 }

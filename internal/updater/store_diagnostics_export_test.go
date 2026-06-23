@@ -15,7 +15,7 @@ func TestStoreDiagnosticsExportSanitizesUserSIDAndIncludesEvidence(t *testing.T)
 		t.Fatal(err)
 	}
 	pfn := "OpenAI.Codex_abc123"
-	store, err := openDefaultStoreScanStore()
+	store, err := openDefaultStoreScanRepository()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +36,10 @@ func TestStoreDiagnosticsExportSanitizesUserSIDAndIncludesEvidence(t *testing.T)
 		AvailableVersion: "1.1.0",
 		Target:           target,
 	}
-	input := storeScanPersistInput{
-		Scan: scan,
+	snapshot := StoreScanSnapshot{
+		SchemaVersion: storeScanSchemaVersion,
+		Published:     true,
+		Scan:          scan,
 		Inventory: StorePackagedAppInventory{Scan: scan, Families: []StorePackagedAppFamily{{
 			Identity:    identity,
 			DisplayName: "Codex",
@@ -66,9 +68,8 @@ func TestStoreDiagnosticsExportSanitizesUserSIDAndIncludesEvidence(t *testing.T)
 			ExactActionTargetAvailable: true,
 			Applicability:              "applicable",
 		}},
-		Publish: true,
 	}
-	if _, err := store.PersistScan(context.Background(), input); err != nil {
+	if _, err := store.PersistCompletedScanSnapshot(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
 	}
 

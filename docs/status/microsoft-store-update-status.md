@@ -17,15 +17,9 @@ used as a silent fallback. If the new detector cannot complete, Store package
 status remains `Unknown` and the scan-health panel explains which provider or
 identity requirement failed.
 
-The one-release emergency rollback is explicit:
-
-```cmd
-set UPDATER_STORE_LEGACY_DETECTOR=1
-```
-
-This flag re-enables the old Store detector path for emergency diagnosis only.
-It should not be used to treat display-name or fuzzy matches as durable Store
-identity.
+The old display-name detector and rollback flag have been removed from the
+default build. Store search remains available for installing new packages, but
+search results are not used as installed package identity or update truth.
 
 ## Cutover And Compliance Notes
 
@@ -46,7 +40,7 @@ Core enforcement points:
   and parser rejection become `Unknown`, not `Current`.
 - Exact Store update execution is gated by a fresh available assessment and a
   verified Product ID or provider-specific exact target.
-- Legacy Store heuristics require explicit `UPDATER_STORE_LEGACY_DETECTOR=1`.
+- The legacy display-name detector is not compiled into the default build.
 
 Release-gate checks before shipping:
 

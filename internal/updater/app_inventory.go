@@ -122,17 +122,7 @@ func (app *App) inventorySnapshot() InventoryResponse {
 	}
 	if storeTransactionalScanEnabled() {
 		state := loadState()
-		response.Inventory = applyPublishedStoreScanAssessments(context.Background(), state, response.Inventory, StorePackagedAppInventory{})
-	}
-	if storeUpdateAssessmentEnabled() {
-		state := loadState()
-		projected, changed := applyStoreUpdateAssessmentProjection(&state, response.Inventory)
-		response.Inventory = projected
-		if changed {
-			if err := saveAppState(state); err != nil {
-				appLog("Failed to save Store update assessment cache: %s", err)
-			}
-		}
+		response.Inventory = applyPublishedStoreScanAssessments(context.Background(), state, response.Inventory)
 	}
 	return response
 }

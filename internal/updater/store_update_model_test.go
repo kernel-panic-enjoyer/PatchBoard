@@ -310,12 +310,6 @@ func TestStoreAssessmentToLegacyPackage(t *testing.T) {
 	}
 }
 
-func TestStoreUpdateAssessmentModelFeatureFlagDisabled(t *testing.T) {
-	if storeUpdateAssessmentModelEnabled {
-		t.Fatal("store update assessment model must remain disabled until the active detector is migrated")
-	}
-}
-
 func completedStoreScan(scanID, userSID string, providers ...StoreProviderIdentity) StoreScanGeneration {
 	started := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
 	providerVersions := map[string]string{}

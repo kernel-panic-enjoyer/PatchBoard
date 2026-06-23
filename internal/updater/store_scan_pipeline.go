@@ -12,10 +12,9 @@ import (
 )
 
 const (
-	storeTransactionalScanFeatureFlag = "UPDATER_STORE_TRANSACTIONAL_SCAN"
-	storeProviderTimeoutEnv           = "UPDATER_STORE_PROVIDER_TIMEOUT_SECONDS"
-	defaultStoreCatalogProviderID     = "store-catalog-unimplemented"
-	defaultStoreProviderTimeout       = 6 * time.Minute
+	storeProviderTimeoutEnv       = "UPDATER_STORE_PROVIDER_TIMEOUT_SECONDS"
+	defaultStoreCatalogProviderID = "store-catalog-unimplemented"
+	defaultStoreProviderTimeout   = 6 * time.Minute
 )
 
 var (
@@ -41,13 +40,13 @@ type StoreCatalogProviderRun struct {
 }
 
 type StoreScanPipeline struct {
-	Store             *StoreScanStore
+	Repository        StoreScanRepository
 	InventoryProvider StorePackagedAppInventoryProvider
 	CatalogProviders  []StoreCatalogProvider
 	ProviderTimeout   time.Duration
 	Now               func() time.Time
 	NewScanID         func(time.Time) string
-	BeforeCommit      func(context.Context, storeScanPersistInput) error
+	BeforeCommit      func(context.Context, StoreScanSnapshot) error
 
 	mu      sync.Mutex
 	running bool
@@ -62,18 +61,15 @@ type StoreScanResult struct {
 }
 
 func storeTransactionalScanEnabled() bool {
-	if storeLegacyDetectorRollbackEnabled() || featureFlagEnabled(storeCutoverDisableScanFlag) {
-		return false
-	}
 	return true
 }
 
-func defaultStoreScanPipeline(store *StoreScanStore) *StoreScanPipeline {
+func defaultStoreScanPipeline(repository StoreScanRepository) *StoreScanPipeline {
 	managers := detectManagers()
 	storeVersion := managers[managerStore].Version
 	wingetVersion := managers[managerWinget].Version
 	return &StoreScanPipeline{
-		Store:             store,
+		Repository:        repository,
 		InventoryProvider: storePackagedAppInventoryProvider(),
 		CatalogProviders: []StoreCatalogProvider{
 			storeCLIExactCatalogProvider{Version: storeVersion},
@@ -86,17 +82,17 @@ func defaultStoreScanPipeline(store *StoreScanStore) *StoreScanPipeline {
 }
 
 func runDefaultStoreScanPipeline(ctx context.Context) (StoreScanResult, error) {
-	store, err := openDefaultStoreScanStore()
+	repository, err := openDefaultStoreScanRepository()
 	if err != nil {
 		return StoreScanResult{}, err
 	}
-	defer store.Close()
-	return defaultStoreScanPipeline(store).Run(ctx)
+	defer repository.Close()
+	return defaultStoreScanPipeline(repository).Run(ctx)
 }
 
 func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, error) {
-	if pipeline == nil || pipeline.Store == nil {
-		return StoreScanResult{}, errors.New("Store scan pipeline has no store")
+	if pipeline == nil || pipeline.Repository == nil {
+		return StoreScanResult{}, errors.New("Store scan pipeline has no repository")
 	}
 	if !pipeline.tryStart() {
 		return StoreScanResult{}, errStoreScanAlreadyRunning
@@ -131,13 +127,13 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 	previous, _ := pipeline.previousAssessments(ctx, userSID)
 	assessments := reconcileStoreScanAssessments(scan, inventory.Families, providerRuns, previous)
 	publish := scanShouldPublish(scan, inventory)
-	input := storeScanPersistInput{Scan: scan, Inventory: inventory, ProviderRuns: providerRuns, Assessments: assessments, Publish: publish}
+	snapshot := snapshotFromScanResult(scan, inventory, providerRuns, assessments, publish)
 	if pipeline.BeforeCommit != nil {
-		if err := pipeline.BeforeCommit(ctx, input); err != nil {
+		if err := pipeline.BeforeCommit(ctx, snapshot); err != nil {
 			return StoreScanResult{Scan: scan, Inventory: inventory, ProviderRuns: providerRuns, Assessments: assessments}, err
 		}
 	}
-	published, err := pipeline.Store.PersistScan(ctx, input)
+	published, err := pipeline.Repository.PersistCompletedScanSnapshot(ctx, snapshot)
 	if err != nil {
 		return StoreScanResult{Scan: scan, Inventory: inventory, ProviderRuns: providerRuns, Assessments: assessments}, err
 	}
@@ -426,15 +422,11 @@ func scanShouldPublish(scan StoreScanGeneration, inventory StorePackagedAppInven
 }
 
 func (pipeline *StoreScanPipeline) previousAssessments(ctx context.Context, userSID string) (map[StoreInstalledIdentity]StorePublishedAssessment, error) {
-	previousRows, err := pipeline.Store.PublishedAssessments(ctx, userSID)
-	if err != nil {
+	snapshot, ok, err := pipeline.Repository.LoadLatestPublishedSnapshot(ctx, userSID)
+	if err != nil || !ok {
 		return nil, err
 	}
-	previous := map[StoreInstalledIdentity]StorePublishedAssessment{}
-	for _, assessment := range previousRows {
-		previous[assessment.Identity] = assessment
-	}
-	return previous, nil
+	return previousAssessmentsFromSnapshot(snapshot), nil
 }
 
 func reconcileStoreScanAssessments(scan StoreScanGeneration, families []StorePackagedAppFamily, providerRuns []StoreCatalogProviderRun, previous map[StoreInstalledIdentity]StorePublishedAssessment) []StorePublishedAssessment {
