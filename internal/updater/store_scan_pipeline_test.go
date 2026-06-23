@@ -1002,10 +1002,7 @@ func TestStoreScanInapplicableAndUnresolvedIdentity(t *testing.T) {
 	}
 }
 
-func TestStoreTransactionalScanFeatureFlagAndInventoryAdapter(t *testing.T) {
-	if !storeTransactionalScanEnabled() {
-		t.Fatal("transactional Store scan pipeline must be enabled by default after cutover")
-	}
+func TestStoreTransactionalScanInventoryAdapter(t *testing.T) {
 	state := defaultState()
 	pfn := "OpenAI.Codex_abc123"
 	inventory := Inventory{PackageLookup: PackageLookup{Packages: []Package{{

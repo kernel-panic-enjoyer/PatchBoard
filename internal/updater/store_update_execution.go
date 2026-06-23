@@ -300,9 +300,6 @@ func exactStoreUpdateExecutionProvider(productID, updateID string) (StoreProvide
 }
 
 func verifyPublishedStoreUpdateAssessment(ctx context.Context, request StoreExactUpdateRequest) error {
-	if !storeTransactionalScanEnabled() {
-		return nil
-	}
 	repository, err := openStoreTransactionalStoreForInventory()
 	if err != nil {
 		return fmt.Errorf("could not open Store assessment store: %w", err)

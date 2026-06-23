@@ -14,12 +14,11 @@ type managerInventory struct {
 }
 
 type inventoryInputs struct {
-	managerInventories      []managerInventory
-	appxPackages            []Package
-	appxResult              CommandResult
-	storePackagedInventory  StorePackagedAppInventory
-	storePackagedResult     CommandResult
-	storePackagedComparison StorePackagedInventoryComparison
+	managerInventories     []managerInventory
+	appxPackages           []Package
+	appxResult             CommandResult
+	storePackagedInventory StorePackagedAppInventory
+	storePackagedResult    CommandResult
 }
 
 var inventoryGetter = getInventory
@@ -35,14 +34,6 @@ func getInventory() Inventory {
 	commandResults["appx_inventory"] = inputs.appxResult
 	if inputs.storePackagedResult.Command != "" {
 		commandResults["native_store_inventory"] = inputs.storePackagedResult
-	}
-	if len(inputs.storePackagedComparison.MissingNativePFNs) > 0 ||
-		len(inputs.storePackagedComparison.MissingLegacyPFNs) > 0 ||
-		len(inputs.storePackagedComparison.VersionDifferences) > 0 ||
-		len(inputs.storePackagedComparison.ScopeDifferences) > 0 ||
-		len(inputs.storePackagedComparison.ClassificationNotes) > 0 ||
-		len(inputs.storePackagedComparison.NativeErrors) > 0 {
-		commandResults["native_store_inventory_compare"] = storePackagedInventoryComparisonResult(inputs.storePackagedComparison)
 	}
 	for _, inventory := range inputs.managerInventories {
 		commandResults[inventory.listKey] = inventory.listResult

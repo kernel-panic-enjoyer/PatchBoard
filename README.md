@@ -82,6 +82,3 @@ powershell -ExecutionPolicy Bypass -File .\dev\scripts\Smoke-Distribution.ps1 -E
 - Missing Store CLI opens Microsoft Store and Windows Update surfaces.
 - Missing Chocolatey installs through winget when winget is available; otherwise the app opens the Chocolatey install page.
 - State is stored under `%LOCALAPPDATA%\WindowsUpdaterWebUI` by default.
-- Emergency Store detector rollback for one release cycle is explicit:
-  `UPDATER_STORE_LEGACY_DETECTOR=1`. Without that flag, legacy Store display-name
-  resolution and fuzzy Store update heuristics do not produce update truth.

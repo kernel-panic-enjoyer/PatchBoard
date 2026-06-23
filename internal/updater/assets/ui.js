@@ -939,8 +939,8 @@
     }
     var health = storeScanHealth();
     if(!health.active){
-      setStoreHealthSummary('<span class="badge state-unknown">Legacy</span><span>Detailed Store status unavailable</span>');
-      target.innerHTML = storeManagerDetailsMarkup() + '<div class="health-summary"><span class="badge state-unknown">Legacy Store detector</span><span class="muted">New Store assessment fields are disabled.</span></div>';
+      setStoreHealthSummary('<span class="badge state-unknown">Pending</span><span>Store scan not published</span>');
+      target.innerHTML = storeManagerDetailsMarkup() + '<div class="health-summary"><span class="badge state-unknown">No scan</span><span class="muted">No Store scan assessment has been published yet.</span></div>';
       return;
     }
     var title = health.healthy ? "Store scan is complete enough to report Current." : "Store update status needs attention.";

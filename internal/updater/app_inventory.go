@@ -123,7 +123,7 @@ const storeScanCooldown = 5 * time.Minute
 // so, marks one in flight. It must be called with app.mu held and returns true
 // when the caller should launch app.runStoreScan in a goroutine.
 func (app *App) beginStoreScanLocked(force bool) bool {
-	if !app.storeBackgroundScanEnabled || !storeTransactionalScanEnabled() {
+	if !app.storeBackgroundScanEnabled {
 		return false
 	}
 	// A non-forced refresh within the cooldown window does not warrant a scan.
@@ -224,9 +224,7 @@ func (app *App) inventorySnapshot() InventoryResponse {
 		state := loadState()
 		response.Scan = inventoryScanSummary(state, managedScanSourceCounts(state))
 	}
-	if storeTransactionalScanEnabled() {
-		state := loadState()
-		response.Inventory = applyPublishedStoreScanAssessments(context.Background(), state, response.Inventory)
-	}
+	state := loadState()
+	response.Inventory = applyPublishedStoreScanAssessments(context.Background(), state, response.Inventory)
 	return response
 }

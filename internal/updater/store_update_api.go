@@ -112,7 +112,7 @@ func buildStoreScanHealthSummary(packages []Package, scanProviders []StorePackag
 	if !active {
 		return StoreScanHealthSummary{
 			Active:    false,
-			Reason:    "New Store assessment fields are disabled.",
+			Reason:    "No Store scan assessment has been published yet.",
 			Counts:    counts,
 			Providers: providers,
 		}

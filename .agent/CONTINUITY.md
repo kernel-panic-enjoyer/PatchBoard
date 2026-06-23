@@ -17,6 +17,8 @@
 - 2026-06-23T20:05:41+02:00 [USER] Active objective: continue on branch `debloat`, retire the old Microsoft Store display-name detector/fallback paths from the default production build, and keep exact Store scan/update behavior.
 - 2026-06-23T23:12:34+02:00 [USER] Active objective: remove unsupported Linux/POSIX test tooling, keep Windows PowerShell-only test/build docs, move table pagination to footers, restyle manager filters, and fix Store refresh/filter review findings.
 - 2026-06-23T23:16:55+02:00 [USER] Active objective: remove redundant duplicate manager/backend text from Installed Packages manager cells while preserving manager provenance elsewhere.
+- 2026-06-23T23:23:56+02:00 [USER] Active objective: improve architectural coherence and maintainability by removing old/legacy/unmigrated code, reducing redundancy, and keeping names self-explanatory without overengineering.
+- 2026-06-23T23:27:27+02:00 [USER] Active objective: continue improving maintainability with focused low-risk cleanup on top of the existing architecture-cleanup diff.
 
 [DECISIONS]
 
@@ -32,6 +34,8 @@
 - 2026-06-23T19:16:25+02:00 [CODE] Supersedes 2026-06-23T18:52:18 dual-write decision: production Store scan persistence is now file snapshots only; SQLite and modernc dependencies are removed from `go.mod`, `go.sum`, production code, and the built executable.
 - 2026-06-23T19:16:25+02:00 [CODE] Legacy `store-scans.sqlite` is cached evidence only; startup renames it to `.legacy-cache.<timestamp>` and does not import rows as Store truth. Durable settings remain in `state.json`.
 - 2026-06-23T20:05:41+02:00 [CODE] Store search remains available only for user-initiated installs; Store update detection/execution no longer has display-name resolution, `store-cli-resolved`, legacy Store package update fallback, legacy Store installed/update table parsers, or rollback flags that disable exact execution.
+- 2026-06-23T23:23:56+02:00 [CODE] Store transactional scan is an always-on production path; the constant-true runtime gate was removed rather than preserved as a fake feature flag.
+- 2026-06-23T23:23:56+02:00 [CODE] Native Store inventory no longer carries the migration-era native-vs-legacy AppX comparison path; the direct WinRT/AppModel inventory command result remains.
 
 [PROGRESS]
 
@@ -61,6 +65,8 @@
 - 2026-06-23T20:05:41+02:00 [CODE] Added `docs/reports/store-legacy-detector-retirement.md` and refreshed `docs/reports/binary-size-baseline.md` to document the current 14,665,728-byte production executable and absence of modernc/SQLite module linkage.
 - 2026-06-23T23:12:34+02:00 [CODE] Deleted `run-tests.sh`, updated docs to PowerShell-only test/build paths, moved search/update/installed pagination into bottom-right table footers, restyled native manager filters, derived manager filter options from rendered rows, and made update refresh wait for both inventory loading and Store scan completion.
 - 2026-06-23T23:16:55+02:00 [CODE] Installed Packages now calls `managerCell(pkg, {compact:true})`, showing only the manager badge and omitting the repeated backend/source line; update/search tables keep the fuller provenance display.
+- 2026-06-23T23:23:56+02:00 [CODE] Removed dead `StorePackagedInventoryComparison` code/tests, removed unused `StoreAssessmentToLegacyPackage`, removed unused `featureFlagEnabled`, renamed Store CLI retry helper to `storeUpdateWithoutApplyCommand`, removed stale rollback-flag README guidance, and changed no-scan UI/API copy from legacy-detector wording to unpublished-scan wording.
+- 2026-06-23T23:27:27+02:00 [CODE] Simplified `ReconcileStoreUpdate` by reusing its already-collected evidence/provider-health summary for decision returns, adding `storeProviderKey`, and replacing the duplicate observation-rescan helper with `storeAssessmentDecision`.
 
 [DISCOVERIES]
 
@@ -78,6 +84,7 @@
 - 2026-06-23T20:05:41+02:00 [TOOL] Retired Store detector checks returned no production/source matches outside the explicit retirement report for `resolveStoreAppxPackages`, `chooseStoreResolution`, `storeResolutionScore`, `runStoreSearchUpdateFallback`, `runStoreUpdatePackageWithFallbackContext`, `storeUpdateTargetCandidates`, `Get-AppxPackage -AllUsers`, `store-cli-resolved`, and retired `UPDATER_STORE_*` flags.
 - 2026-06-23T20:12:28+02:00 [TOOL] Distribution smoke passed on `dist\WindowsUpdaterWebUI.exe`; it reported Store inventory backend `go-winrt`, VP9 present, and VP9 `unknown` when aggregate `store-cli-updates` coverage was incomplete, preserving Unknown-not-Current behavior.
 - 2026-06-23T20:12:28+02:00 [TOOL] Safe live VP9 tests passed: exact provider reported VP9 current at `1.2.20.0` with Product ID `9N4D0MSMP0PT`; API stayed Unknown under incomplete aggregate coverage; exact PFN target produced authoritative negative while Product ID metadata resolved through WinGet.
+- 2026-06-23T23:23:56+02:00 [TOOL] Audit found `storePackagedComparison` was never populated, `StoreAssessmentToLegacyPackage` had no production callers, `featureFlagEnabled` had no callers, and `storeTransactionalScanEnabled` returned constant true; these were removed or inlined.
 
 [OUTCOMES]
 
@@ -100,3 +107,5 @@
 - 2026-06-23T20:12:28+02:00 [TOOL] Legacy Store detector retirement validation passed: `go mod tidy`, `go test -count=1 ./...`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, `dev/scripts/Build-Workspace.ps1`, distribution smoke, safe live VP9 Store tests, `git diff --check` with CRLF warnings only, binary retired-symbol/text checks, `go list -deps` and `go version -m` modernc/SQLite absence checks, and `Measure-BinarySize.ps1`. Rebuilt binary size is 14,665,728 bytes. Destructive live Store update execution was not run.
 - 2026-06-23T23:12:34+02:00 [TOOL] Windows-only tooling/UI-fix validation passed: `go test -count=1 ./...`, browser tests with `-tags uitestsupport`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check` with CRLF warnings only, no remaining repo references to Linux/POSIX/Bash wrappers, and `powershell -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe`.
 - 2026-06-23T23:16:55+02:00 [TOOL] Installed-manager-cell cleanup validation passed: `gofmt`, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests with `-tags uitestsupport`, and `powershell -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe`.
+- 2026-06-23T23:23:56+02:00 [TOOL] Architecture cleanup validation passed: `gofmt`, focused Store tests, `go test -count=1 ./...`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check` with CRLF warnings only, browser tests from `tests/browser` with `-tags uitestsupport` after one concurrent-run timeout passed on isolated rerun, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,679,040 bytes.
+- 2026-06-23T23:27:27+02:00 [TOOL] Reconciliation cleanup validation passed: focused `TestReconcileStoreUpdate`, `go test -count=1 ./...`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check` with CRLF warnings only, browser tests from `tests/browser` with `-tags uitestsupport`, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,675,456 bytes.

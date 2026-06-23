@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -92,11 +91,6 @@ type StorePackagedAppFamily struct {
 	Instances   []StorePackagedAppRecord `json:"instances"`
 	DisplayName string                   `json:"display_name,omitempty"`
 	ProductLike bool                     `json:"product_like"`
-}
-
-func featureFlagEnabled(name string) bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
-	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 var storePackagedAppInventoryProvider = defaultStorePackagedAppInventoryProvider

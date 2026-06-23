@@ -12,9 +12,6 @@ var (
 )
 
 func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inventory Inventory) Inventory {
-	if !storeTransactionalScanEnabled() {
-		return inventory
-	}
 	result, err := runStoreTransactionalScanForInventory(ctx)
 	if err != nil {
 		appLog("Store transactional scan failed: %s", err)
@@ -25,9 +22,6 @@ func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inven
 }
 
 func applyPublishedStoreScanAssessments(ctx context.Context, state State, inventory Inventory) Inventory {
-	if !storeTransactionalScanEnabled() {
-		return inventory
-	}
 	repository, openErr := openStoreTransactionalStoreForInventory()
 	if openErr != nil {
 		appLog("Could not open Store scan store: %s", openErr)

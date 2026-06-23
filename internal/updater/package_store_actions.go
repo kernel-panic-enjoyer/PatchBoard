@@ -8,7 +8,7 @@ func storeUpdateCommand(target string, apply bool) []string {
 	return managerCommand(managerStore, "update", target, "--apply", boolStoreCLIValue(apply))
 }
 
-func storeUpdateLegacyNoApplyCommand(target string) []string {
+func storeUpdateWithoutApplyCommand(target string) []string {
 	return managerCommand(managerStore, "update", target)
 }
 
@@ -50,7 +50,7 @@ func runStoreUpdateCommandWithApplyFallback(ctx context.Context, target string) 
 		return result
 	}
 	appLog("Store update command rejected --apply; retrying without that option.")
-	retry := runPackageActionCommand(ctx, managerStore, packageActionTimeout, storeUpdateLegacyNoApplyCommand(target)...)
+	retry := runPackageActionCommand(ctx, managerStore, packageActionTimeout, storeUpdateWithoutApplyCommand(target)...)
 	retry = normalizeStoreUpdateCommandResult(retry)
 	return mergeCommandResults(result, retry, "store update without apply flag")
 }

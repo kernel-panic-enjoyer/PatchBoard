@@ -60,10 +60,6 @@ type StoreScanResult struct {
 	Inventory    StorePackagedAppInventory
 }
 
-func storeTransactionalScanEnabled() bool {
-	return true
-}
-
 func defaultStoreScanPipeline(repository StoreScanRepository) *StoreScanPipeline {
 	managers := detectManagers()
 	storeVersion := managers[managerStore].Version

@@ -217,10 +217,7 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 			assessment.RejectedEvidenceCount++
 			continue
 		}
-		providerKey := observation.Provider.Key()
-		if providerKey == "" {
-			providerKey = "unknown"
-		}
+		providerKey := storeProviderKey(observation.Provider)
 		assessment.ProviderHealth[providerKey] = observation.Health
 		assessment.Evidence = append(assessment.Evidence, StoreEvidenceSummary{
 			Provider: providerKey,
@@ -263,13 +260,13 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 	}
 
 	if len(positives) > 0 && (len(negatives) > 0 || len(inapplicable) > 0) {
-		return storeAssessmentFromObservation(StoreUpdateConflict, input, positives[0], "healthy providers disagree")
+		return storeAssessmentDecision(assessment, StoreUpdateConflict, positives[0], "healthy providers disagree")
 	}
 	if len(positives) > 0 {
-		return storeAssessmentFromObservation(StoreUpdateAvailable, input, positives[0], "fresh exact positive update evidence")
+		return storeAssessmentDecision(assessment, StoreUpdateAvailable, positives[0], "fresh exact positive update evidence")
 	}
 	if len(positivesWithoutTarget) > 0 {
-		return storeAssessmentFromObservation(StoreUpdateUnknown, input, positivesWithoutTarget[0], "positive update evidence has no exact verified target")
+		return storeAssessmentDecision(assessment, StoreUpdateUnknown, positivesWithoutTarget[0], "positive update evidence has no exact verified target")
 	}
 	for provider := range required {
 		if !requiredSeen[provider] {
@@ -282,20 +279,20 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 		return assessment
 	}
 	if blockedProvider != "" {
-		return storeAssessmentFromObservation(StoreUpdateUnknown, input, blockedObservation, "provider incomplete or failed: "+blockedProvider)
+		return storeAssessmentDecision(assessment, StoreUpdateUnknown, blockedObservation, "provider incomplete or failed: "+blockedProvider)
 	}
 	if len(pending) > 0 {
-		return storeAssessmentFromObservation(StoreUpdatePending, input, pending[0], "update is pending verification")
+		return storeAssessmentDecision(assessment, StoreUpdatePending, pending[0], "update is pending verification")
 	}
 	if len(inapplicable) > 0 {
-		return storeAssessmentFromObservation(StoreUpdateInapplicable, input, inapplicable[0], "newer catalog version has no applicable installer")
+		return storeAssessmentDecision(assessment, StoreUpdateInapplicable, inapplicable[0], "newer catalog version has no applicable installer")
 	}
 	if !scanComplete {
 		assessment.Reason = "scan generation is incomplete"
 		return assessment
 	}
 	if allRequiredProvidersNegative(required, negatives) {
-		return storeAssessmentFromObservation(StoreUpdateCurrent, input, negatives[0], "all required providers returned authoritative negatives")
+		return storeAssessmentDecision(assessment, StoreUpdateCurrent, negatives[0], "all required providers returned authoritative negatives")
 	}
 
 	assessment.Reason = "evidence is not authoritative"
@@ -310,6 +307,13 @@ func requiredProviderSet(providers []StoreProviderIdentity) map[string]bool {
 		}
 	}
 	return required
+}
+
+func storeProviderKey(provider StoreProviderIdentity) string {
+	if key := provider.Key(); key != "" {
+		return key
+	}
+	return "unknown"
 }
 
 func observationBlocksAssessment(observation StoreProviderObservation) bool {
@@ -334,7 +338,7 @@ func allRequiredProvidersNegative(required map[string]bool, negatives []StorePro
 	}
 	seen := map[string]bool{}
 	for _, negative := range negatives {
-		seen[negative.Provider.Key()] = true
+		seen[storeProviderKey(negative.Provider)] = true
 	}
 	for provider := range required {
 		if !seen[provider] {
@@ -344,48 +348,11 @@ func allRequiredProvidersNegative(required map[string]bool, negatives []StorePro
 	return true
 }
 
-func storeAssessmentFromObservation(state StoreUpdateState, input StoreReconciliationInput, observation StoreProviderObservation, reason string) StoreUpdateAssessment {
-	assessment := StoreUpdateAssessment{
-		State:            state,
-		Identity:         input.Identity,
-		ScanID:           input.Scan.ScanID,
-		Reason:           reason,
-		InstalledVersion: observation.InstalledVersion,
-		AvailableVersion: observation.AvailableVersion,
-		Target:           observation.Target,
-		ProviderHealth:   map[string]StoreProviderHealth{},
-	}
-	for _, candidate := range input.Observations {
-		if !candidate.Matches(input.Identity, input.Scan) {
-			assessment.RejectedEvidenceCount++
-			continue
-		}
-		providerKey := candidate.Provider.Key()
-		if providerKey == "" {
-			providerKey = "unknown"
-		}
-		assessment.ProviderHealth[providerKey] = candidate.Health
-		assessment.Evidence = append(assessment.Evidence, StoreEvidenceSummary{
-			Provider: providerKey,
-			Health:   candidate.Health,
-			Kind:     candidate.Kind,
-		})
-	}
+func storeAssessmentDecision(assessment StoreUpdateAssessment, state StoreUpdateState, observation StoreProviderObservation, reason string) StoreUpdateAssessment {
+	assessment.State = state
+	assessment.Reason = reason
+	assessment.InstalledVersion = observation.InstalledVersion
+	assessment.AvailableVersion = observation.AvailableVersion
+	assessment.Target = observation.Target
 	return assessment
-}
-
-func StoreAssessmentToLegacyPackage(pkg Package, assessment StoreUpdateAssessment) Package {
-	pkg.UpdateAvailable = assessment.State == StoreUpdateAvailable
-	if assessment.AvailableVersion != "" {
-		pkg.AvailableVersion = assessment.AvailableVersion
-	} else if !pkg.UpdateAvailable {
-		pkg.AvailableVersion = ""
-	}
-	switch assessment.State {
-	case StoreUpdateAvailable, StoreUpdateCurrent:
-		pkg.UpdateSupported = true
-	default:
-		pkg.UpdateSupported = false
-	}
-	return pkg
 }

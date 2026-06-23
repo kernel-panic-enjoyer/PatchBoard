@@ -269,47 +269,6 @@ func TestReconcileStoreUpdate(t *testing.T) {
 	}
 }
 
-func TestStoreAssessmentToLegacyPackage(t *testing.T) {
-	base := Package{
-		Key:             "store:OpenAI.Codex_123abc",
-		Manager:         managerStore,
-		ID:              "OpenAI.Codex_123abc",
-		Name:            "Codex",
-		Version:         "1.0.0",
-		UpdateSupported: true,
-	}
-	identity := StoreInstalledIdentity{UserSID: "S-1-5-21-test-1001", PackageFamilyName: "OpenAI.Codex_123abc"}
-
-	tests := []struct {
-		state               StoreUpdateState
-		wantUpdateAvailable bool
-		wantUpdateSupported bool
-	}{
-		{StoreUpdateAvailable, true, true},
-		{StoreUpdateCurrent, false, true},
-		{StoreUpdateUnknown, false, false},
-		{StoreUpdateConflict, false, false},
-		{StoreUpdateInapplicable, false, false},
-		{StoreUpdatePending, false, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.state), func(t *testing.T) {
-			got := StoreAssessmentToLegacyPackage(base, StoreUpdateAssessment{
-				State:            tt.state,
-				Identity:         identity,
-				AvailableVersion: "1.1.0",
-			})
-			if got.UpdateAvailable != tt.wantUpdateAvailable {
-				t.Fatalf("UpdateAvailable = %v, want %v", got.UpdateAvailable, tt.wantUpdateAvailable)
-			}
-			if got.UpdateSupported != tt.wantUpdateSupported {
-				t.Fatalf("UpdateSupported = %v, want %v", got.UpdateSupported, tt.wantUpdateSupported)
-			}
-		})
-	}
-}
-
 func completedStoreScan(scanID, userSID string, providers ...StoreProviderIdentity) StoreScanGeneration {
 	started := time.Date(2026, 6, 21, 10, 0, 0, 0, time.UTC)
 	providerVersions := map[string]string{}

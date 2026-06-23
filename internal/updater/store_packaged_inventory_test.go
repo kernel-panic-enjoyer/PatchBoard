@@ -93,36 +93,6 @@ func TestNewStorePackagedAppScanRecordsSystemContext(t *testing.T) {
 	}
 }
 
-func TestCompareStorePackagedInventoryDiagnostics(t *testing.T) {
-	userSID := "S-1-5-21-test-1001"
-	native := StorePackagedAppInventory{
-		Records: []StorePackagedAppRecord{
-			testNativeRecord(userSID, "Native.Only_abc", "Native.Only_1.0.0.0_x64__abc", "Native Only", StorePackageVersion{Major: 1}, storePackageClassMain),
-			testNativeRecord(userSID, "Version.Diff_abc", "Version.Diff_2.0.0.0_x64__abc", "Version Diff", StorePackageVersion{Major: 2}, storePackageClassMain),
-			testNativeRecord(userSID, "Framework.Lib_abc", "Framework.Lib_1.0.0.0_x64__abc", "Framework", StorePackageVersion{Major: 1}, storePackageClassFramework),
-		},
-	}
-	native.Families = groupStorePackagedAppFamilies(native.Records)
-	legacy := []Package{
-		{Match: "Legacy.Only_abc", Version: "1.0.0.0"},
-		{Match: "Version.Diff_abc", Version: "1.0.0.0"},
-		{Match: "Framework.Lib_abc", Version: "1.0.0.0"},
-	}
-	comparison := compareStorePackagedInventory(native, legacy, CommandResult{OK: true})
-	if !storeInventoryContainsString(comparison.MissingNativePFNs, "Legacy.Only_abc") {
-		t.Fatalf("missing native diagnostics absent: %#v", comparison)
-	}
-	if !storeInventoryContainsString(comparison.MissingLegacyPFNs, "Native.Only_abc") {
-		t.Fatalf("missing legacy diagnostics absent: %#v", comparison)
-	}
-	if len(comparison.VersionDifferences) != 1 || !strings.Contains(comparison.VersionDifferences[0], "Version.Diff_abc") {
-		t.Fatalf("version diagnostics absent: %#v", comparison)
-	}
-	if len(comparison.ClassificationNotes) != 1 || !strings.Contains(comparison.ClassificationNotes[0], "Framework.Lib_abc") {
-		t.Fatalf("classification diagnostics absent: %#v", comparison)
-	}
-}
-
 func TestWinRTStorePackagedAppInventoryProviderTimeoutAndPartialErrors(t *testing.T) {
 	scan := testNativeInventoryScan("scan-1", "S-1-5-21-test-1001")
 	provider := winrtStorePackagedAppInventoryProvider{
@@ -216,13 +186,4 @@ func testNativeRecord(userSID, pfn, fullName, display string, version StorePacka
 	}
 	record.Classification = classifyStorePackagedApp(record)
 	return record
-}
-
-func storeInventoryContainsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
