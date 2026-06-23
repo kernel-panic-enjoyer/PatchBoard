@@ -1,3 +1,17 @@
+//go:build storelive
+
+// Destructive / live Microsoft Store integration tests.
+//
+// These tests are isolated behind the "storelive" build tag so they are
+// excluded from the default `go test ./...` suite, and each additionally
+// preserves its explicit opt-in environment gate (UPDATER_RUN_STORE_LIVE_* /
+// UPDATER_APPLY_STORE_LIVE_UPDATE). Run them with, e.g.:
+//
+//	go test -tags storelive ./internal/updater/ -run TestLive -count=1
+//
+// The non-destructive parseStoreCLIVersion regression lives in
+// store_cli_version_test.go so it keeps running in the default suite.
+
 package updater
 
 import (
@@ -17,13 +31,6 @@ const (
 	liveStoreVP9PackageFamilyName = "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	liveStoreVP9ProductID         = "9N4D0MSMP0PT"
 )
-
-func TestParseStoreCLIVersion(t *testing.T) {
-	output := "██████╗ ████████╗\n\nv22605.1401.12.0 - Preview\n"
-	if got := parseStoreCLIVersion(output); got != "v22605.1401.12.0" {
-		t.Fatalf("version = %q", got)
-	}
-}
 
 func TestLiveStoreCLIExactVP9Assessment(t *testing.T) {
 	if os.Getenv("UPDATER_RUN_STORE_LIVE_TESTS") != "1" {
@@ -340,21 +347,6 @@ func firstLine(value string) string {
 	}
 	line, _, _ := strings.Cut(value, "\n")
 	return strings.TrimSpace(line)
-}
-
-func parseStoreCLIVersion(output string) string {
-	for _, raw := range strings.Split(output, "\n") {
-		for _, field := range strings.Fields(strings.TrimSpace(raw)) {
-			field = strings.Trim(field, ",;()[]")
-			if len(field) < 2 || field[0] != 'v' {
-				continue
-			}
-			if field[1] >= '0' && field[1] <= '9' {
-				return field
-			}
-		}
-	}
-	return ""
 }
 
 func liveCommandOutput(ctx context.Context, args ...string) string {

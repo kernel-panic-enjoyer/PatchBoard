@@ -1,0 +1,8 @@
+Update available
+Product ID : 9N4D0MSMP0PT
+PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
+Available Version : 1.2.20.0
+
+Product ID : 9NUNMATCHED
+PFN : Vendor.NotInstalled_12345
+Available Version : 2.0.0

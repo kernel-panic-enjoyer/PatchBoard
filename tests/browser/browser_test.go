@@ -1,4 +1,16 @@
-package updater
+// Package browser holds the chromedp-driven, browser-level UI tests for the
+// Windows Updater Web UI.
+//
+// These tests live in a SEPARATE Go module (windows-updater-webui/tests/browser)
+// so that chromedp and cdproto stay out of the production module's dependency
+// graph. They drive the app as a black-box consumer of the exported test-support
+// surface in internal/updater/uitestsupport.go, and therefore must be built with
+// the matching build tag, e.g.:
+//
+//	go test -tags uitestsupport ./...
+//
+// Each test self-skips when no Chromium/Edge browser is available.
+package browser
 
 import (
 	"context"
@@ -16,9 +28,11 @@ import (
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
+
+	updater "windows-updater-webui/internal/updater"
 )
 
-const browserTestToken = "browser-bootstrap-token"
+const browserTestToken = updater.BrowserTestToken
 
 func newBrowserContext(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
@@ -78,35 +92,9 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func newBrowserTestApp() *App {
-	now := time.Now()
-	return &App{
-		token:        browserTestToken,
-		sessionToken: "browser-session-token",
-		status: StatusResponse{Managers: map[string]ManagerStatus{
-			managerWinget: {Available: true, Version: "v1.test", Path: "winget.exe"},
-			managerStore:  {Available: true, Path: "store.exe", InventoryAvailable: true, InventoryBackend: inventoryBackendAppX, ActionBackend: backendStoreCLI},
-			managerChoco:  {Available: true, Version: "2.test", Path: "choco.exe"},
-		}},
-		statusFetchedAt: now,
-		inventory: Inventory{PackageLookup: PackageLookup{
-			Managers: map[string]ManagerStatus{
-				managerWinget: {Available: true, Version: "v1.test", Path: "winget.exe"},
-				managerStore:  {Available: true, Path: "store.exe", InventoryAvailable: true, InventoryBackend: inventoryBackendAppX, ActionBackend: backendStoreCLI},
-				managerChoco:  {Available: true, Version: "2.test", Path: "choco.exe"},
-			},
-			Packages: []Package{
-				{Key: "winget:Test.App", Manager: managerWinget, ID: "Test.App", Name: "Browser Test App", Version: "1.0.0", AvailableVersion: "1.1.0", UpdateAvailable: true, UpdateSupported: true, Installed: true, Source: sourceWinget},
-				{Key: "choco:current", Manager: managerChoco, ID: "current", Name: "Current Tool", Version: "2.0.0", AvailableVersion: "2.0.0", UpdateSupported: true, Installed: true, Source: managerChoco},
-			},
-		}},
-		inventoryFetchedAt: now,
-	}
-}
-
-func startBrowserTestServer(t *testing.T, app *App) *httptest.Server {
+func startBrowserTestServer(t *testing.T, app *updater.App) *httptest.Server {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(app.serveHTTP))
+	server := httptest.NewServer(app.TestHandler())
 	t.Cleanup(server.Close)
 	return server
 }
@@ -135,7 +123,7 @@ func waitForText(t *testing.T, ctx context.Context, selector, want string) strin
 }
 
 func TestBrowserAuthBootstrapURLCleanupAndSecurityHeaders(t *testing.T) {
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -177,7 +165,7 @@ func TestBrowserAuthBootstrapURLCleanupAndSecurityHeaders(t *testing.T) {
 }
 
 func TestBrowserStopButtonUsesAsyncShutdownRequest(t *testing.T) {
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -205,51 +193,43 @@ func TestBrowserStopButtonUsesAsyncShutdownRequest(t *testing.T) {
 }
 
 func TestBrowserSearchShowsPartialFailuresAndProvenance(t *testing.T) {
-	restoreManagers := replaceManagerDetectionCache(map[string]ManagerStatus{
-		managerWinget: {Available: true},
-		managerStore:  {Available: true},
-		managerChoco:  {Available: true},
+	restoreManagers := updater.ReplaceManagerDetectionCacheForTest(map[string]updater.ManagerStatus{
+		updater.ManagerWinget: {Available: true},
+		updater.ManagerStore:  {Available: true},
+		updater.ManagerChoco:  {Available: true},
 	})
 	defer restoreManagers()
-	restoreSearch := replacePackageSearchRunnersForTest([]packageSearchRunner{
-		{managerWinget, func(string) packageSearchResult {
-			return packageSearchResult{ResultKey: managerWinget, CommandResult: CommandResult{Command: "winget search gh", Code: 1, Stderr: "winget source unavailable"}}
+	restoreSearch := updater.ReplacePackageSearchRunnersForTest([]updater.StubSearchResult{
+		{Manager: updater.ManagerWinget, Run: func(string) (updater.CommandResult, []updater.Package) {
+			return updater.CommandResult{Command: "winget search gh", Code: 1, Stderr: "winget source unavailable"}, nil
 		}},
-		{managerStore, func(string) packageSearchResult {
-			return packageSearchResult{
-				ResultKey:     managerStore,
-				CommandResult: CommandResult{OK: true, Command: "store search gh"},
-				Packages: []Package{{
-					Key:           "store:GitHubCLI",
-					Manager:       managerStore,
-					ID:            "GitHubCLI",
-					Name:          "GitHub CLI Store",
-					Version:       "1.0.0",
-					Source:        sourceStoreCLI,
-					ActionBackend: backendStoreCLI,
-					MatchReason:   "Package name contains the search text.",
-				}},
-			}
+		{Manager: updater.ManagerStore, Run: func(string) (updater.CommandResult, []updater.Package) {
+			return updater.CommandResult{OK: true, Command: "store search gh"}, []updater.Package{{
+				Key:           "store:GitHubCLI",
+				Manager:       updater.ManagerStore,
+				ID:            "GitHubCLI",
+				Name:          "GitHub CLI Store",
+				Version:       "1.0.0",
+				Source:        updater.SourceStoreCLI,
+				ActionBackend: updater.ActionBackendStoreCLI,
+				MatchReason:   "Package name contains the search text.",
+			}}
 		}},
-		{managerChoco, func(string) packageSearchResult {
-			return packageSearchResult{
-				ResultKey:     managerChoco,
-				CommandResult: CommandResult{OK: true, Command: "choco search gh"},
-				Packages: []Package{{
-					Key:         "choco:gh",
-					Manager:     managerChoco,
-					ID:          "gh",
-					Name:        "GitHub CLI",
-					Version:     "2.0.0",
-					Source:      managerChoco,
-					MatchReason: "Exact package ID match.",
-				}},
-			}
+		{Manager: updater.ManagerChoco, Run: func(string) (updater.CommandResult, []updater.Package) {
+			return updater.CommandResult{OK: true, Command: "choco search gh"}, []updater.Package{{
+				Key:         "choco:gh",
+				Manager:     updater.ManagerChoco,
+				ID:          "gh",
+				Name:        "GitHub CLI",
+				Version:     "2.0.0",
+				Source:      updater.ManagerChoco,
+				MatchReason: "Exact package ID match.",
+			}}
 		}},
 	})
 	defer restoreSearch()
 
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -277,14 +257,14 @@ func TestBrowserSearchShowsPartialFailuresAndProvenance(t *testing.T) {
 func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 	started := make(chan struct{})
 	var startedOnce sync.Once
-	restore := replaceUpdateJobHooksWithRefresh(func(ctx context.Context, manager, id string) CommandResult {
+	restore := updater.ReplaceUpdateJobHooksWithRefresh(func(ctx context.Context, manager, id string) updater.CommandResult {
 		startedOnce.Do(func() { close(started) })
 		<-ctx.Done()
-		return CommandResult{Command: "update " + id, Code: commandCancelledCode, Stderr: "Cancelled."}
-	}, func(app *App) {})
+		return updater.CommandResult{Command: "update " + id, Code: updater.CommandCancelledCode, Stderr: "Cancelled."}
+	}, func(app *updater.App) {})
 	defer restore()
 
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -346,8 +326,8 @@ func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		status := app.latestOperationJobStatus(jobTypeUpdateAll, jobTypeUpdate)
-		if status.State == jobStateCancelled || status.CancelRequested {
+		status := app.LatestUpdateJobStatus()
+		if status.State == updater.JobStateCancelled || status.CancelRequested {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -356,31 +336,31 @@ func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 }
 
 func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	var packageRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/packages":
-			setSecurityHeaders(w)
-			if !app.sessionOK(r) {
+			updater.SetTestSecurityHeaders(w)
+			if !app.TestSessionOK(r) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 			count := packageRequests.Add(1)
 			if count == 1 {
 				time.Sleep(700 * time.Millisecond)
-				writeJSON(w, http.StatusOK, InventoryResponse{Inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:old", Manager: managerWinget, ID: "old", Name: "Stale Package", Installed: true}}}}})
+				updater.WriteTestJSON(w, http.StatusOK, updater.InventoryResponse{Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{Packages: []updater.Package{{Key: "winget:old", Manager: updater.ManagerWinget, ID: "old", Name: "Stale Package", Installed: true}}}}})
 				return
 			}
-			writeJSON(w, http.StatusOK, InventoryResponse{Inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:new", Manager: managerWinget, ID: "new", Name: "Fresh Package", Installed: true}}}}})
+			updater.WriteTestJSON(w, http.StatusOK, updater.InventoryResponse{Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{Packages: []updater.Package{{Key: "winget:new", Manager: updater.ManagerWinget, ID: "new", Name: "Fresh Package", Installed: true}}}}})
 		case "/api/inventory/refresh":
-			setSecurityHeaders(w)
-			writeJSON(w, http.StatusAccepted, OperationJobStatus{JobID: "refresh-job", Type: jobTypeInventoryRefresh, State: jobStateSucceeded, Total: 1, Notice: "Package status refreshed."})
+			updater.SetTestSecurityHeaders(w)
+			updater.WriteTestJSON(w, http.StatusAccepted, updater.OperationJobStatus{JobID: "refresh-job", Type: updater.JobTypeInventoryRefresh, State: updater.JobStateSucceeded, Total: 1, Notice: "Package status refreshed."})
 		case "/api/jobs/status":
-			setSecurityHeaders(w)
-			writeJSON(w, http.StatusOK, OperationJobStatus{JobID: "refresh-job", Type: jobTypeInventoryRefresh, State: jobStateSucceeded, Total: 1, Notice: "Package status refreshed."})
+			updater.SetTestSecurityHeaders(w)
+			updater.WriteTestJSON(w, http.StatusOK, updater.OperationJobStatus{JobID: "refresh-job", Type: updater.JobTypeInventoryRefresh, State: updater.JobStateSucceeded, Total: 1, Notice: "Package status refreshed."})
 		default:
-			app.serveHTTP(w, r)
+			app.TestHandler()(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -409,32 +389,28 @@ func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
 }
 
 func TestBrowserKeyboardAccessibilityAndMobileLayout(t *testing.T) {
-	restoreManagers := replaceManagerDetectionCache(map[string]ManagerStatus{
-		managerWinget: {Available: false, Error: "winget unavailable"},
-		managerStore:  {Available: false, Error: "store unavailable"},
-		managerChoco:  {Available: true},
+	restoreManagers := updater.ReplaceManagerDetectionCacheForTest(map[string]updater.ManagerStatus{
+		updater.ManagerWinget: {Available: false, Error: "winget unavailable"},
+		updater.ManagerStore:  {Available: false, Error: "store unavailable"},
+		updater.ManagerChoco:  {Available: true},
 	})
 	defer restoreManagers()
-	restoreSearch := replacePackageSearchRunnersForTest([]packageSearchRunner{
-		{managerChoco, func(string) packageSearchResult {
-			return packageSearchResult{
-				ResultKey:     managerChoco,
-				CommandResult: CommandResult{OK: true, Command: "choco search keyboard"},
-				Packages: []Package{{
-					Key:         "choco:keyboard-tool",
-					Manager:     managerChoco,
-					ID:          "keyboard-tool",
-					Name:        "Keyboard Tool",
-					Version:     "1.0.0",
-					Source:      managerChoco,
-					MatchReason: "Package name contains the search text.",
-				}},
-			}
+	restoreSearch := updater.ReplacePackageSearchRunnersForTest([]updater.StubSearchResult{
+		{Manager: updater.ManagerChoco, Run: func(string) (updater.CommandResult, []updater.Package) {
+			return updater.CommandResult{OK: true, Command: "choco search keyboard"}, []updater.Package{{
+				Key:         "choco:keyboard-tool",
+				Manager:     updater.ManagerChoco,
+				ID:          "keyboard-tool",
+				Name:        "Keyboard Tool",
+				Version:     "1.0.0",
+				Source:      updater.ManagerChoco,
+				MatchReason: "Package name contains the search text.",
+			}}
 		}},
 	})
 	defer restoreSearch()
 
-	app := newBrowserTestApp()
+	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -523,30 +499,4 @@ func browserAccessibilityScanScript() string {
   });
   return issues;
 })()`
-}
-
-func replaceManagerDetectionCache(managers map[string]ManagerStatus) func() {
-	managerDetectionCache.mu.Lock()
-	oldCached := managerDetectionCache.cached
-	oldFetchedAt := managerDetectionCache.fetchedAt
-	oldInFlight := managerDetectionCache.inFlight
-	managerDetectionCache.cached = cloneManagerStatuses(managers)
-	managerDetectionCache.fetchedAt = time.Now()
-	managerDetectionCache.inFlight = nil
-	managerDetectionCache.mu.Unlock()
-	return func() {
-		managerDetectionCache.mu.Lock()
-		managerDetectionCache.cached = oldCached
-		managerDetectionCache.fetchedAt = oldFetchedAt
-		managerDetectionCache.inFlight = oldInFlight
-		managerDetectionCache.mu.Unlock()
-	}
-}
-
-func replacePackageSearchRunnersForTest(runners []packageSearchRunner) func() {
-	old := packageSearchRunners
-	packageSearchRunners = runners
-	return func() {
-		packageSearchRunners = old
-	}
 }

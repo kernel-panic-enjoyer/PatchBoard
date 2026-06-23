@@ -68,7 +68,7 @@ Failed to read input in non-interactive mode.`,
 		},
 		{
 			name:   "german prompt only",
-			output: "Updates werden gesucht...\nMöchten Sie das Update jetzt installieren? [j/n] (j):",
+			output: loadStoreCLIFixture(t, storeCLIFixtureVersion, "de-DE", "update-prompt.txt"),
 			want:   StoreObservationPositiveUpdateOffer,
 		},
 		{
@@ -140,6 +140,7 @@ func TestParseStoreCLIUpdateCheckNegativePhrasesNeverBecomePositive(t *testing.T
 }
 
 func TestParseStoreCLIUpdateCheckResultCommandFailures(t *testing.T) {
+	noninteractivePositive := loadStoreCLIFixture(t, storeCLIFixtureVersion, "en-US", "update-available-noninteractive.txt")
 	tests := []struct {
 		name    string
 		output  string
@@ -150,7 +151,7 @@ func TestParseStoreCLIUpdateCheckResultCommandFailures(t *testing.T) {
 	}{
 		{
 			name:   "positive plus allowed prompt failure",
-			output: "Update available for 'VP9-Videoerweiterungen'\nFailed to read input in non-interactive mode.",
+			output: noninteractivePositive,
 			result: CommandResult{OK: true},
 			want:   StoreObservationPositiveUpdateOffer,
 		},
@@ -419,6 +420,7 @@ func TestParseStoreCLIUpdateCheckRequiresTrustworthyCommandOutcome(t *testing.T)
 }
 
 func TestParseStoreCLIUpdatesOutput(t *testing.T) {
+	vp9Offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
 	tests := []struct {
 		name      string
 		output    string
@@ -438,25 +440,13 @@ func TestParseStoreCLIUpdatesOutput(t *testing.T) {
 			wantErr:  true,
 		},
 		{
-			name: "exact offer",
-			output: `Checking for updates...
-
-Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`,
+			name:      "exact offer",
+			output:    "Checking for updates...\n\n" + vp9Offer,
 			wantCount: 1,
 		},
 		{
-			name: "contradictory no updates with exact offer",
-			output: `Checking for updates...
-
-No updates found.
-
-Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`,
+			name:      "contradictory no updates with exact offer",
+			output:    "Checking for updates...\n\nNo updates found.\n\n" + vp9Offer,
 			wantNone:  true,
 			wantCount: 1,
 			wantErr:   true,
@@ -645,11 +635,7 @@ Product ID : 9NMALFORMED`,
 }
 
 func TestParseStoreCLIUpdatesOutputInapplicableExactOffer(t *testing.T) {
-	got, err := parseStoreCLIUpdatesOutput(`Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0
-Applicability : No applicable installer`)
+	got, err := parseStoreCLIUpdatesOutput(loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available-inapplicable.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -908,13 +894,11 @@ func TestStoreCLIUpdatesProviderRequiresExactIdentifiersForPositive(t *testing.T
 		CompletionStatus: StoreScanCompleted,
 	}
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: offer}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, testStoreInventory(scan, pfn, "1.2.13.0").Families)
@@ -941,14 +925,11 @@ func TestStoreCLIUpdatesProviderExactInapplicableOffer(t *testing.T) {
 		CompletionStatus: StoreScanCompleted,
 	}
 	pfn := "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
+	inapplicableOffer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available-inapplicable.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0
-Applicability : No applicable installer`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: inapplicableOffer}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, testStoreInventory(scan, pfn, "1.2.13.0").Families)
@@ -980,13 +961,11 @@ func TestStoreCLIUpdatesProviderExactOffersReturnNegativesForUnlistedPFNs(t *tes
 	current := testStoreInventory(scan, currentPFN, "11.0.0.0")
 	inventory.Records = append(inventory.Records, current.Records...)
 	inventory.Families = groupStorePackagedAppFamilies(inventory.Records)
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second), scan.StartedAt.Add(2*time.Second), scan.StartedAt.Add(3*time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: offer}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, inventory.Families)
@@ -1021,13 +1000,11 @@ func TestStoreCLIUpdatesProviderAdjacentPFNFirstOffers(t *testing.T) {
 	calc := testStoreInventory(scan, calcPFN, "11.0.0.0")
 	inventory.Records = append(inventory.Records, calc.Records...)
 	inventory.Families = groupStorePackagedAppFamilies(inventory.Records)
+	adjacentOffers := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "adjacent-pfn-first-offers.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second), scan.StartedAt.Add(2*time.Second), scan.StartedAt.Add(3*time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-PFN : Microsoft.WindowsCalculator_8wekyb3d8bbwe
-Product ID : 9NCALC`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: adjacentOffers}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, inventory.Families)
@@ -1062,17 +1039,11 @@ func TestStoreCLIUpdatesProviderUnmatchedOfferMakesCoverageIncomplete(t *testing
 	current := testStoreInventory(scan, currentPFN, "11.0.0.0")
 	inventory.Records = append(inventory.Records, current.Records...)
 	inventory.Families = groupStorePackagedAppFamilies(inventory.Records)
+	unmatchedSecondOffer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "unmatched-second-offer.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second), scan.StartedAt.Add(2*time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0
-
-Product ID : 9NUNMATCHED
-PFN : Vendor.NotInstalled_12345
-Available Version : 2.0.0`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: unmatchedSecondOffer}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, inventory.Families)
@@ -1089,27 +1060,20 @@ Available Version : 2.0.0`}
 }
 
 func TestStoreCLIUpdatesProviderExactOfferWithFatalErrorKeepsPositiveWithoutNegatives(t *testing.T) {
-	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{OK: true, Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0
-Error: another Store product could not be inspected`})
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
+	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{OK: true, Stdout: offer + "\nError: another Store product could not be inspected"})
 	assertAggregatePositiveIncompleteNoNegatives(t, run)
 }
 
 func TestStoreCLIUpdatesProviderExactOfferWithTimeoutKeepsPositiveWithoutNegatives(t *testing.T) {
-	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{Code: 124, Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`, Stderr: "timeout"})
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
+	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{Code: 124, Stdout: offer, Stderr: "timeout"})
 	assertAggregatePositiveIncompleteNoNegatives(t, run)
 }
 
 func TestStoreCLIUpdatesProviderExactOfferWithCancellationKeepsPositiveWithoutNegatives(t *testing.T) {
-	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{Code: commandCancelledCode, Stdout: `Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`, Stderr: "cancelled"})
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
+	run := runStoreCLIUpdatesProviderTwoPFNs(t, CommandResult{Code: commandCancelledCode, Stdout: offer, Stderr: "cancelled"})
 	assertAggregatePositiveIncompleteNoNegatives(t, run)
 }
 
@@ -1233,15 +1197,11 @@ func TestStoreCLIUpdatesProviderContradictoryNoUpdatesKeepsExactPositiveIncomple
 	current := testStoreInventory(scan, currentPFN, "11.0.0.0")
 	inventory.Records = append(inventory.Records, current.Records...)
 	inventory.Families = groupStorePackagedAppFamilies(inventory.Records)
+	offer := loadStoreCLIFixture(t, storeCLIFixtureVersion, "neutral", "vp9-update-available.txt")
 	provider := storeCLIUpdatesCatalogProvider{
 		Now: fixedPipelineTimes(scan.StartedAt, scan.StartedAt.Add(time.Second), scan.StartedAt.Add(2*time.Second)),
 		Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
-			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: `No updates found.
-
-Update available
-Product ID : 9N4D0MSMP0PT
-PFN : Microsoft.VP9VideoExtensions_8wekyb3d8bbwe
-Available Version : 1.2.20.0`}
+			return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: "No updates found.\n\n" + offer}
 		},
 	}
 	run := provider.Observe(context.Background(), scan, inventory.Families)
