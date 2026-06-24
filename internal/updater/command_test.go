@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestManagerCommandOverride(t *testing.T) {
@@ -377,6 +378,54 @@ func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) 
 	entries := sessionLogs.Since(0)
 	if len(entries) != 1 || entries[0].Message != "Done" {
 		t.Fatalf("expected only final log line, got %#v", entries)
+	}
+}
+
+func TestBoundedOutputTailRetainsNewestOutputWithMarker(t *testing.T) {
+	tail := newBoundedOutputTail(12)
+	if _, err := tail.Write([]byte("first line\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tail.Write([]byte("second line\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := tail.String()
+	if !strings.Contains(got, "[output truncated: omitted ") {
+		t.Fatalf("expected truncation marker, got %q", got)
+	}
+	if !strings.HasSuffix(got, "second line\n") {
+		t.Fatalf("expected newest output tail, got %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("bounded tail must remain valid UTF-8, got %q", got)
+	}
+}
+
+func TestRunCommandContextRetainsBoundedStdoutAndStderr(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows command output test")
+	}
+	script := `
+$out = 'o' * 4096
+$err = 'e' * 4096
+for ($i = 0; $i -lt 540; $i++) { [Console]::Out.Write($out) }
+for ($i = 0; $i -lt 540; $i++) { [Console]::Error.Write($err) }
+`
+	result := runCommandContext(context.Background(), 30*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	if !result.OK {
+		t.Fatalf("expected command to succeed, got %#v", result)
+	}
+	for name, output := range map[string]string{"stdout": result.Stdout, "stderr": result.Stderr} {
+		if !strings.Contains(output, "[output truncated: omitted ") {
+			t.Fatalf("%s missing truncation marker, length=%d", name, len(output))
+		}
+		if len(output) > commandResultStreamLimitBytes+128 {
+			t.Fatalf("%s retained too much output: %d bytes", name, len(output))
+		}
+		if !utf8.ValidString(output) {
+			t.Fatalf("%s retained invalid UTF-8", name)
+		}
 	}
 }
 

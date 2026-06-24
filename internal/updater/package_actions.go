@@ -205,6 +205,9 @@ func installManagerContext(ctx context.Context, manager string) CommandResult {
 	var result CommandResult
 	switch manager {
 	case managerWinget:
+		// Manager bootstrap handoffs intentionally detach: these open trusted
+		// Windows UI surfaces or a browser page and do not represent a mutable
+		// package-manager command that this process can own with a Job Object.
 		err := openURL("ms-appinstaller:?source=https://aka.ms/getwinget")
 		if err != nil {
 			result = CommandResult{Code: 1, Stderr: err.Error(), Command: "open winget installer"}

@@ -266,19 +266,9 @@ func TestSetAutoUpdateRejectsAmbiguousStorePackageKeys(t *testing.T) {
 }
 
 func TestSetAutoUpdateSaveFailureDoesNotMutateScheduledTask(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("UPDATER_STATE_DIR", dir)
-	if err := saveState(defaultState()); err != nil {
-		t.Fatal(err)
-	}
-
-	oldSave := saveAppState
 	oldCreate := createAutoUpdateTaskRunner
 	oldDelete := deleteTaskRunner
 	taskCalls := 0
-	saveAppState = func(State) error {
-		return errors.New("state save failed")
-	}
 	createAutoUpdateTaskRunner = func() CommandResult {
 		taskCalls++
 		return CommandResult{OK: true, Command: "create task"}
@@ -288,14 +278,15 @@ func TestSetAutoUpdateSaveFailureDoesNotMutateScheduledTask(t *testing.T) {
 		return CommandResult{OK: true, Command: "delete " + name}
 	}
 	defer func() {
-		saveAppState = oldSave
 		createAutoUpdateTaskRunner = oldCreate
 		deleteTaskRunner = oldDelete
 	}()
 
+	store := newMemoryStateStore(defaultState())
+	store.updateErr = errors.New("state save failed")
 	global := true
 	packageEnabled := true
-	state, result := setAutoUpdate(&global, []string{"winget:Git.Git"}, &packageEnabled)
+	state, result := setAutoUpdateWithStore(context.Background(), store, &global, []string{"winget:Git.Git"}, &packageEnabled)
 
 	if result.OK || result.Code != 2 || !strings.Contains(result.Stderr, "state save failed") {
 		t.Fatalf("expected validation-style save failure result, got %#v", result)

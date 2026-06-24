@@ -44,13 +44,15 @@ func asyncSnapshot(loading bool, fetchedAt time.Time, errText string) AsyncSnaps
 }
 
 type App struct {
-	token              string
-	sessionToken       string
-	listenHost         string
-	listenPort         int
-	bootstrapUsed      bool
-	server             *http.Server
-	mu                 sync.RWMutex
+	token         string
+	sessionToken  string
+	listenHost    string
+	listenPort    int
+	bootstrapUsed bool
+	server        *http.Server
+	mu            sync.RWMutex
+	// inventory is the immutable manager/native cache. Published Store
+	// assessments are overlaid only onto deep-copied effective snapshots.
 	inventory          Inventory
 	inventoryLoading   bool
 	inventoryQueued    bool
@@ -76,9 +78,71 @@ type App struct {
 	jobSeq                     int64
 	jobQueue                   []string
 	jobActive                  bool
+	lifecycleMu                sync.Mutex
+	rootCtx                    context.Context
+	rootCancel                 context.CancelFunc
+	shuttingDown               bool
+	backgroundWg               sync.WaitGroup
 	shutdownOnce               sync.Once
 	shutdownCleanupMu          sync.Mutex
 	shutdownCleanups           []func()
+}
+
+func (app *App) ensureRootContextLocked() context.Context {
+	if app.rootCtx == nil {
+		app.rootCtx, app.rootCancel = context.WithCancel(context.Background())
+	}
+	return app.rootCtx
+}
+
+func (app *App) isShuttingDown() bool {
+	app.lifecycleMu.Lock()
+	defer app.lifecycleMu.Unlock()
+	return app.shuttingDown
+}
+
+func (app *App) startBackgroundWork(name string, run func(context.Context)) bool {
+	app.lifecycleMu.Lock()
+	if app.shuttingDown {
+		app.lifecycleMu.Unlock()
+		appLog("Skipping %s because shutdown is in progress.", name)
+		return false
+	}
+	ctx := app.ensureRootContextLocked()
+	app.backgroundWg.Add(1)
+	app.lifecycleMu.Unlock()
+
+	go func() {
+		defer app.backgroundWg.Done()
+		run(ctx)
+	}()
+	return true
+}
+
+func (app *App) beginShutdown() {
+	app.lifecycleMu.Lock()
+	app.shuttingDown = true
+	if app.rootCancel != nil {
+		app.rootCancel()
+	}
+	app.lifecycleMu.Unlock()
+	app.cancelOperationJobsForShutdown()
+}
+
+func (app *App) waitForBackgroundWork(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		app.backgroundWg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func (app *App) addShutdownCleanup(cleanup func()) {
@@ -111,6 +175,10 @@ func (app *App) runShutdownCleanups() {
 func (app *App) requestShutdown(source string) {
 	app.shutdownOnce.Do(func() {
 		appLog("%s quit requested.", source)
+		app.beginShutdown()
+		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {
+			appLog("Shutdown timed out waiting for background work.")
+		}
 		app.runShutdownCleanups()
 		if app.server == nil {
 			return

@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	storeScanSnapshotMaxBytes = 16 << 20
-	storeScanSnapshotDirName  = "store-scans"
+	storeScanSnapshotMaxBytes   = 16 << 20
+	storeScanSnapshotDirName    = "store-scans"
+	storeScanSnapshotTimeLayout = "20060102T150405.000000000Z"
 )
 
 type StoreScanFileRepository struct {
@@ -92,6 +93,7 @@ func (repo *StoreScanFileRepository) PersistCompletedScanSnapshot(ctx context.Co
 		latest, ok := latestPublishedSnapshot(existing)
 		published = !ok || snapshotSortsAfter(snapshot, latest)
 	}
+	snapshot.Published = published
 
 	data, err := marshalStoreScanSnapshot(snapshot)
 	if err != nil {
@@ -198,25 +200,40 @@ func (repo *StoreScanFileRepository) validSnapshotsLocked(ctx context.Context, u
 		return nil, err
 	}
 	snapshots := make([]StoreScanSnapshot, 0, len(entries))
+	rejectedStartedAt := make([]time.Time, 0)
 	seenScanIDs := map[string]string{}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
+		if entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(repo.userDir(userSID), entry.Name())
+		name := entry.Name()
+		lowerName := strings.ToLower(name)
+		if !strings.HasSuffix(lowerName, ".json") {
+			if strings.Contains(lowerName, ".json.corrupt.") {
+				if startedAt, ok := snapshotStartedAtFromFileName(name); ok {
+					rejectedStartedAt = append(rejectedStartedAt, startedAt)
+				}
+			}
+			continue
+		}
+		path := filepath.Join(repo.userDir(userSID), name)
 		snapshot, err := repo.readSnapshotFile(path, userSID)
 		if err != nil {
-			repo.recordDiagnostic("Store snapshot rejected %s: %s", entry.Name(), err)
+			if startedAt, ok := snapshotStartedAtFromFileName(name); ok {
+				rejectedStartedAt = append(rejectedStartedAt, startedAt)
+			}
+			repo.recordDiagnostic("Store snapshot rejected %s: %s", name, err)
 			_ = repo.quarantineSnapshot(path)
 			continue
 		}
 		if previousPath, ok := seenScanIDs[snapshot.Scan.ScanID]; ok {
-			repo.recordDiagnostic("Store snapshot duplicate scan ID %s in %s and %s", snapshot.Scan.ScanID, filepath.Base(previousPath), entry.Name())
+			repo.recordDiagnostic("Store snapshot duplicate scan ID %s in %s and %s", snapshot.Scan.ScanID, filepath.Base(previousPath), name)
 			continue
 		}
 		seenScanIDs[snapshot.Scan.ScanID] = path
 		snapshots = append(snapshots, snapshot)
 	}
+	markRecoveredFallbackSnapshots(snapshots, rejectedStartedAt)
 	return snapshots, nil
 }
 
@@ -275,6 +292,13 @@ func decodeStoreScanSnapshot(data []byte) (StoreScanSnapshot, error) {
 	decoder.DisallowUnknownFields()
 	var snapshot StoreScanSnapshot
 	if err := decoder.Decode(&snapshot); err != nil {
+		return StoreScanSnapshot{}, err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			err = errors.New("snapshot contains trailing JSON data")
+		}
 		return StoreScanSnapshot{}, err
 	}
 	if snapshot.SchemaVersion < storeScanSchemaVersion {
@@ -444,8 +468,39 @@ func (repo *StoreScanFileRepository) recordDiagnostic(format string, args ...any
 }
 
 func snapshotFileName(snapshot StoreScanSnapshot) string {
-	started := snapshot.Scan.StartedAt.UTC().Format("20060102T150405.000000000Z")
+	started := snapshot.Scan.StartedAt.UTC().Format(storeScanSnapshotTimeLayout)
 	return started + "-" + shortHash(snapshot.Scan.ScanID) + ".json"
+}
+
+func snapshotStartedAtFromFileName(name string) (time.Time, bool) {
+	lowerName := strings.ToLower(name)
+	jsonIndex := strings.Index(lowerName, ".json")
+	if jsonIndex < len(storeScanSnapshotTimeLayout) {
+		return time.Time{}, false
+	}
+	startedAt, err := time.Parse(storeScanSnapshotTimeLayout, name[:len(storeScanSnapshotTimeLayout)])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return startedAt, true
+}
+
+func markRecoveredFallbackSnapshots(snapshots []StoreScanSnapshot, rejectedStartedAt []time.Time) {
+	if len(snapshots) == 0 || len(rejectedStartedAt) == 0 {
+		return
+	}
+	futureCutoff := storeScanNow().Add(5 * time.Minute)
+	for snapshotIndex := range snapshots {
+		for _, rejected := range rejectedStartedAt {
+			if rejected.After(futureCutoff) {
+				continue
+			}
+			if rejected.After(snapshots[snapshotIndex].Scan.StartedAt) || rejected.Equal(snapshots[snapshotIndex].Scan.StartedAt) {
+				snapshots[snapshotIndex].RecoveredFromFallback = true
+				break
+			}
+		}
+	}
 }
 
 func userScopeHash(userSID string) string {

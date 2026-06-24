@@ -116,7 +116,33 @@ func wingetTableColumnsNeedHeaderFallback(cols []string) bool {
 	if isLikelyVersionToken(cols[1]) {
 		return true
 	}
+	if wingetTableColumnsLookShiftedByDisplayName(cols) {
+		return true
+	}
 	return false
+}
+
+func wingetTableColumnsLookShiftedByDisplayName(cols []string) bool {
+	if len(cols) < 4 {
+		return false
+	}
+	if !wingetTableValueLooksLikeID(cols[2]) || isUnknownPackageVersion(cols[2]) || isLikelyVersionToken(cols[2]) {
+		return false
+	}
+	return isLikelyVersionToken(cols[3]) || isUnknownPackageVersion(cols[3]) || isSourceToken(cols[3]) || isWingetMatchColumn(cols[3])
+}
+
+func wingetTableValueLooksLikeID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || isSourceToken(value) || isWingetMatchColumn(value) || isWingetPinnedColumn(value) {
+		return false
+	}
+	for _, r := range value {
+		if r == ' ' || r == '\t' {
+			return false
+		}
+	}
+	return true
 }
 
 func isLikelyVersionToken(value string) bool {

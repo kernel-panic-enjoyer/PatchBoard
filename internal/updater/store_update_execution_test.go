@@ -232,6 +232,70 @@ func TestStoreExactUpdateAcceptedWithoutPackageChangeIsNotVerified(t *testing.T)
 	}
 }
 
+func TestStoreExactUpdateDowngradeIsNotVerified(t *testing.T) {
+	executor := testStoreExactExecutor(
+		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
+		&fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
+			testStoreExactSnapshot("1.0.0", "OpenAI.Codex_1.0.0_x64__abc123", true),
+			testStoreExactSnapshot("0.9.0", "OpenAI.Codex_0.9.0_x64__abc123", true),
+		}},
+		fakeStoreExactCatalog{result: StoreExactCatalogResult{Authoritative: true, OfferAvailable: false, InstalledHealthy: true}, command: CommandResult{OK: true, Command: "catalog query 9NCODEX", Stdout: "no offer"}},
+		fakeStoreEvents{},
+	)
+	result := executeStoreExactUpdateForTest(t, executor, testExactStorePackage())
+	if result.OK || result.Code != storeUpdateAcceptedNotVerifiedCode {
+		t.Fatalf("downgrade must not verify update, got %#v", result)
+	}
+}
+
+func TestStoreExactUpdateMalformedVersionIsNotVerified(t *testing.T) {
+	executor := testStoreExactExecutor(
+		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
+		&fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
+			testStoreExactSnapshot("1.0.0", "OpenAI.Codex_1.0.0_x64__abc123", true),
+			testStoreExactSnapshot("1.x.0", "OpenAI.Codex_1.x.0_x64__abc123", true),
+		}},
+		fakeStoreExactCatalog{},
+		fakeStoreEvents{},
+	)
+	result := executeStoreExactUpdateForTest(t, executor, testExactStorePackage())
+	if result.OK || result.Code != storeUpdateAcceptedNotVerifiedCode {
+		t.Fatalf("malformed version must not verify update, got %#v", result)
+	}
+}
+
+func TestStoreExactUpdateFullNameOnlyChangeIsNotVerified(t *testing.T) {
+	executor := testStoreExactExecutor(
+		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
+		&fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
+			testStoreExactSnapshot("1.0.0", "OpenAI.Codex_1.0.0_x64__abc123", true),
+			testStoreExactSnapshot("1.0.0", "OpenAI.Codex_1.0.0_x64__def456", true),
+		}},
+		fakeStoreExactCatalog{},
+		fakeStoreEvents{},
+	)
+	result := executeStoreExactUpdateForTest(t, executor, testExactStorePackage())
+	if result.OK || result.Code != storeUpdateAcceptedNotVerifiedCode {
+		t.Fatalf("full-name-only change must not verify update, got %#v", result)
+	}
+}
+
+func TestStoreExactUpdateOfferedVersionNotReachedIsNotVerified(t *testing.T) {
+	executor := testStoreExactExecutor(
+		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
+		&fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
+			testStoreExactSnapshot("1.0.0", "OpenAI.Codex_1.0.0_x64__abc123", true),
+			testStoreExactSnapshot("1.0.5", "OpenAI.Codex_1.0.5_x64__abc123", true),
+		}},
+		fakeStoreExactCatalog{result: StoreExactCatalogResult{Authoritative: true, OfferAvailable: false, InstalledHealthy: true}, command: CommandResult{OK: true, Command: "catalog query 9NCODEX", Stdout: "no offer"}},
+		fakeStoreEvents{},
+	)
+	result := executeStoreExactUpdateForTest(t, executor, testExactStorePackage())
+	if result.OK || result.Code != storeUpdateAcceptedNotVerifiedCode {
+		t.Fatalf("post version below offered version must not verify update, got %#v", result)
+	}
+}
+
 func TestStoreExactUpdateAcceptedButTargetedRescanFails(t *testing.T) {
 	executor := testStoreExactExecutor(
 		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
@@ -281,6 +345,8 @@ func TestStoreExactUpdateNilCatalogUsesProductionProductIDFirstQuery(t *testing.
 	oldAvailable := packageActionManagerAvailable
 	packageActionManagerAvailable = func(manager string) bool { return manager == managerWinget || manager == managerStore }
 	defer func() { packageActionManagerAvailable = oldAvailable }()
+	pkg.OfferedVersion = "1.0.0"
+	pkg.AvailableVersion = "1.0.0"
 	executor := StoreExactUpdateExecutor{
 		Runner: fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
 		Inventory: &fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
@@ -318,6 +384,9 @@ func TestStoreExactUpdatePollingVerifiesWhenEventIsLost(t *testing.T) {
 }
 
 func TestStoreExactUpdateSameVisibleVersionWithOfferRemoved(t *testing.T) {
+	pkg := testExactStorePackage()
+	pkg.AvailableVersion = "1.0.0"
+	pkg.OfferedVersion = "1.0.0"
 	executor := testStoreExactExecutor(
 		fakeStoreExactRunner{result: CommandResult{OK: true, Command: "store update 9NCODEX", Stdout: "accepted"}},
 		&fakeStoreExactInventory{snapshots: []StoreExactPackageSnapshot{
@@ -327,7 +396,7 @@ func TestStoreExactUpdateSameVisibleVersionWithOfferRemoved(t *testing.T) {
 		fakeStoreExactCatalog{result: StoreExactCatalogResult{Authoritative: true, OfferAvailable: false, InstalledHealthy: true}, command: CommandResult{OK: true, Command: "catalog query 9NCODEX", Stdout: "no offer"}},
 		fakeStoreEvents{},
 	)
-	result := executeStoreExactUpdateForTest(t, executor, testExactStorePackage())
+	result := executeStoreExactUpdateForTest(t, executor, pkg)
 	if !result.OK || !strings.Contains(result.Stdout, "exact offer disappeared") {
 		t.Fatalf("expected offer removal to verify same-version update, got %#v", result)
 	}
@@ -451,6 +520,46 @@ func TestStoreExactUpdateValidationRequiresFreshAvailableAssessment(t *testing.T
 	}
 }
 
+func TestVerifyPublishedStoreUpdateAssessmentEnforcesFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		now            time.Time
+		currentVersion string
+		mutate         func(*StoreScanSnapshot)
+	}{
+		{
+			name:           "old evidence",
+			now:            storeScanNow().Add(-storeAssessmentFreshnessWindow - time.Minute),
+			currentVersion: "1.0.0",
+		},
+		{
+			name:           "recovered fallback",
+			now:            storeScanNow(),
+			currentVersion: "1.0.0",
+			mutate: func(snapshot *StoreScanSnapshot) {
+				snapshot.RecoveredFromFallback = true
+			},
+		},
+		{
+			name:           "installed version mismatch",
+			now:            storeScanNow(),
+			currentVersion: "2.0.0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+			restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+			defer restoreSID()
+			writePublishedExactStoreAssessment(t, testExactStorePackage(), tc.now, tc.mutate)
+			request := testExactStoreRequest()
+			request.CurrentInstalledVersion = tc.currentVersion
+			if err := verifyPublishedStoreUpdateAssessment(context.Background(), request); err == nil {
+				t.Fatal("freshness failure was accepted for Store update authorization")
+			}
+		})
+	}
+}
+
 func executeStoreExactUpdateForTest(t *testing.T, executor StoreExactUpdateExecutor, pkg Package) CommandResult {
 	t.Helper()
 	return executeStoreExactUpdateForTestWithContext(t, context.Background(), executor, pkg)
@@ -470,12 +579,16 @@ func executeStoreExactUpdateForTestWithContext(t *testing.T, ctx context.Context
 func preparePublishedExactStoreAssessment(t *testing.T, pkg Package) {
 	t.Helper()
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	writePublishedExactStoreAssessment(t, pkg, storeScanNow(), nil)
+}
+
+func writePublishedExactStoreAssessment(t *testing.T, pkg Package, now time.Time, mutate func(*StoreScanSnapshot)) {
+	t.Helper()
 	store, err := openDefaultStoreScanRepository()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	identity := StoreInstalledIdentity{UserSID: "S-1-5-21-exec", PackageFamilyName: pkg.InstalledPackageFamilyName}
 	scan := StoreScanGeneration{
 		ScanID:           pkg.ScanID,
@@ -516,13 +629,17 @@ func preparePublishedExactStoreAssessment(t *testing.T, pkg Package) {
 			ProductLike: true,
 		}},
 	}
-	if _, err := store.PersistCompletedScanSnapshot(context.Background(), StoreScanSnapshot{
+	snapshot := StoreScanSnapshot{
 		SchemaVersion: storeScanSchemaVersion,
 		Published:     true,
 		Scan:          scan,
 		Inventory:     inventory,
 		Assessments:   []StorePublishedAssessment{assessment},
-	}); err != nil {
+	}
+	if mutate != nil {
+		mutate(&snapshot)
+	}
+	if _, err := store.PersistCompletedScanSnapshot(context.Background(), snapshot); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -567,13 +684,14 @@ func testExactStorePackage() Package {
 
 func testExactStoreRequest() StoreExactUpdateRequest {
 	return StoreExactUpdateRequest{
-		Identity:         StoreInstalledIdentity{UserSID: "S-1-5-21-exec", PackageFamilyName: "OpenAI.Codex_abc123"},
-		ProductID:        "9NCODEX",
-		Target:           "9NCODEX",
-		Provider:         StoreProviderIdentity{ID: managerStore, Name: "Store CLI", Backend: backendStoreCLI},
-		ScanID:           "scan-exec",
-		InstalledVersion: "1.0.0",
-		OfferedVersion:   "1.1.0",
+		Identity:                StoreInstalledIdentity{UserSID: "S-1-5-21-exec", PackageFamilyName: "OpenAI.Codex_abc123"},
+		ProductID:               "9NCODEX",
+		Target:                  "9NCODEX",
+		Provider:                StoreProviderIdentity{ID: managerStore, Name: "Store CLI", Backend: backendStoreCLI},
+		ScanID:                  "scan-exec",
+		InstalledVersion:        "1.0.0",
+		CurrentInstalledVersion: "1.0.0",
+		OfferedVersion:          "1.1.0",
 	}
 }
 

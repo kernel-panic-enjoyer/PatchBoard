@@ -1,14 +1,17 @@
 package updater
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
 
 func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) ([]Package, string, error) {
-	app.mu.RLock()
-	inventoryPackages := append([]Package(nil), app.inventory.Packages...)
-	app.mu.RUnlock()
+	inventory, err := app.effectiveInventorySnapshot(context.Background())
+	if err != nil {
+		return nil, updateJobModeSelected, err
+	}
+	inventoryPackages := inventory.Packages
 
 	byKey := map[string]Package{}
 	for _, pkg := range inventoryPackages {
@@ -56,14 +59,14 @@ func (app *App) updateJobPackages(packageKeys []string, options UpdateOptions) (
 		if !ok {
 			pkg = Package{Key: normalized, Manager: manager, ID: id, Name: id, UpdateSupported: true}
 		}
-		if pkg.UpdateSupported == false {
-			return nil, updateJobModeSelected, fmt.Errorf("%s does not support updates", normalized)
-		}
 		if !packageHasExactStoreUpdateTarget(pkg) {
 			return nil, updateJobModeSelected, fmt.Errorf("%s has no exact verified Store update target", normalized)
 		}
 		if !packageHasFreshStoreAvailableAssessment(pkg) {
 			return nil, updateJobModeSelected, fmt.Errorf("%s requires a fresh available Store assessment before updating", normalized)
+		}
+		if pkg.UpdateSupported == false {
+			return nil, updateJobModeSelected, fmt.Errorf("%s does not support updates", normalized)
 		}
 		if pkg.UnknownVersion && !options.AllowUnknownVersion {
 			return nil, updateJobModeSelected, fmt.Errorf("%s has an unknown installed version and requires an explicit global unknown-version update choice", normalized)
@@ -117,9 +120,11 @@ func (app *App) packageForUpdate(manager, id string) Package {
 	requestedKey := packageKey(manager, id)
 	normalizedRequested := normalizeAutoUpdatePackageKey(requestedKey)
 
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	for _, pkg := range app.inventory.Packages {
+	inventory, err := app.effectiveInventorySnapshot(context.Background())
+	if err != nil {
+		return fallback
+	}
+	for _, pkg := range inventory.Packages {
 		if pkg.Manager != manager {
 			continue
 		}

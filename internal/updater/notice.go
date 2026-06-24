@@ -82,14 +82,39 @@ func commandNoticeLabel(command string) string {
 }
 
 func firstNoticeOutputLine(output string) string {
+	var fallback string
 	for _, line := range strings.Split(output, "\n") {
 		line = compactNoticeText(line)
 		if line == "" || noticeLineIsNoise(line) {
 			continue
 		}
-		return line
+		if noticeLineLooksActionable(line) {
+			return line
+		}
+		if fallback == "" {
+			fallback = line
+		}
 	}
-	return ""
+	return fallback
+}
+
+func noticeLineLooksActionable(line string) bool {
+	lower := strings.ToLower(line)
+	return outputContainsAny(lower, []string{
+		"failed",
+		"failure",
+		"error",
+		"cannot",
+		"could not",
+		"not found",
+		"access denied",
+		"kann nicht",
+		"konnte nicht",
+		"nicht gefunden",
+		"fehler",
+		"zugriff verweigert",
+		"--force",
+	})
 }
 
 func noticeLineIsNoise(line string) bool {

@@ -18,10 +18,11 @@ func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inven
 	} else if !result.Published {
 		appLog("Store transactional scan %s completed but was not published.", result.Scan.ScanID)
 	}
-	return applyPublishedStoreScanAssessments(ctx, state, inventory)
+	return effectiveInventoryFromBase(ctx, state, inventory)
 }
 
 func applyPublishedStoreScanAssessments(ctx context.Context, state State, inventory Inventory) Inventory {
+	inventory = inventory.DeepCopy()
 	repository, openErr := openStoreTransactionalStoreForInventory()
 	if openErr != nil {
 		appLog("Could not open Store scan store: %s", openErr)
@@ -60,12 +61,13 @@ func applyPublishedStoreScanAssessments(ctx context.Context, state State, invent
 	for _, family := range snapshot.Inventory.Families {
 		familyNames[strings.ToLower(family.Identity.PackageFamilyName)] = family
 	}
-	inventory = applyPublishedStoreAssessmentsToInventory(state, inventory, snapshot.Assessments, familyNames, providerSummaries)
+	inventory = applyPublishedStoreAssessmentsToInventory(state, inventory, snapshot, familyNames, providerSummaries)
 	inventory.StoreScanHealth = buildStoreScanHealthSummary(inventory.Packages, providerSummaries)
 	return inventory
 }
 
-func applyPublishedStoreAssessmentsToInventory(state State, inventory Inventory, assessments []StorePublishedAssessment, families map[string]StorePackagedAppFamily, scanProviders []StorePackageProviderSummary) Inventory {
+func applyPublishedStoreAssessmentsToInventory(state State, inventory Inventory, snapshot StoreScanSnapshot, families map[string]StorePackagedAppFamily, scanProviders []StorePackageProviderSummary) Inventory {
+	now := storeScanNow()
 	byPFN := map[string]int{}
 	for index, pkg := range inventory.Packages {
 		if pkg.Manager != managerStore {
@@ -76,7 +78,7 @@ func applyPublishedStoreAssessmentsToInventory(state State, inventory Inventory,
 			byPFN[pfn] = index
 		}
 	}
-	for _, assessment := range assessments {
+	for _, assessment := range snapshot.Assessments {
 		pfn := strings.TrimSpace(assessment.Identity.PackageFamilyName)
 		if pfn == "" {
 			continue
@@ -84,14 +86,26 @@ func applyPublishedStoreAssessmentsToInventory(state State, inventory Inventory,
 		key := strings.ToLower(pfn)
 		index, ok := byPFN[key]
 		if !ok {
+			assessment = assessmentForInventoryProjection(snapshot, assessment, "", now)
 			pkg := packageFromPublishedStoreAssessment(state, assessment, families[key], scanProviders)
 			inventory.Packages = append(inventory.Packages, pkg)
 			byPFN[key] = len(inventory.Packages) - 1
 			continue
 		}
-		inventory.Packages[index] = applyPublishedStoreAssessmentToPackage(inventory.Packages[index], assessment, scanProviders)
+		assessment = assessmentForInventoryProjection(snapshot, assessment, inventory.Packages[index].Version, now)
+		pkg := applyPublishedStoreAssessmentToPackage(inventory.Packages[index], assessment, scanProviders)
+		pkg.AutoUpdate = packageAutoUpdateEnabled(state, pkg)
+		inventory.Packages[index] = pkg
 	}
 	return inventory
+}
+
+func assessmentForInventoryProjection(snapshot StoreScanSnapshot, assessment StorePublishedAssessment, currentInstalledVersion string, now time.Time) StorePublishedAssessment {
+	freshness := evaluatePublishedStoreAssessmentFreshness(snapshot, assessment, currentInstalledVersion, now)
+	if freshness.Fresh {
+		return assessment
+	}
+	return staleStoreAssessmentProjection(assessment, freshness.Reason)
 }
 
 func packageFromPublishedStoreAssessment(state State, assessment StorePublishedAssessment, family StorePackagedAppFamily, scanProviders []StorePackageProviderSummary) Package {

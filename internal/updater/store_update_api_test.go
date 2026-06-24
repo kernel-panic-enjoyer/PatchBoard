@@ -172,6 +172,8 @@ func transactionalPackagesResponse(t *testing.T, providers []StoreCatalogProvide
 	pfn := "OpenAI.Codex_abc123"
 	restoreSID := replaceStoreScanSID(userSID)
 	defer restoreSID()
+	restoreNow := replaceStoreScanNow(time.Date(2026, 6, 21, 12, 0, 3, 0, time.UTC))
+	defer restoreNow()
 	store, err := openDefaultStoreScanRepository()
 	if err != nil {
 		t.Fatal(err)

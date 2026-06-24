@@ -90,16 +90,21 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 	if pipeline == nil || pipeline.Repository == nil {
 		return StoreScanResult{}, errors.New("Store scan pipeline has no repository")
 	}
+	userSID, err := storeScanCurrentUserSID()
+	if err != nil {
+		return StoreScanResult{}, err
+	}
+	releaseScan, err := defaultStoreScanCoordinator.acquire(ctx, userSID)
+	if err != nil {
+		return StoreScanResult{}, err
+	}
+	defer releaseScan()
 	if !pipeline.tryStart() {
 		return StoreScanResult{}, errStoreScanAlreadyRunning
 	}
 	defer pipeline.finish()
 
 	now := pipeline.now()
-	userSID, err := storeScanCurrentUserSID()
-	if err != nil {
-		return StoreScanResult{}, err
-	}
 	systemContext := currentStoreScanSystemContext()
 	scan := StoreScanGeneration{
 		ScanID:           pipeline.scanID(now),
@@ -120,7 +125,11 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 	scan.ProviderVersions = providerVersionMap(providerRuns)
 	scan.CompletionStatus = scanCompletionStatus(inventory, providerRuns)
 
-	previous, _ := pipeline.previousAssessments(ctx, userSID)
+	previous, err := pipeline.previousAssessments(ctx, userSID)
+	if err != nil {
+		assessments := reconcileStoreScanAssessments(scan, inventory.Families, providerRuns, nil)
+		return StoreScanResult{Scan: scan, Inventory: inventory, ProviderRuns: providerRuns, Assessments: assessments}, fmt.Errorf("could not load previous published Store assessments for hysteresis: %w", err)
+	}
 	assessments := reconcileStoreScanAssessments(scan, inventory.Families, providerRuns, previous)
 	publish := scanShouldPublish(scan, inventory)
 	snapshot := snapshotFromScanResult(scan, inventory, providerRuns, assessments, publish)

@@ -26,6 +26,8 @@ const (
 	jobTypeInventoryRefresh = "inventory-refresh"
 )
 
+const operationJobRecentHistoryLimit = 25
+
 type OperationJobStatus struct {
 	JobID               string         `json:"job_id,omitempty"`
 	Type                string         `json:"type,omitempty"`
@@ -62,6 +64,19 @@ func (app *App) startOperationJob(jobType, mode string, total int, packageKeys [
 }
 
 func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total int, packageKeys []string, packages []Package, run func(context.Context, *OperationJob)) OperationJobStatus {
+	if app.isShuttingDown() {
+		return OperationJobStatus{
+			Type:        jobType,
+			Mode:        mode,
+			State:       jobStateFailed,
+			Running:     false,
+			Total:       total,
+			PackageKeys: append([]string(nil), packageKeys...),
+			Notice:      "Job not started because shutdown is in progress.",
+			Error:       "shutdown in progress",
+			FinishedAt:  utcNow(),
+		}
+	}
 	app.jobsMu.Lock()
 	if app.jobs == nil {
 		app.jobs = map[string]*OperationJob{}
@@ -92,7 +107,16 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 	}
 	app.jobsMu.Unlock()
 	if shouldPump {
-		go app.runOperationJobQueue()
+		if !app.startBackgroundWork("operation job queue", app.runOperationJobQueue) {
+			app.jobsMu.Lock()
+			app.jobActive = false
+			job.status.CancelRequested = true
+			job.status.State = jobStateCancelled
+			job.status.FinishedAt = utcNow()
+			job.status.Notice = "Job cancelled by shutdown."
+			job.status.Packages = nil
+			app.jobsMu.Unlock()
+		}
 	}
 	return status
 }
@@ -106,7 +130,7 @@ func updateOptionsFromPackageSnapshot(packages []Package) (bool, bool) {
 	return allowUnknown, allowPinned
 }
 
-func (app *App) runOperationJobQueue() {
+func (app *App) runOperationJobQueue(queueCtx context.Context) {
 	for {
 		app.jobsMu.Lock()
 		var job *OperationJob
@@ -121,6 +145,16 @@ func (app *App) runOperationJobQueue() {
 				candidate.status.State = jobStateCancelled
 				candidate.status.Running = false
 				candidate.status.FinishedAt = utcNow()
+				candidate.status.Packages = nil
+				continue
+			}
+			if queueCtx.Err() != nil {
+				candidate.status.CancelRequested = true
+				candidate.status.State = jobStateCancelled
+				candidate.status.Running = false
+				candidate.status.Notice = "Job cancelled by shutdown."
+				candidate.status.FinishedAt = utcNow()
+				candidate.status.Packages = nil
 				continue
 			}
 			job = candidate
@@ -131,7 +165,7 @@ func (app *App) runOperationJobQueue() {
 			app.jobsMu.Unlock()
 			return
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(queueCtx)
 		job.cancel = cancel
 		job.status.State = jobStateRunning
 		job.status.Running = true
@@ -140,8 +174,17 @@ func (app *App) runOperationJobQueue() {
 		app.jobsMu.Unlock()
 
 		appLog("Job %s started for %s.", status.JobID, status.Type)
-		job.run(ctx, job)
+		recovered := runOperationJobSafely(ctx, job)
 		cancel()
+		if recovered != nil {
+			diagnostic := sanitizedPanicDiagnostic(recovered)
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateFailed
+				status.Error = diagnostic
+				status.Notice = "Job failed because an internal error occurred."
+				status.Result = &CommandResult{Command: status.Type, Code: 1, Stderr: diagnostic}
+			})
+		}
 
 		app.jobsMu.Lock()
 		if job.status.State == jobStateRunning || job.status.State == jobStateRefreshing {
@@ -158,10 +201,35 @@ func (app *App) runOperationJobQueue() {
 		if job.status.FinishedAt == "" {
 			job.status.FinishedAt = utcNow()
 		}
+		if operationJobComplete(job.status) && job.status.Type != jobTypeUpdate && job.status.Type != jobTypeUpdateAll {
+			job.status.Packages = nil
+		}
 		finished := cloneOperationJobStatus(job.status)
+		app.pruneOperationJobsLocked()
 		app.jobsMu.Unlock()
 		appLog("Job %s finished with state %s.", finished.JobID, finished.State)
 	}
+}
+
+func runOperationJobSafely(ctx context.Context, job *OperationJob) (recovered any) {
+	defer func() {
+		recovered = recover()
+	}()
+	job.run(ctx, job)
+	return nil
+}
+
+func sanitizedPanicDiagnostic(recovered any) string {
+	message := strings.TrimSpace(fmt.Sprint(recovered))
+	message = strings.ReplaceAll(message, "\r", " ")
+	message = strings.ReplaceAll(message, "\n", " ")
+	if message == "" {
+		message = "unknown panic"
+	}
+	if len(message) > 240 {
+		message = message[:240] + "..."
+	}
+	return "internal job panic: " + message
 }
 
 func operationJobHasFailures(status OperationJobStatus) bool {
@@ -231,6 +299,7 @@ func (app *App) latestOperationJobStatus(jobTypes ...string) OperationJobStatus 
 func (app *App) operationJobsSnapshot() []OperationJobStatus {
 	app.jobsMu.Lock()
 	defer app.jobsMu.Unlock()
+	app.pruneOperationJobsLocked()
 	statuses := make([]OperationJobStatus, 0, len(app.jobs))
 	for i := int64(1); i <= app.jobSeq; i++ {
 		job := app.jobs[fmt.Sprintf("job-%d", i)]
@@ -276,9 +345,85 @@ func (app *App) cancelOperationJob(id string) (OperationJobStatus, bool) {
 			job.status.State = jobStateCancelled
 			job.status.Running = false
 			job.status.FinishedAt = utcNow()
+			job.status.Packages = nil
 			job.status.Notice = "Job cancelled."
 		}
 		appLog("Job %s cancellation requested.", job.status.JobID)
 	}
+	app.pruneOperationJobsLocked()
 	return cloneOperationJobStatus(job.status), true
+}
+
+func (app *App) cancelOperationJobsForShutdown() {
+	app.jobsMu.Lock()
+	defer app.jobsMu.Unlock()
+	for _, job := range app.jobs {
+		if job == nil || operationJobComplete(job.status) {
+			continue
+		}
+		job.status.CancelRequested = true
+		job.status.Notice = "Job cancelled by shutdown."
+		if job.cancel != nil {
+			job.cancel()
+		}
+		if job.status.State == jobStateQueued {
+			job.status.State = jobStateCancelled
+			job.status.Running = false
+			job.status.FinishedAt = utcNow()
+			job.status.Packages = nil
+		}
+	}
+	app.pruneOperationJobsLocked()
+}
+
+func (app *App) pruneOperationJobsLocked() {
+	if len(app.jobs) <= operationJobRecentHistoryLimit {
+		return
+	}
+	retain := map[string]bool{}
+	latestByType := map[string]bool{}
+	for i := app.jobSeq; i >= 1; i-- {
+		id := fmt.Sprintf("job-%d", i)
+		job := app.jobs[id]
+		if job == nil {
+			continue
+		}
+		if !operationJobComplete(job.status) {
+			retain[id] = true
+			continue
+		}
+		if !latestByType[job.status.Type] {
+			latestByType[job.status.Type] = true
+			retain[id] = true
+		}
+	}
+	recent := 0
+	for i := app.jobSeq; i >= 1 && recent < operationJobRecentHistoryLimit; i-- {
+		id := fmt.Sprintf("job-%d", i)
+		job := app.jobs[id]
+		if job == nil || !operationJobComplete(job.status) {
+			continue
+		}
+		retain[id] = true
+		recent++
+	}
+	for id, job := range app.jobs {
+		if retain[id] {
+			continue
+		}
+		if job != nil && operationJobComplete(job.status) {
+			delete(app.jobs, id)
+		}
+	}
+	app.jobQueue = filterRetainedJobQueue(app.jobQueue, app.jobs)
+}
+
+func filterRetainedJobQueue(queue []string, jobs map[string]*OperationJob) []string {
+	filtered := queue[:0]
+	for _, id := range queue {
+		if jobs[id] != nil {
+			filtered = append(filtered, id)
+		}
+	}
+	return filtered
 }

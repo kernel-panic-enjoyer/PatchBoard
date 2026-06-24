@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,15 +16,16 @@ const (
 )
 
 type StoreExactUpdateRequest struct {
-	Identity         StoreInstalledIdentity
-	ProductID        string
-	UpdateID         string
-	Target           string
-	Provider         StoreProviderIdentity
-	ScanID           string
-	ObservedAt       string
-	InstalledVersion string
-	OfferedVersion   string
+	Identity                StoreInstalledIdentity
+	ProductID               string
+	UpdateID                string
+	Target                  string
+	Provider                StoreProviderIdentity
+	ScanID                  string
+	ObservedAt              string
+	InstalledVersion        string
+	CurrentInstalledVersion string
+	OfferedVersion          string
 }
 
 type StoreExactPackageSnapshot struct {
@@ -134,6 +136,10 @@ func (executor StoreExactUpdateExecutor) ExecuteWithCallbacks(ctx context.Contex
 	}
 
 	pre, preResult := executor.Inventory.Snapshot(ctx, request.Identity)
+	if err := validateStorePreActionSnapshot(request, pre, preResult); err != nil {
+		result := validationCommandResult("store exact update", err)
+		return appendStoreExecutionDiagnostic(result, "pre-action", pre, preResult)
+	}
 	if callbacks.Starting != nil {
 		callbacks.Starting(request)
 	}
@@ -209,7 +215,7 @@ func (executor StoreExactUpdateExecutor) verifyAcceptedAction(ctx context.Contex
 		}
 		catalog, catalogResult := executor.Catalog.QueryExact(ctx, request)
 		result = mergeCommandResults(result, catalogResult, "targeted Store catalog query")
-		if storeCatalogVerifiesUpdate(catalog, post) {
+		if storeCatalogVerifiesUpdate(request, pre, catalog, post) {
 			return storeExactVerificationResult{Verified: true, Message: "Store update verified because the exact offer disappeared after a fresh targeted catalog query.", Result: result, Post: post, PostResult: postResult}
 		}
 		select {
@@ -273,15 +279,16 @@ func exactStoreUpdateRequestFromPackage(ctx context.Context, pkg Package) (Store
 		return StoreExactUpdateRequest{}, err
 	}
 	request := StoreExactUpdateRequest{
-		Identity:         identity,
-		ProductID:        productID,
-		UpdateID:         updateID,
-		Target:           target,
-		Provider:         provider,
-		ScanID:           strings.TrimSpace(pkg.ScanID),
-		ObservedAt:       strings.TrimSpace(pkg.ObservedAt),
-		InstalledVersion: firstNonEmpty(pkg.InstalledVersion, pkg.Version),
-		OfferedVersion:   firstNonEmpty(pkg.OfferedVersion, pkg.AvailableVersion),
+		Identity:                identity,
+		ProductID:               productID,
+		UpdateID:                updateID,
+		Target:                  target,
+		Provider:                provider,
+		ScanID:                  strings.TrimSpace(pkg.ScanID),
+		ObservedAt:              strings.TrimSpace(pkg.ObservedAt),
+		InstalledVersion:        firstNonEmpty(pkg.InstalledVersion, pkg.Version),
+		CurrentInstalledVersion: firstNonEmpty(pkg.Version, pkg.InstalledVersion),
+		OfferedVersion:          firstNonEmpty(pkg.OfferedVersion, pkg.AvailableVersion),
 	}
 	if err := verifyPublishedStoreUpdateAssessment(ctx, request); err != nil {
 		return StoreExactUpdateRequest{}, err
@@ -322,6 +329,10 @@ func verifyPublishedStoreUpdateAssessment(ctx context.Context, request StoreExac
 		if assessment.State != StoreUpdateAvailable || assessment.Stale || !assessment.ExactActionTargetAvailable {
 			return errors.New("published Store assessment is not a fresh exact available update")
 		}
+		freshness := evaluatePublishedStoreAssessmentFreshness(snapshot, assessment, request.CurrentInstalledVersion, storeScanNow())
+		if !freshness.Fresh {
+			return fmt.Errorf("published Store assessment is not fresh: %s", freshness.Reason)
+		}
 		if assessment.StoreProductID != "" && request.ProductID != "" && assessment.StoreProductID != request.ProductID {
 			return errors.New("Store update Product ID does not match the verified published assessment")
 		}
@@ -337,29 +348,125 @@ func storeSnapshotVerifiesUpdate(request StoreExactUpdateRequest, pre, post Stor
 	if !post.Identity.Equal(request.Identity) || !post.Exists || !post.Healthy {
 		return false, ""
 	}
+	baselineVersion := strings.TrimSpace(request.InstalledVersion)
 	if pre.Exists {
-		if post.PackageFullName != "" && pre.PackageFullName != "" && !strings.EqualFold(post.PackageFullName, pre.PackageFullName) {
-			return true, "Store update verified because the installed package full name changed."
-		}
-		if versionChanged(pre.Version, post.Version) {
-			return true, "Store update verified because the installed package version changed."
-		}
+		baselineVersion = strings.TrimSpace(pre.Version)
+	}
+	if !storeAssessmentVersionKnown(baselineVersion) {
 		return false, ""
 	}
-	if request.InstalledVersion != "" && versionChanged(request.InstalledVersion, post.Version) {
-		return true, "Store update verified because the installed package version changed from the pre-action assessment."
+	versionComparison, ok := compareStorePackageVersions(post.Version, baselineVersion)
+	if !ok || versionComparison <= 0 {
+		return false, ""
 	}
-	return false, ""
+	if storeAssessmentVersionKnown(request.OfferedVersion) {
+		offeredComparison, ok := compareStorePackageVersions(post.Version, request.OfferedVersion)
+		if !ok || offeredComparison < 0 {
+			return false, ""
+		}
+		return true, "Store update verified because the installed package version increased to the offered version or newer."
+	}
+	return true, "Store update verified because the installed package version increased."
 }
 
-func versionChanged(left, right string) bool {
-	left = strings.TrimSpace(left)
-	right = strings.TrimSpace(right)
-	return left != "" && right != "" && !strings.EqualFold(left, right)
+func validateStorePreActionSnapshot(request StoreExactUpdateRequest, pre StoreExactPackageSnapshot, preResult CommandResult) error {
+	if !preResult.OK {
+		return errors.New("Store update requires a successful fresh package enumeration before execution")
+	}
+	if !pre.Identity.Equal(request.Identity) {
+		return errors.New("Store update pre-action package enumeration returned the wrong identity")
+	}
+	if !pre.Exists {
+		return errors.New("Store update requires the exact package family to still be installed")
+	}
+	if !pre.Healthy {
+		return errors.New("Store update requires the exact package family to be healthy before execution")
+	}
+	if !storeAssessmentVersionKnown(pre.Version) {
+		return errors.New("Store update requires a known current installed version before execution")
+	}
+	if !strings.EqualFold(strings.TrimSpace(pre.Version), strings.TrimSpace(request.InstalledVersion)) {
+		return errors.New("Store update assessment no longer matches the installed package version")
+	}
+	return nil
 }
 
-func storeCatalogVerifiesUpdate(catalog StoreExactCatalogResult, post StoreExactPackageSnapshot) bool {
-	return catalog.Authoritative && !catalog.OfferAvailable && catalog.InstalledHealthy && post.Exists && post.Healthy
+func compareStorePackageVersions(left, right string) (int, bool) {
+	leftParts, ok := parseStorePackageVersion(left)
+	if !ok {
+		return 0, false
+	}
+	rightParts, ok := parseStorePackageVersion(right)
+	if !ok {
+		return 0, false
+	}
+	maxParts := len(leftParts)
+	if len(rightParts) > maxParts {
+		maxParts = len(rightParts)
+	}
+	for index := 0; index < maxParts; index++ {
+		leftPart := 0
+		rightPart := 0
+		if index < len(leftParts) {
+			leftPart = leftParts[index]
+		}
+		if index < len(rightParts) {
+			rightPart = rightParts[index]
+		}
+		switch {
+		case leftPart > rightPart:
+			return 1, true
+		case leftPart < rightPart:
+			return -1, true
+		}
+	}
+	return 0, true
+}
+
+func parseStorePackageVersion(value string) ([]int, bool) {
+	value = strings.TrimSpace(value)
+	if !storeAssessmentVersionKnown(value) {
+		return nil, false
+	}
+	segments := strings.Split(value, ".")
+	parts := make([]int, 0, len(segments))
+	for _, segment := range segments {
+		if segment == "" {
+			return nil, false
+		}
+		for _, char := range segment {
+			if char < '0' || char > '9' {
+				return nil, false
+			}
+		}
+		part, err := strconv.Atoi(segment)
+		if err != nil {
+			return nil, false
+		}
+		parts = append(parts, part)
+	}
+	return parts, true
+}
+
+func storeCatalogVerifiesUpdate(request StoreExactUpdateRequest, pre StoreExactPackageSnapshot, catalog StoreExactCatalogResult, post StoreExactPackageSnapshot) bool {
+	if !catalog.Authoritative || catalog.OfferAvailable || !catalog.InstalledHealthy || !post.Exists || !post.Healthy {
+		return false
+	}
+	baselineVersion := strings.TrimSpace(request.InstalledVersion)
+	if pre.Exists {
+		baselineVersion = strings.TrimSpace(pre.Version)
+	}
+	if storeAssessmentVersionKnown(baselineVersion) {
+		comparison, ok := compareStorePackageVersions(post.Version, baselineVersion)
+		if !ok || comparison < 0 {
+			return false
+		}
+	}
+	if storeAssessmentVersionKnown(request.OfferedVersion) {
+		comparison, ok := compareStorePackageVersions(post.Version, request.OfferedVersion)
+		return ok && comparison >= 0
+	}
+	return true
 }
 
 func appendStoreExecutionDiagnostic(result CommandResult, label string, snapshot StoreExactPackageSnapshot, snapshotResult CommandResult) CommandResult {

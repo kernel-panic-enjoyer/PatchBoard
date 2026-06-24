@@ -37,6 +37,10 @@ func isStoreCommand(args []string) bool {
 	return name == "cmd.exe" && len(args) >= 4 && strings.EqualFold(args[1], "/d") && strings.EqualFold(args[2], "/c") && strings.EqualFold(args[3], "store")
 }
 
+func shouldOwnCommandProcessTree(args []string) bool {
+	return isPackageManagerMutationCommand(args)
+}
+
 func packageManagerCommandVerb(args []string) (string, string) {
 	manager, verb, _ := packageManagerCommandParts(args)
 	return manager, verb

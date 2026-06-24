@@ -1,15 +1,27 @@
 package updater
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 func setThemePreference(theme string) (State, error) {
-	state := loadState()
-	if theme == "light" {
-		state.Theme = "light"
-	} else {
-		state.Theme = "dark"
+	store, err := defaultStateStore()
+	if err != nil {
+		return State{}, err
 	}
-	return state, saveAppState(state)
+	return setThemePreferenceWithStore(context.Background(), store, theme)
+}
+
+func setThemePreferenceWithStore(ctx context.Context, store StateStore, theme string) (State, error) {
+	return store.Update(ctx, func(state *State) error {
+		if theme == "light" {
+			state.Theme = "light"
+		} else {
+			state.Theme = "dark"
+		}
+		return nil
+	})
 }
 
 func parseStartupRequest(r *http.Request) (bool, *CommandResult) {

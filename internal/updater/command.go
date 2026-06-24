@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -64,10 +63,23 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 		defer wingetCommandMu.Unlock()
 	}
 
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	owner, ownerErr := newCommandProcessOwner(shouldOwnCommandProcessTree(args))
+	if ownerErr != nil {
+		result.Code = 127
+		result.Stderr = ownerErr.Error()
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
+		return result
+	}
+	if owner != nil {
+		defer owner.Close()
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Env = launchEnv()
 	cmd.SysProcAttr = hiddenSysProcAttr()
-	var stdout, stderr bytes.Buffer
+	stdout := newBoundedOutputTail(commandResultStreamLimitBytes)
+	stderr := newBoundedOutputTail(commandResultStreamLimitBytes)
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		result.Code = 127
@@ -108,12 +120,24 @@ func runCommandContext(parent context.Context, timeout time.Duration, args ...st
 		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
 		return result
 	}
+	if owner != nil {
+		ownerErr = owner.Assign(cmd)
+	}
+	if ownerErr != nil {
+		terminateStartedCommand(cmd, owner)
+		_ = cmd.Wait()
+		result.Code = 127
+		result.Stderr = ownerErr.Error()
+		logCommand("stderr", result.Stderr)
+		logCommand("exit", fmt.Sprintf("%s exited with code 127", result.Command))
+		return result
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go streamCommandOutputCategorized(stdoutPipe, "stdout", &stdout, &wg, categories)
-	go streamCommandOutputCategorized(stderrPipe, "stderr", &stderr, &wg, categories)
-	err = cmd.Wait()
+	go streamCommandOutputCategorized(stdoutPipe, "stdout", stdout, &wg, categories)
+	go streamCommandOutputCategorized(stderrPipe, "stderr", stderr, &wg, categories)
+	err = waitForStartedCommand(ctx, cmd, owner)
 	wg.Wait()
 
 	result.Stdout = stdout.String()

@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -267,7 +266,7 @@ func appendLogChunkCategorized(stream, pending, chunk string, categories []strin
 	return line.String()
 }
 
-func streamCommandOutputCategorized(reader io.Reader, stream string, output *bytes.Buffer, wg *sync.WaitGroup, categories []string) {
+func streamCommandOutputCategorized(reader io.Reader, stream string, output io.Writer, wg *sync.WaitGroup, categories []string) {
 	defer wg.Done()
 
 	pending := ""
@@ -276,7 +275,7 @@ func streamCommandOutputCategorized(reader io.Reader, stream string, output *byt
 		n, err := reader.Read(buffer)
 		if n > 0 {
 			chunk := string(buffer[:n])
-			output.WriteString(chunk)
+			_, _ = output.Write(buffer[:n])
 			pending = appendLogChunkCategorized(stream, pending, chunk, categories)
 		}
 		if err != nil {

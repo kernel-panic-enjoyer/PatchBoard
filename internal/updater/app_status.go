@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -27,7 +28,14 @@ func (app *App) refreshStatus(force bool) {
 	app.mu.Unlock()
 	appLog("Status refresh started.")
 
-	go app.runStatusRefresh(force)
+	if !app.startBackgroundWork("status refresh", func(ctx context.Context) {
+		app.runStatusRefresh(force)
+	}) {
+		app.mu.Lock()
+		app.statusLoading = false
+		app.statusErr = "shutdown in progress"
+		app.mu.Unlock()
+	}
 }
 
 func (app *App) runStatusRefresh(force bool) {
@@ -41,7 +49,14 @@ func (app *App) runStatusRefresh(force bool) {
 		app.statusLoading = true
 		app.mu.Unlock()
 		appLog("Status refresh completed; running queued refresh.")
-		go app.runStatusRefresh(true)
+		if !app.startBackgroundWork("queued status refresh", func(ctx context.Context) {
+			app.runStatusRefresh(true)
+		}) {
+			app.mu.Lock()
+			app.statusLoading = false
+			app.statusErr = "shutdown in progress"
+			app.mu.Unlock()
+		}
 		return
 	}
 	app.statusLoading = false
@@ -101,7 +116,14 @@ func (app *App) refreshStatusSync(reason string) StatusResponse {
 		app.statusLoading = true
 		app.mu.Unlock()
 		appLog("Status refresh completed; running queued refresh.")
-		go app.runStatusRefresh(true)
+		if !app.startBackgroundWork("queued status refresh", func(ctx context.Context) {
+			app.runStatusRefresh(true)
+		}) {
+			app.mu.Lock()
+			app.statusLoading = false
+			app.statusErr = "shutdown in progress"
+			app.mu.Unlock()
+		}
 		return status
 	}
 	app.statusLoading = false

@@ -71,7 +71,13 @@ func runServer(noBrowser bool) error {
 		return err
 	}
 	app := &App{token: token, sessionToken: sessionToken, listenHost: defaultHost, listenPort: port, storeBackgroundScanEnabled: true}
-	defer app.runShutdownCleanups()
+	defer func() {
+		app.beginShutdown()
+		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {
+			appLog("Server exit timed out waiting for background work.")
+		}
+		app.runShutdownCleanups()
+	}()
 	stopSignalWatcher := app.startShutdownSignalWatcher()
 	defer stopSignalWatcher()
 

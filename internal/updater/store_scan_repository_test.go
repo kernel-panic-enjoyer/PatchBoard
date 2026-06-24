@@ -82,9 +82,11 @@ func assertStoreScanRepositoryRoundTripAndGoldenProjections(t *testing.T, store 
 		t.Fatalf("provider summary mismatch: %#v", providers)
 	}
 
+	restoreNow := replaceStoreScanNow(loaded.Scan.CompletedAt)
+	defer restoreNow()
 	apiInventory := applyPublishedStoreAssessmentsToInventory(defaultState(), Inventory{
 		PackageLookup: PackageLookup{Packages: []Package{transactionalStoreAPIPackage(pfn)}},
-	}, loaded.Assessments, map[string]StorePackagedAppFamily{strings.ToLower(pfn): loaded.Inventory.Families[0]}, providers)
+	}, loaded, map[string]StorePackagedAppFamily{strings.ToLower(pfn): loaded.Inventory.Families[0]}, providers)
 	if len(apiInventory.Packages) != 1 {
 		t.Fatalf("API projection package count=%d", len(apiInventory.Packages))
 	}
@@ -258,8 +260,28 @@ func TestStoreScanFileRepositoryFailureInjection(t *testing.T) {
 	if published, err := reopened.PersistCompletedScanSnapshot(context.Background(), older); err != nil || published {
 		t.Fatalf("late older publish=%t err=%v", published, err)
 	}
+	assertSnapshotFilePublished(t, reopened, older, false)
 	if latest, ok, err := reopened.LoadLatestPublishedSnapshot(context.Background(), userSID); err != nil || !ok || latest.Scan.ScanID != newer.Scan.ScanID {
 		t.Fatalf("older scan replaced newer: ok=%t err=%v latest=%#v", ok, err, latest)
+	}
+	if err := os.Remove(reopened.snapshotPath(newer)); err != nil {
+		t.Fatal(err)
+	}
+	if latest, ok, err := reopened.LoadLatestPublishedSnapshot(context.Background(), userSID); err != nil || !ok || latest.Scan.ScanID == older.Scan.ScanID {
+		t.Fatalf("removed newer promoted never-published older: ok=%t err=%v latest=%#v", ok, err, latest)
+	}
+	if previous, ok, err := reopened.LoadPreviousSnapshot(context.Background(), userSID, newer.Scan); err != nil || !ok || previous.Scan.ScanID != older.Scan.ScanID {
+		t.Fatalf("never-published older should remain available for diagnostics: ok=%t err=%v previous=%#v", ok, err, previous)
+	}
+	replacement := testStoreScanSnapshot(userSID, pfn, "file-newer-replacement", base.Add(11*time.Second), StoreUpdateCurrent)
+	if published, err := reopened.PersistCompletedScanSnapshot(context.Background(), replacement); err != nil || !published {
+		t.Fatalf("replacement publish=%t err=%v", published, err)
+	}
+	if err := os.WriteFile(reopened.snapshotPath(replacement), []byte(`{"schema_version":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if latest, ok, err := reopened.LoadLatestPublishedSnapshot(context.Background(), userSID); err != nil || !ok || latest.Scan.ScanID == older.Scan.ScanID || !latest.RecoveredFromFallback {
+		t.Fatalf("corrupt newer promoted older or missed fallback marker: ok=%t err=%v latest=%#v", ok, err, latest)
 	}
 
 	for index := 0; index < 6; index++ {
@@ -307,6 +329,14 @@ func TestStoreScanFileRepositoryMigratesSchemaOneSnapshot(t *testing.T) {
 	}
 	if loaded.SchemaVersion != storeScanSchemaVersion || loaded.Scan.ScanID != snapshot.Scan.ScanID {
 		t.Fatalf("schema one snapshot was not migrated: %#v", loaded)
+	}
+}
+
+func TestDecodeStoreScanSnapshotRejectsTrailingData(t *testing.T) {
+	snapshot := testStoreScanSnapshot("S-1-5-21-file-trailing", "OpenAI.Codex_abc123", "file-trailing", time.Date(2026, 6, 23, 15, 45, 0, 0, time.UTC), StoreUpdateAvailable)
+	data := append(mustMarshalJSON(t, snapshot), []byte("\n{}")...)
+	if _, err := decodeStoreScanSnapshot(data); err == nil {
+		t.Fatal("snapshot decoder accepted trailing JSON data")
 	}
 }
 
@@ -489,6 +519,23 @@ func writeRawStoreSnapshotPath(t *testing.T, path string, data []byte) {
 	}
 }
 
+func assertSnapshotFilePublished(t *testing.T, repo *StoreScanFileRepository, snapshot StoreScanSnapshot, want bool) {
+	t.Helper()
+	data, err := os.ReadFile(repo.snapshotPath(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Published bool `json:"published"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Published != want {
+		t.Fatalf("snapshot file published=%t, want %t: %s", envelope.Published, want, string(data))
+	}
+}
+
 func countJSONSnapshots(t *testing.T, dir string) int {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -506,6 +553,8 @@ func countJSONSnapshots(t *testing.T, dir string) int {
 
 func storeScanAPIProjectionJSON(t *testing.T, snapshot StoreScanSnapshot) []byte {
 	t.Helper()
+	restoreNow := replaceStoreScanNow(snapshot.Scan.CompletedAt)
+	defer restoreNow()
 	providers := providerSummariesFromRuns(snapshot.ProviderRuns)
 	families := map[string]StorePackagedAppFamily{}
 	for _, family := range snapshot.Inventory.Families {
@@ -513,7 +562,7 @@ func storeScanAPIProjectionJSON(t *testing.T, snapshot StoreScanSnapshot) []byte
 	}
 	inventory := applyPublishedStoreAssessmentsToInventory(defaultState(), Inventory{
 		PackageLookup: PackageLookup{Packages: []Package{transactionalStoreAPIPackage("OpenAI.Codex_abc123")}},
-	}, snapshot.Assessments, families, providers)
+	}, snapshot, families, providers)
 	data, err := json.Marshal(inventory.Packages)
 	if err != nil {
 		t.Fatal(err)

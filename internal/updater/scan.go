@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -39,7 +40,15 @@ var appxAppsReader = readAppxApps
 
 func scanInstalledApplications() ScanResult {
 	appLog("Application scan started.")
-	state := loadState()
+	store, err := defaultStateStore()
+	if err != nil {
+		appLog("Application scan could not open state store: %s.", err)
+		return ScanResult{Errors: []map[string]string{{"source": "state", "error": err.Error()}}}
+	}
+	return scanInstalledApplicationsWithStore(context.Background(), store)
+}
+
+func scanInstalledApplicationsWithStore(ctx context.Context, store StateStore) ScanResult {
 	var errorsOut []map[string]string
 	var registryApps []ScannedApp
 	var wingetApps []ScannedApp
@@ -74,18 +83,37 @@ func scanInstalledApplications() ScanResult {
 		errorsOut = append(errorsOut, map[string]string{"source": "store", "error": appxErr.Error()})
 	}
 
-	registryMap, registryNew, registryRemoved, registryBaseline := diffSnapshot(registryApps, state.RegistryApps)
 	wingetOnlyApps, wingetStoreApps := splitScannedManagedApps(wingetApps)
 	storeApps := mergeScannedManagedApps(wingetStoreApps, appxApps)
-	wingetMap, wingetNew, wingetRemoved, wingetBaseline := diffSnapshot(wingetOnlyApps, state.WingetApps)
-	storeMap, storeNew, storeRemoved, storeBaseline := diffSnapshot(storeApps, state.StoreApps)
-	state.RegistryApps = registryMap
-	state.WingetApps = wingetMap
-	state.StoreApps = storeMap
-	state.LastScanAt = utcNow()
-	if err := saveAppState(state); err != nil {
-		errorsOut = append(errorsOut, map[string]string{"source": "state", "error": err.Error()})
-		appLog("Application scan could not save state: %s.", err)
+
+	var registryMap map[string]ScannedApp
+	var wingetMap map[string]ScannedApp
+	var storeMap map[string]ScannedApp
+	var registryNew []ScannedApp
+	var wingetNew []ScannedApp
+	var storeNew []ScannedApp
+	var registryRemoved []ScannedApp
+	var wingetRemoved []ScannedApp
+	var storeRemoved []ScannedApp
+	var registryBaseline bool
+	var wingetBaseline bool
+	var storeBaseline bool
+	var lastScanAt string
+
+	_, updateErr := store.Update(ctx, func(state *State) error {
+		registryMap, registryNew, registryRemoved, registryBaseline = diffSnapshot(registryApps, state.RegistryApps)
+		wingetMap, wingetNew, wingetRemoved, wingetBaseline = diffSnapshot(wingetOnlyApps, state.WingetApps)
+		storeMap, storeNew, storeRemoved, storeBaseline = diffSnapshot(storeApps, state.StoreApps)
+		lastScanAt = utcNow()
+		state.RegistryApps = registryMap
+		state.WingetApps = wingetMap
+		state.StoreApps = storeMap
+		state.LastScanAt = lastScanAt
+		return nil
+	})
+	if updateErr != nil {
+		errorsOut = append(errorsOut, map[string]string{"source": "state", "error": updateErr.Error()})
+		appLog("Application scan could not save state: %s.", updateErr)
 	}
 
 	newApps := append(registryNew, wingetNew...)
@@ -99,7 +127,7 @@ func scanInstalledApplications() ScanResult {
 	trackedCount := len(registryMap) + len(wingetMap) + len(storeMap)
 	appLog("Application scan completed with %d tracked app(s) and %d new app(s).", trackedCount, len(newApps))
 	return ScanResult{
-		LastScanAt:      state.LastScanAt,
+		LastScanAt:      lastScanAt,
 		Baseline:        registryBaseline && wingetBaseline && storeBaseline,
 		Baselines:       map[string]bool{"registry": registryBaseline, "winget": wingetBaseline, "store": storeBaseline},
 		NewApps:         newApps,

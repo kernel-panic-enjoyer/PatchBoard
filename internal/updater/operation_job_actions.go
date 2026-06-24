@@ -105,19 +105,27 @@ func (app *App) startSingleUpdateJob(manager, id string, options UpdateOptions) 
 	}
 	if !packageHasExactStoreUpdateTarget(pkg) {
 		result := validationCommandResult("update", fmt.Errorf("%s has no exact verified Store update target", pkg.Key))
-		return app.startOperationJobWithPackageSnapshot(jobTypeUpdate, updateJobModeSelected, 1, []string{pkg.Key}, []Package{pkg}, func(ctx context.Context, job *OperationJob) {
-			app.mutateOperationJob(job, func(status *OperationJobStatus) {
-				status.CurrentIndex = 1
-				status.CurrentKey = pkg.Key
-				status.CurrentPackage = updateJobPackageName(pkg)
-				status.Results = []UpdateResult{{Key: pkg.Key, Result: result}}
-				status.Result = &result
-				status.State = jobStateFailed
-				status.Notice = "Update not started. " + result.Stderr
-			})
-		})
+		return app.startRejectedUpdateJob(pkg, result)
+	}
+	if !packageHasFreshStoreAvailableAssessment(pkg) {
+		result := validationCommandResult("update", fmt.Errorf("%s requires a fresh available Store assessment before updating", pkg.Key))
+		return app.startRejectedUpdateJob(pkg, result)
 	}
 	return app.startUpdatePackagesOperation(jobTypeUpdate, updateJobModeSelected, []Package{pkg})
+}
+
+func (app *App) startRejectedUpdateJob(pkg Package, result CommandResult) OperationJobStatus {
+	return app.startOperationJobWithPackageSnapshot(jobTypeUpdate, updateJobModeSelected, 1, []string{pkg.Key}, []Package{pkg}, func(ctx context.Context, job *OperationJob) {
+		app.mutateOperationJob(job, func(status *OperationJobStatus) {
+			status.CurrentIndex = 1
+			status.CurrentKey = pkg.Key
+			status.CurrentPackage = updateJobPackageName(pkg)
+			status.Results = []UpdateResult{{Key: pkg.Key, Result: result}}
+			status.Result = &result
+			status.State = jobStateFailed
+			status.Notice = "Update not started. " + result.Stderr
+		})
+	})
 }
 
 func (app *App) startBulkUpdateJob(packageKeys []string, options UpdateOptions) (OperationJobStatus, error) {

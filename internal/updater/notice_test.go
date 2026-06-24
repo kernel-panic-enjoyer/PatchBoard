@@ -49,3 +49,21 @@ WARNING: It's very likely you will need to close and reopen shells before you ca
 		t.Fatalf("notice too long: %d %q", len(notice), notice)
 	}
 }
+
+func TestUpdateFailureNoticePrefersActionableWingetOutput(t *testing.T) {
+	notice := updateFailureNotice(CommandResult{
+		Code:    2316632151,
+		Command: `C:\Users\User\AppData\Local\Microsoft\WindowsApps\winget.exe upgrade --id yt-dlp.FFmpeg --exact --source winget`,
+		Stdout: `Gefunden FFmpeg for yt-dlp [yt-dlp.FFmpeg] Version N-124716-g054dffd133-20260531
+Diese Anwendung wird von ihrem Besitzer an Sie lizenziert.
+Microsoft ist nicht verantwortlich und erteilt keine Lizenzen für Pakete von Drittanbietern.
+Das Portable-Paket kann nicht entfernt werden, da es geändert wurde. Um dies außer Kraft zu setzen, verwenden Sie "--force"`,
+	})
+
+	if !strings.Contains(notice, "Portable-Paket kann nicht entfernt werden") || !strings.Contains(notice, "--force") {
+		t.Fatalf("notice should surface the actionable portable-package refusal, got %q", notice)
+	}
+	if strings.Contains(notice, "Gefunden FFmpeg") {
+		t.Fatalf("notice should not stop at generic winget progress output: %q", notice)
+	}
+}

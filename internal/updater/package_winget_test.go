@@ -75,6 +75,46 @@ Visual Studio Community 2026 Insiders  Microsoft.VisualStudio.Community.Insiders
 	}
 }
 
+func TestParseWingetTableKeepsDoubleSpaceDisplayNameInNameColumn(t *testing.T) {
+	output := `
+Name                                                         ID                                                                                         Version                       Verfügbar                     Quelle
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Microsoft Visual C++ 2010  x64 Redistributable - 10.0.40219  Microsoft.VCRedist.2010.x64                                                                10.0.40219                                                  winget
+`
+	got := parseWingetTable(output)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 package, got %d: %#v", len(got), got)
+	}
+	pkg := got[0]
+	if pkg.Name != "Microsoft Visual C++ 2010  x64 Redistributable - 10.0.40219" {
+		t.Fatalf("display name shifted or changed: %#v", pkg)
+	}
+	if pkg.ID != "Microsoft.VCRedist.2010.x64" || pkg.Version != "10.0.40219" || pkg.AvailableVersion != "" || pkg.Source != sourceWinget {
+		t.Fatalf("expected exact ID/current version with no available update, got %#v", pkg)
+	}
+}
+
+func TestWingetInventoryDoesNotTreatDoubleSpaceDisplayNameAsUpdate(t *testing.T) {
+	output := `
+Name                                                         ID                                                                                         Version                       Verfügbar                     Quelle
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Microsoft Visual C++ 2010  x64 Redistributable - 10.0.40219  Microsoft.VCRedist.2010.x64                                                                10.0.40219                                                  winget
+`
+	inventory := managerInventory{
+		manager:       managerWinget,
+		installed:     parseWingetTable(output),
+		updates:       map[string]string{},
+		updateDetails: map[string]Package{},
+	}
+	got := packagesFromManagerInventory(State{}, map[string]ManagerStatus{managerWinget: {Available: true}}, inventory)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 package, got %d: %#v", len(got), got)
+	}
+	if got[0].ID != "Microsoft.VCRedist.2010.x64" || got[0].UpdateAvailable || got[0].AvailableVersion != "" {
+		t.Fatalf("current Visual C++ row must not become an update candidate, got %#v", got[0])
+	}
+}
+
 func TestParseWingetExactIDSearchTableWithoutSourceColumn(t *testing.T) {
 	output := `
 Name                          ID                                     Version

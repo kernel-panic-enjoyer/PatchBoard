@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 func appRoot() string {
@@ -69,10 +68,13 @@ func appTempDir() (string, error) {
 }
 
 func canWriteDir(dir string) bool {
-	path := filepath.Join(dir, fmt.Sprintf(".write-test-%d-%d", os.Getpid(), time.Now().UnixNano()))
-	if err := os.WriteFile(path, []byte("ok"), 0o600); err != nil {
+	file, err := os.CreateTemp(dir, fmt.Sprintf(".write-test-%d-", os.Getpid()))
+	if err != nil {
 		return false
 	}
+	path := file.Name()
+	_, writeErr := file.Write([]byte("ok"))
+	closeErr := file.Close()
 	_ = os.Remove(path)
-	return true
+	return writeErr == nil && closeErr == nil
 }

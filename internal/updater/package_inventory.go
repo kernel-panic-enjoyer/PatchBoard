@@ -1,7 +1,5 @@
 package updater
 
-import "context"
-
 type managerInventory struct {
 	manager       string
 	installed     []Package
@@ -54,13 +52,6 @@ func getInventory() Inventory {
 		},
 		Scan: inventoryScanSummary(state, sourceCounts),
 	}
-	// Overlay only the LAST PUBLISHED Store scan here (a fast, read-only disk
-	// read). The expensive fresh Store scan is run separately in the background
-	// by the App layer so the fast managers (winget, choco) are returned without
-	// waiting on the slow Microsoft Store providers. inventorySnapshot re-applies
-	// the published overlay on every read, so the latest Store generation always
-	// surfaces once a background scan completes.
-	inventory = applyPublishedStoreScanAssessments(context.Background(), state, inventory)
 	sortInventoryPackages(inventory.Packages)
 	return inventory
 }

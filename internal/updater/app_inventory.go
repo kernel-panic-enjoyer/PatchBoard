@@ -30,10 +30,19 @@ func (app *App) refreshInventory(force bool) {
 	app.mu.Unlock()
 	appLog("Inventory refresh started.")
 
-	go app.runInventoryRefresh(refreshID, force)
+	if !app.startBackgroundWork("inventory refresh", func(ctx context.Context) {
+		app.runInventoryRefresh(ctx, refreshID, force)
+	}) {
+		app.mu.Lock()
+		if refreshID == app.inventoryRefreshID {
+			app.inventoryLoading = false
+			app.inventoryErr = "shutdown in progress"
+		}
+		app.mu.Unlock()
+	}
 }
 
-func (app *App) runInventoryRefresh(refreshID int64, force bool) {
+func (app *App) runInventoryRefresh(ctx context.Context, refreshID int64, force bool) {
 	inventory := inventoryGetter()
 	app.mu.Lock()
 	if refreshID != app.inventoryRefreshID {
@@ -41,7 +50,7 @@ func (app *App) runInventoryRefresh(refreshID int64, force bool) {
 		appLog("Discarded stale inventory refresh result.")
 		return
 	}
-	app.inventory = inventory
+	app.inventory = inventory.DeepCopy()
 	app.inventoryFetchedAt = time.Now()
 	app.inventoryErr = ""
 	if app.inventoryQueued {
@@ -53,9 +62,18 @@ func (app *App) runInventoryRefresh(refreshID int64, force bool) {
 		app.mu.Unlock()
 		appLog("Inventory refresh completed with %d package(s); running queued refresh.", len(inventory.Packages))
 		if startScan {
-			go app.runStoreScan()
+			app.startStoreScanBackground()
 		}
-		go app.runInventoryRefresh(nextRefreshID, true)
+		if !app.startBackgroundWork("queued inventory refresh", func(ctx context.Context) {
+			app.runInventoryRefresh(ctx, nextRefreshID, true)
+		}) {
+			app.mu.Lock()
+			if nextRefreshID == app.inventoryRefreshID {
+				app.inventoryLoading = false
+				app.inventoryErr = "shutdown in progress"
+			}
+			app.mu.Unlock()
+		}
 		return
 	}
 	app.inventoryLoading = false
@@ -63,7 +81,7 @@ func (app *App) runInventoryRefresh(refreshID int64, force bool) {
 	app.mu.Unlock()
 	appLog("Inventory refresh completed with %d package(s).", len(inventory.Packages))
 	if startScan {
-		go app.runStoreScan()
+		app.startStoreScanBackground()
 	}
 }
 
@@ -87,7 +105,7 @@ func (app *App) refreshInventorySync(reason string) Inventory {
 		appLog("Discarded stale synchronous inventory refresh result for %s.", reason)
 		return inventory
 	}
-	app.inventory = inventory
+	app.inventory = inventory.DeepCopy()
 	app.inventoryFetchedAt = time.Now()
 	app.inventoryErr = ""
 	if app.inventoryQueued {
@@ -99,9 +117,18 @@ func (app *App) refreshInventorySync(reason string) Inventory {
 		app.mu.Unlock()
 		appLog("Inventory refresh completed for %s with %d package(s); running queued refresh.", reason, len(inventory.Packages))
 		if startScan {
-			go app.runStoreScan()
+			app.startStoreScanBackground()
 		}
-		go app.runInventoryRefresh(nextRefreshID, true)
+		if !app.startBackgroundWork("queued inventory refresh", func(ctx context.Context) {
+			app.runInventoryRefresh(ctx, nextRefreshID, true)
+		}) {
+			app.mu.Lock()
+			if nextRefreshID == app.inventoryRefreshID {
+				app.inventoryLoading = false
+				app.inventoryErr = "shutdown in progress"
+			}
+			app.mu.Unlock()
+		}
 		return inventory
 	}
 	app.inventoryLoading = false
@@ -109,9 +136,19 @@ func (app *App) refreshInventorySync(reason string) Inventory {
 	app.mu.Unlock()
 	appLog("Inventory refresh completed for %s with %d package(s).", reason, len(inventory.Packages))
 	if startScan {
-		go app.runStoreScan()
+		app.startStoreScanBackground()
 	}
 	return inventory
+}
+
+func (app *App) startStoreScanBackground() {
+	if app.startBackgroundWork("Store update scan", app.runStoreScan) {
+		return
+	}
+	app.mu.Lock()
+	app.storeScanLoading = false
+	app.storeScanQueued = false
+	app.mu.Unlock()
 }
 
 // storeScanCooldown debounces automatic (non-forced) background Store scans so
@@ -150,11 +187,21 @@ func (app *App) beginStoreScanLocked(force bool) bool {
 // loops and runs exactly one follow-up so a forced refresh is never dropped;
 // storeScanLoading stays true across the follow-up so the frontend keeps
 // polling until the latest requested scan completes.
-func (app *App) runStoreScan() {
+func (app *App) runStoreScan(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			app.mu.Lock()
+			app.storeScanLoading = false
+			app.storeScanQueued = false
+			app.mu.Unlock()
+			appLog("Background Microsoft Store update scan cancelled before start.")
+			return
+		}
 		appLog("Background Microsoft Store update scan started.")
-		result, err := runStoreTransactionalScanForInventory(context.Background())
+		result, err := runStoreTransactionalScanForInventory(ctx)
 		switch {
+		case ctx.Err() != nil:
+			appLog("Background Store update scan cancelled.")
 		case err != nil:
 			appLog("Background Store update scan failed: %s", err)
 		case !result.Published:
@@ -164,7 +211,7 @@ func (app *App) runStoreScan() {
 		}
 		app.mu.Lock()
 		app.storeScanFetchedAt = time.Now()
-		if app.storeScanQueued {
+		if ctx.Err() == nil && app.storeScanQueued {
 			app.storeScanQueued = false
 			app.mu.Unlock()
 			continue
@@ -200,19 +247,61 @@ func (app *App) waitForStoreScanIdle(ctx context.Context, timeout time.Duration)
 	}
 }
 
-func (app *App) inventorySnapshot() InventoryResponse {
+type inventoryCacheSnapshot struct {
+	inventory    Inventory
+	loading      bool
+	fetchedAt    time.Time
+	errText      string
+	storeLoading bool
+}
+
+func (app *App) cacheInventorySnapshot() inventoryCacheSnapshot {
 	app.mu.RLock()
-	inventory := app.inventory
-	loading := app.inventoryLoading
-	fetchedAt := app.inventoryFetchedAt
-	errText := app.inventoryErr
-	storeLoading := app.storeScanLoading
+	snapshot := inventoryCacheSnapshot{
+		inventory:    app.inventory.DeepCopy(),
+		loading:      app.inventoryLoading,
+		fetchedAt:    app.inventoryFetchedAt,
+		errText:      app.inventoryErr,
+		storeLoading: app.storeScanLoading,
+	}
 	app.mu.RUnlock()
+	return snapshot
+}
+
+func (app *App) effectiveInventorySnapshot(ctx context.Context) (Inventory, error) {
+	snapshot, err := app.effectiveInventoryCacheSnapshot(ctx)
+	return snapshot.inventory, err
+}
+
+func (app *App) effectiveInventoryCacheSnapshot(ctx context.Context) (inventoryCacheSnapshot, error) {
+	snapshot := app.cacheInventorySnapshot()
+	state := loadState()
+	if snapshot.fetchedAt.IsZero() {
+		snapshot.inventory.Scan = inventoryScanSummary(state, managedScanSourceCounts(state))
+	}
+	snapshot.inventory = effectiveInventoryFromBase(ctx, state, snapshot.inventory)
+	return snapshot, ctx.Err()
+}
+
+func effectiveInventoryFromBase(ctx context.Context, state State, inventory Inventory) Inventory {
+	inventory = applyInventoryState(state, inventory.DeepCopy())
+	return applyPublishedStoreScanAssessments(ctx, state, inventory)
+}
+
+func applyInventoryState(state State, inventory Inventory) Inventory {
+	for index := range inventory.Packages {
+		inventory.Packages[index].AutoUpdate = packageAutoUpdateEnabled(state, inventory.Packages[index])
+	}
+	return inventory
+}
+
+func (app *App) inventorySnapshot() InventoryResponse {
+	snapshot, _ := app.effectiveInventoryCacheSnapshot(context.Background())
 
 	response := InventoryResponse{
-		Inventory:     inventory,
-		AsyncSnapshot: asyncSnapshot(loading, fetchedAt, errText),
-		StoreLoading:  storeLoading,
+		Inventory:     snapshot.inventory,
+		AsyncSnapshot: asyncSnapshot(snapshot.loading, snapshot.fetchedAt, snapshot.errText),
+		StoreLoading:  snapshot.storeLoading,
 	}
 	if response.Managers == nil {
 		response.Managers = map[string]ManagerStatus{}
@@ -220,11 +309,5 @@ func (app *App) inventorySnapshot() InventoryResponse {
 	if response.CommandResults == nil {
 		response.CommandResults = map[string]CommandResult{}
 	}
-	if fetchedAt.IsZero() {
-		state := loadState()
-		response.Scan = inventoryScanSummary(state, managedScanSourceCounts(state))
-	}
-	state := loadState()
-	response.Inventory = applyPublishedStoreScanAssessments(context.Background(), state, response.Inventory)
 	return response
 }

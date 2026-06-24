@@ -1,0 +1,73 @@
+package updater
+
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
+// commandResultStreamLimitBytes bounds the stdout/stderr retained in
+// CommandResult. The Session Log still receives the complete stream as it is
+// produced; this limit only caps per-result JSON/job retention.
+const commandResultStreamLimitBytes = 2 * 1024 * 1024
+
+type boundedOutputTail struct {
+	limit   int
+	buffer  []byte
+	omitted int64
+}
+
+func newBoundedOutputTail(limit int) *boundedOutputTail {
+	return &boundedOutputTail{limit: limit}
+}
+
+func (tail *boundedOutputTail) Write(data []byte) (int, error) {
+	written := len(data)
+	if written == 0 {
+		return 0, nil
+	}
+	if tail.limit <= 0 {
+		tail.omitted += int64(written)
+		return written, nil
+	}
+	if len(data) >= tail.limit {
+		tail.omitted += int64(len(tail.buffer) + len(data) - tail.limit)
+		tail.buffer = append(tail.buffer[:0], data[len(data)-tail.limit:]...)
+		return written, nil
+	}
+	overflow := len(tail.buffer) + len(data) - tail.limit
+	if overflow > 0 {
+		tail.omitted += int64(overflow)
+		copy(tail.buffer, tail.buffer[overflow:])
+		tail.buffer = tail.buffer[:len(tail.buffer)-overflow]
+	}
+	tail.buffer = append(tail.buffer, data...)
+	return written, nil
+}
+
+func (tail *boundedOutputTail) String() string {
+	output := validUTF8TailString(tail.buffer)
+	if tail.omitted == 0 {
+		return output
+	}
+	marker := fmt.Sprintf("[output truncated: omitted %d bytes]\n", tail.omitted)
+	return marker + output
+}
+
+func validUTF8TailString(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if utf8.Valid(data) {
+		return string(data)
+	}
+	trimmed := data
+	for len(trimmed) > 0 {
+		r, size := utf8.DecodeRune(trimmed)
+		if r != utf8.RuneError || size > 1 || trimmed[0] < utf8.RuneSelf {
+			break
+		}
+		trimmed = trimmed[1:]
+	}
+	return strings.ToValidUTF8(string(trimmed), "")
+}

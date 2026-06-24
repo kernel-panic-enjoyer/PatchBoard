@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -83,7 +84,9 @@ func authenticatedRequest(app *App, method, target string, body io.Reader) *http
 	return request
 }
 
-func testUpdateJobApp() *App {
+func testUpdateJobApp(t *testing.T) *App {
+	t.Helper()
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
 	return &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		{Key: "winget:Git.Git", Manager: managerWinget, ID: "Git.Git", Name: "Git", UpdateAvailable: true, UpdateSupported: true},
 		{Key: "choco:gh", Manager: managerChoco, ID: "gh", Name: "GitHub CLI", UpdateAvailable: true, UpdateSupported: true},
@@ -103,4 +106,61 @@ func waitForUpdateJobStopped(t *testing.T, app *App) UpdateJobStatus {
 	}
 	t.Fatal("update job did not stop")
 	return UpdateJobStatus{}
+}
+
+func waitForOperationJobState(app *App, id string, timeout time.Duration) (OperationJobStatus, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if status, ok := app.operationJobStatus(id); ok && operationJobComplete(status) {
+			return status, true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return OperationJobStatus{}, false
+}
+
+type memoryStateStore struct {
+	mu         sync.Mutex
+	state      State
+	loadErr    error
+	updateErr  error
+	updateHook func(*State) error
+}
+
+func newMemoryStateStore(state State) *memoryStateStore {
+	normalizeState(&state, nil)
+	return &memoryStateStore{state: state}
+}
+
+func (store *memoryStateStore) Load(context.Context) (State, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.loadErr != nil {
+		return State{}, store.loadErr
+	}
+	return store.state, nil
+}
+
+func (store *memoryStateStore) Update(ctx context.Context, mutate func(*State) error) (State, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	if store.updateErr != nil {
+		return State{}, store.updateErr
+	}
+	next := store.state
+	if err := mutate(&next); err != nil {
+		return State{}, err
+	}
+	if store.updateHook != nil {
+		if err := store.updateHook(&next); err != nil {
+			return State{}, err
+		}
+	}
+	normalizeState(&next, nil)
+	next.UpdatedAt = utcNow()
+	store.state = next
+	return next, nil
 }

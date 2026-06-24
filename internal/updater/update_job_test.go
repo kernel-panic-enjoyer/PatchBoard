@@ -18,7 +18,7 @@ func TestUpdateJobQueuesConcurrentStarts(t *testing.T) {
 	})
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	status, err := app.startUpdateJob(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestUpdateJobStatusReturnsIndependentSlices(t *testing.T) {
 }
 
 func TestUpdateJobRejectsSelectedUnknownVersionPackage(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	_, err := app.startUpdateJob([]string{"winget:Vendor.Unknown"})
 	if err == nil || !strings.Contains(err.Error(), "requires an explicit global unknown-version update choice") {
 		t.Fatalf("expected selected unknown-version package to be rejected, got %v", err)
@@ -76,7 +76,7 @@ func TestUpdateJobRejectsSelectedUnknownVersionPackage(t *testing.T) {
 }
 
 func TestUpdateJobRejectsSelectedStorePackageWithoutAssessment(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	_, _, err := app.updateJobPackages([]string{packageKey(managerStore, "Missing.Store_abc123")}, UpdateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "has no exact verified Store update target") {
 		t.Fatalf("expected selected Store package without assessment to be rejected, got %v", err)
@@ -84,7 +84,7 @@ func TestUpdateJobRejectsSelectedStorePackageWithoutAssessment(t *testing.T) {
 }
 
 func TestUpdateJobAllowsSelectedUnknownVersionPackageWithGlobalOption(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	packages, mode, err := app.updateJobPackages([]string{"winget:Vendor.Unknown"}, UpdateOptions{AllowUnknownVersion: true, AllowPinned: true})
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestUpdateJobAllowsSelectedUnknownVersionPackageWithGlobalOption(t *testing
 }
 
 func TestUpdateJobRejectsSelectedPinnedPackage(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	app.mu.Lock()
 	app.inventory.Packages = append(app.inventory.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
@@ -120,7 +120,7 @@ func TestUpdateJobRejectsSelectedPinnedPackage(t *testing.T) {
 }
 
 func TestUpdateJobAllowsSelectedPinnedPackageWithGlobalOption(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	app.mu.Lock()
 	app.inventory.Packages = append(app.inventory.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
@@ -151,7 +151,7 @@ func TestUpdateJobStatusKeepsPackageSnapshotAndOverrides(t *testing.T) {
 	})
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	app.mu.Lock()
 	app.inventory.Packages = append(app.inventory.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
@@ -177,7 +177,7 @@ func TestUpdateJobStatusKeepsPackageSnapshotAndOverrides(t *testing.T) {
 }
 
 func TestUpdateJobBulkIncludesUnknownVersionWithGlobalOption(t *testing.T) {
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	packages, mode, err := app.updateJobPackages(nil, UpdateOptions{AllowUnknownVersion: true})
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 	})
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 	})
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	app.sessionToken = "test-session"
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git"}); err != nil {
 		t.Fatal(err)
@@ -528,7 +528,7 @@ func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 	)
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git"}); err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestUpdateJobValidatesConcurrentQueuedStart(t *testing.T) {
 	})
 	defer restore()
 
-	app := testUpdateJobApp()
+	app := testUpdateJobApp(t)
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}

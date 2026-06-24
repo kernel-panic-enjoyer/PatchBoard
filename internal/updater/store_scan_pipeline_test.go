@@ -31,6 +31,103 @@ func TestStoreScanPipelineInterruptedTransactionKeepsPreviousGeneration(t *testi
 	}
 }
 
+func TestStoreScanPipelineDoesNotPersistWhenPreviousAssessmentsFail(t *testing.T) {
+	userSID := "S-1-5-21-hysteresis-fail"
+	pfn := "OpenAI.Codex_abc123"
+	store := &failingPreviousStoreScanRepository{err: errors.New("prior published snapshot unreadable")}
+	restore := replaceStoreScanSID(userSID)
+	defer restore()
+	pipeline := newTestStoreScanPipeline(store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
+	result, err := pipeline.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "hysteresis") {
+		t.Fatalf("expected hysteresis load failure, got result=%#v err=%v", result, err)
+	}
+	if store.persistCalls != 0 {
+		t.Fatalf("PersistCompletedScanSnapshot was called %d times after prior snapshot load failure", store.persistCalls)
+	}
+	if result.Scan.ScanID == "" || len(result.ProviderRuns) == 0 || len(result.Assessments) == 0 {
+		t.Fatalf("scan diagnostics were not returned with hysteresis failure: %#v", result)
+	}
+}
+
+func TestStoreScanCoordinatorPreventsConcurrentPipelineEntryPoints(t *testing.T) {
+	store := newTestStoreScanRepository(t)
+	userSID := "S-1-5-21-scan-singleflight"
+	pfn := "OpenAI.Codex_abc123"
+	started := make(chan struct{})
+	release := make(chan struct{})
+	blocking := fakeCatalogProvider{id: "blocking-singleflight", fn: func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily) StoreCatalogProviderRun {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return positiveProvider(pfn, "1.0.0", "1.1.0").Observe(ctx, scan, families)
+	}}
+	first := newTestStoreScanPipeline(store, userSID, pfn, blocking)
+	second := newTestStoreScanPipeline(store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
+	restore := replaceStoreScanSID(userSID)
+	defer restore()
+	errs := make(chan error, 1)
+	go func() {
+		_, err := first.Run(context.Background())
+		errs <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first scan did not start")
+	}
+	if _, err := second.Run(context.Background()); !errors.Is(err, errStoreScanAlreadyRunning) {
+		close(release)
+		t.Fatalf("expected concurrent scan rejection, got %v", err)
+	}
+	close(release)
+	if err := <-errs; err != nil {
+		t.Fatalf("first scan failed: %v", err)
+	}
+}
+
+func TestStoreScanCoordinatorCancellationReleasesEntryPoint(t *testing.T) {
+	store := newTestStoreScanRepository(t)
+	userSID := "S-1-5-21-scan-cancel-release"
+	pfn := "OpenAI.Codex_abc123"
+	started := make(chan struct{})
+	blocking := fakeCatalogProvider{id: "blocking-cancel", fn: func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily) StoreCatalogProviderRun {
+		close(started)
+		<-ctx.Done()
+		return StoreCatalogProviderRun{
+			Provider:    StoreProviderIdentity{ID: "blocking-cancel", Name: "blocking-cancel", Backend: "fake"},
+			StartedAt:   scan.StartedAt,
+			CompletedAt: scan.StartedAt.Add(time.Second),
+			Health:      StoreProviderFailed,
+			Error:       ctx.Err().Error(),
+		}
+	}}
+	first := newTestStoreScanPipeline(store, userSID, pfn, blocking)
+	restore := replaceStoreScanSID(userSID)
+	defer restore()
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		_, err := first.Run(ctx)
+		errs <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first scan did not start")
+	}
+	cancel()
+	if err := <-errs; err == nil {
+		t.Fatal("cancelled scan unexpectedly succeeded")
+	}
+	second := newTestStoreScanPipeline(store, userSID, pfn, positiveProvider(pfn, "1.0.0", "1.1.0"))
+	if _, err := second.Run(context.Background()); err != nil {
+		t.Fatalf("coordinator was not released after cancellation: %v", err)
+	}
+}
+
 func TestStoreScanOldStateFixturePreservesDurablePreferences(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", dir)
@@ -1005,6 +1102,7 @@ func TestStoreScanInapplicableAndUnresolvedIdentity(t *testing.T) {
 func TestStoreTransactionalScanInventoryAdapter(t *testing.T) {
 	state := defaultState()
 	pfn := "OpenAI.Codex_abc123"
+	now := storeScanNow()
 	inventory := Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             packageKey(managerStore, pfn),
 		Manager:         managerStore,
@@ -1023,12 +1121,23 @@ func TestStoreTransactionalScanInventoryAdapter(t *testing.T) {
 			InstalledVersion: "1.0.0",
 			AvailableVersion: "1.1.0",
 		},
-		ObservedAt:                 time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
+		ObservedAt:                 now,
 		StoreProductID:             "9NCODEX",
 		ExactActionTargetAvailable: true,
 		Applicability:              "applicable",
 	}
-	adapted := applyPublishedStoreAssessmentsToInventory(state, inventory, []StorePublishedAssessment{assessment}, nil, nil)
+	snapshot := StoreScanSnapshot{
+		SchemaVersion: storeScanSchemaVersion,
+		Published:     true,
+		Scan: StoreScanGeneration{
+			ScanID:           "scan-adapter",
+			UserSID:          "S-1-5-21-adapter",
+			CompletedAt:      now,
+			CompletionStatus: StoreScanCompleted,
+		},
+		Assessments: []StorePublishedAssessment{assessment},
+	}
+	adapted := applyPublishedStoreAssessmentsToInventory(state, inventory, snapshot, nil, nil)
 	got := adapted.Packages[0]
 	if got.UpdateState != string(StoreUpdateAvailable) || !got.UpdateAvailable || !got.ExactActionTargetAvailable || got.ID != pfn || got.StoreProductID != "9NCODEX" {
 		t.Fatalf("published assessment was not adapted into package response: %#v", got)
@@ -1038,6 +1147,7 @@ func TestStoreTransactionalScanInventoryAdapter(t *testing.T) {
 func TestPublishedStoreAssessmentStalePositiveIsDiagnosticOnly(t *testing.T) {
 	state := defaultState()
 	pfn := "OpenAI.Codex_abc123"
+	now := storeScanNow()
 	inventory := Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             packageKey(managerStore, pfn),
 		Manager:         managerStore,
@@ -1056,13 +1166,24 @@ func TestPublishedStoreAssessmentStalePositiveIsDiagnosticOnly(t *testing.T) {
 			InstalledVersion: "1.0.0",
 			AvailableVersion: "1.1.0",
 		},
-		ObservedAt:                 time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
+		ObservedAt:                 now,
 		Stale:                      true,
 		StoreProductID:             "9NCODEX",
 		ExactActionTargetAvailable: true,
 		Applicability:              "applicable",
 	}
-	adapted := applyPublishedStoreAssessmentsToInventory(state, inventory, []StorePublishedAssessment{assessment}, nil, nil)
+	snapshot := StoreScanSnapshot{
+		SchemaVersion: storeScanSchemaVersion,
+		Published:     true,
+		Scan: StoreScanGeneration{
+			ScanID:           "previous-scan",
+			UserSID:          "S-1-5-21-adapter",
+			CompletedAt:      now,
+			CompletionStatus: StoreScanCompleted,
+		},
+		Assessments: []StorePublishedAssessment{assessment},
+	}
+	adapted := applyPublishedStoreAssessmentsToInventory(state, inventory, snapshot, nil, nil)
 	got := adapted.Packages[0]
 	if got.UpdateState != string(StoreUpdateAvailable) || !got.Stale {
 		t.Fatalf("stale assessment state was not preserved for diagnostics: %#v", got)
@@ -1133,6 +1254,28 @@ type fakeInventoryProvider struct {
 	inventory StorePackagedAppInventory
 	result    CommandResult
 	fn        func(context.Context, StoreScanGeneration) (StorePackagedAppInventory, CommandResult)
+}
+
+type failingPreviousStoreScanRepository struct {
+	err          error
+	persistCalls int
+}
+
+func (repo *failingPreviousStoreScanRepository) PersistCompletedScanSnapshot(context.Context, StoreScanSnapshot) (bool, error) {
+	repo.persistCalls++
+	return true, nil
+}
+
+func (repo *failingPreviousStoreScanRepository) LoadLatestPublishedSnapshot(context.Context, string) (StoreScanSnapshot, bool, error) {
+	return StoreScanSnapshot{}, false, repo.err
+}
+
+func (repo *failingPreviousStoreScanRepository) LoadPreviousSnapshot(context.Context, string, StoreScanGeneration) (StoreScanSnapshot, bool, error) {
+	return StoreScanSnapshot{}, false, nil
+}
+
+func (repo *failingPreviousStoreScanRepository) Close() error {
+	return nil
 }
 
 func (provider fakeInventoryProvider) Inventory(ctx context.Context, scan StoreScanGeneration) (StorePackagedAppInventory, CommandResult) {
@@ -1287,6 +1430,12 @@ func replaceStoreScanSID(sid string) func() {
 	old := storeScanCurrentUserSID
 	storeScanCurrentUserSID = func() (string, error) { return sid, nil }
 	return func() { storeScanCurrentUserSID = old }
+}
+
+func replaceStoreScanNow(now time.Time) func() {
+	old := storeScanNow
+	storeScanNow = func() time.Time { return now.UTC() }
+	return func() { storeScanNow = old }
 }
 
 func replaceStoreScanSystemContext(context storeScanSystemContext) func() {

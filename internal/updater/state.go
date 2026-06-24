@@ -1,10 +1,12 @@
 package updater
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -54,24 +56,148 @@ func defaultState() State {
 	}
 }
 
-func loadState() State {
-	state := defaultState()
+type StateStore interface {
+	Load(context.Context) (State, error)
+	Update(context.Context, func(*State) error) (State, error)
+}
+
+type FileStateStore struct {
+	dir     string
+	replace func(tempPath, targetPath, backupPath string) error
+}
+
+var statePathLocks sync.Map
+
+func defaultStateStore() (StateStore, error) {
 	dir, err := stateDir()
 	if err != nil {
-		return state
+		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	return NewFileStateStore(dir), nil
+}
+
+func NewFileStateStore(dir string) *FileStateStore {
+	return &FileStateStore{dir: dir, replace: replaceStateFile}
+}
+
+func (store *FileStateStore) Load(ctx context.Context) (State, error) {
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	dir, err := store.stateDir()
 	if err != nil {
-		return state
+		return State{}, err
 	}
+	lock := statePathMutex(dir)
+	lock.Lock()
+	defer lock.Unlock()
+	release, err := acquireStateStoreProcessLock(ctx, dir)
+	if err != nil {
+		return State{}, err
+	}
+	defer release()
+	return store.loadLocked(ctx, dir)
+}
+
+func (store *FileStateStore) Update(ctx context.Context, mutate func(*State) error) (State, error) {
+	if mutate == nil {
+		return State{}, errors.New("state mutation is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	dir, err := store.stateDir()
+	if err != nil {
+		return State{}, err
+	}
+	lock := statePathMutex(dir)
+	lock.Lock()
+	defer lock.Unlock()
+	release, err := acquireStateStoreProcessLock(ctx, dir)
+	if err != nil {
+		return State{}, err
+	}
+	defer release()
+
+	state, err := store.loadLocked(ctx, dir)
+	if err != nil {
+		return State{}, err
+	}
+	if err := mutate(&state); err != nil {
+		return State{}, err
+	}
+	normalizeState(&state, nil)
+	state.UpdatedAt = utcNow()
+	if err := store.writeLocked(ctx, dir, state); err != nil {
+		return State{}, err
+	}
+	return state, nil
+}
+
+func loadState() State {
+	store, err := defaultStateStore()
+	if err != nil {
+		appLog("Could not open state store: %s.", err)
+		return defaultState()
+	}
+	state, err := store.Load(context.Background())
+	if err != nil {
+		appLog("Could not load state: %s.", err)
+		return defaultState()
+	}
+	return state
+}
+
+func (store *FileStateStore) loadLocked(ctx context.Context, dir string) (State, error) {
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	path := filepath.Join(dir, "state.json")
+	backupPath := filepath.Join(dir, "state.json.bak")
+	state, _, err := readStateFile(path)
+	if err == nil {
+		return state, nil
+	}
+	if !os.IsNotExist(err) {
+		backupState, backupData, backupErr := readStateFile(backupPath)
+		if backupErr == nil {
+			appLog("Recovered state.json from backup after primary load failed: %s.", err)
+			if restoreErr := store.writeBytesLocked(ctx, dir, backupData, "state-recover-", "state.json.corrupt"); restoreErr != nil {
+				appLog("Could not restore recovered state backup to state.json: %s.", restoreErr)
+			}
+			return backupState, nil
+		}
+		appLog("State primary and backup could not be loaded; using defaults. primary=%s backup=%s.", err, backupErr)
+		return defaultState(), nil
+	}
+	return defaultState(), nil
+}
+
+func readStateFile(path string) (State, []byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return State{}, nil, err
+	}
+	state := defaultState()
 	legacy := readLegacyStateFields(data)
 	if err := json.Unmarshal(data, &state); err != nil {
-		return defaultState()
+		return State{}, data, err
+	}
+	normalizeState(&state, legacy.AssessmentCache)
+	return state, data, nil
+}
+
+func normalizeState(state *State, legacyAssessments map[string]legacyAssessmentCacheEntry) {
+	if state.CreatedAt == "" {
+		state.CreatedAt = utcNow()
+	}
+	if state.UpdatedAt == "" {
+		state.UpdatedAt = state.CreatedAt
 	}
 	if state.AutoUpdatePackages == nil {
 		state.AutoUpdatePackages = map[string]bool{}
 	}
-	normalizeAutoUpdatePackageKeys(&state, legacy.AssessmentCache)
+	normalizeAutoUpdatePackageKeys(state, legacyAssessments)
 	if state.RegistryApps == nil {
 		state.RegistryApps = map[string]ScannedApp{}
 	}
@@ -81,36 +207,87 @@ func loadState() State {
 	if state.StoreApps == nil {
 		state.StoreApps = map[string]ScannedApp{}
 	}
-	migrateStoreScanApps(&state)
+	migrateStoreScanApps(state)
 	if state.Theme == "" {
 		state.Theme = "dark"
 	}
-	return state
 }
 
-func saveState(state State) error {
-	state.UpdatedAt = utcNow()
-	dir, err := stateDir()
+func (store *FileStateStore) writeLocked(ctx context.Context, dir string, state State) error {
+	data, err := marshalState(state)
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(state, "", "  ")
+	return store.writeBytesLocked(ctx, dir, data, "state-", "state.json.bak")
+}
+
+func (store *FileStateStore) writeBytesLocked(ctx context.Context, dir string, data []byte, tempPattern, backupName string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(dir, tempPattern)
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, fmt.Sprintf("state-%d-%d.tmp", os.Getpid(), time.Now().UnixNano()))
-	path := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(path)
-		if retryErr := os.Rename(tmp, path); retryErr != nil {
-			_ = os.Remove(tmp)
-			return err
+	tempPath := temp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
 		}
+	}()
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
 	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	replacer := replaceStateFile
+	if store != nil && store.replace != nil {
+		replacer = store.replace
+	}
+	backupPath := ""
+	if backupName != "" {
+		backupPath = filepath.Join(dir, backupName)
+	}
+	if err := replacer(tempPath, filepath.Join(dir, "state.json"), backupPath); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 
-var saveAppState = saveState
+func marshalState(state State) ([]byte, error) {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func (store *FileStateStore) stateDir() (string, error) {
+	if store != nil && store.dir != "" {
+		if err := os.MkdirAll(store.dir, 0o755); err != nil {
+			return "", err
+		}
+		return store.dir, nil
+	}
+	return stateDir()
+}
+
+func statePathMutex(dir string) *sync.Mutex {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		absolute = dir
+	}
+	value, _ := statePathLocks.LoadOrStore(absolute, &sync.Mutex{})
+	return value.(*sync.Mutex)
+}

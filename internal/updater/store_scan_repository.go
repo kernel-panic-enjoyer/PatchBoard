@@ -11,12 +11,16 @@ import (
 )
 
 type StoreScanSnapshot struct {
-	SchemaVersion int                        `json:"schema_version"`
-	Published     bool                       `json:"published"`
-	Scan          StoreScanGeneration        `json:"scan"`
-	Inventory     StorePackagedAppInventory  `json:"inventory"`
-	ProviderRuns  []StoreCatalogProviderRun  `json:"provider_runs"`
-	Assessments   []StorePublishedAssessment `json:"assessments"`
+	SchemaVersion int  `json:"schema_version"`
+	Published     bool `json:"published"`
+	// RecoveredFromFallback is set in memory when a published snapshot is used
+	// only because a newer snapshot file could not be decoded. Recovered
+	// evidence is retained for diagnostics, but must not authorize updates.
+	RecoveredFromFallback bool                       `json:"recovered_from_fallback,omitempty"`
+	Scan                  StoreScanGeneration        `json:"scan"`
+	Inventory             StorePackagedAppInventory  `json:"inventory"`
+	ProviderRuns          []StoreCatalogProviderRun  `json:"provider_runs"`
+	Assessments           []StorePublishedAssessment `json:"assessments"`
 }
 
 type StorePublishedAssessment struct {
