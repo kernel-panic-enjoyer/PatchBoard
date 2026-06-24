@@ -25,6 +25,9 @@
 - 2026-06-24T17:11:28+02:00 [USER] Active objective: remove redundant backend/source repetition from the Updates Available manager column.
 - 2026-06-24T17:14:34+02:00 [USER] Active objective: center the toast notification close `x` control.
 - 2026-06-24T17:17:18+02:00 [USER] Active objective: remove size-analysis leftovers from the workspace.
+- 2026-06-24T17:21:01+02:00 [USER] Active objective: remove redundant `Available` plus `Update available` text from Store update rows.
+- 2026-06-24T17:23:18+02:00 [USER] Active objective: move update diagnostics icon to the right of the row Update button.
+- 2026-06-24T17:26:08+02:00 [USER] Active objective: rename the log-specific reconnecting copy to a general backend reconnecting message.
 
 [DECISIONS]
 
@@ -79,6 +82,9 @@
 - 2026-06-24T17:11:28+02:00 [CODE] Updates Available rows now call `managerCell(pkg, {compact:true})`, so manager cells show a single badge (`winget`, `Store`, etc.) instead of repeating equivalent action backend labels like `winget` or `Store CLI`.
 - 2026-06-24T17:14:34+02:00 [CODE] Toast close controls now render the shared SVG `close` icon instead of the text `&times;` glyph, and `.toast-close` is a fixed 28px grid-centered icon button.
 - 2026-06-24T17:17:18+02:00 [CODE] Removed size-analysis leftovers: deleted `dev/scripts/Measure-BinarySize.ps1`, deleted `docs/reports/binary-size-baseline.md`, removed the stale measurement-script validation bullet from `docs/reports/store-legacy-detector-retirement.md`, and deleted ignored generated output under `dist/size-analysis`.
+- 2026-06-24T17:21:01+02:00 [CODE] Store `available` cells now show only the `Available` badge when no offered version/detail exists; actual offered versions still render below the badge, and the old `Update available` fallback is guarded against in the UI smoke test.
+- 2026-06-24T17:23:18+02:00 [CODE] `.row-actions` now uses horizontal flex layout with the update form and diagnostics icon in one row, keeping the diagnostics button to the right of the row Update button.
+- 2026-06-24T17:26:08+02:00 [CODE] Log polling and event-stream disconnect states now display `Reconnecting to backend`; the UI smoke test expects the new message and rejects the old `Log reconnecting` text.
 
 [DISCOVERIES]
 
@@ -130,3 +136,6 @@
 - 2026-06-24T17:11:28+02:00 [TOOL] Compact update-manager-column validation passed: focused HTML hook test, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.
 - 2026-06-24T17:14:34+02:00 [TOOL] Toast close-control validation passed: focused HTML hook test, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.
 - 2026-06-24T17:17:18+02:00 [TOOL] Size-analysis cleanup validation passed: no visible workspace matches for `size-analysis`, `Measure-BinarySize`, `binary-size-baseline`, `BinarySize`, `dist/size`, or `binary-size`; deleted paths do not exist; `dist\` contains only `WindowsUpdaterWebUI.exe`; `go test -count=1 ./...`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1` passed; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.
+- 2026-06-24T17:21:01+02:00 [TOOL] Available-cell redundancy validation passed: focused HTML hook test, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.
+- 2026-06-24T17:23:18+02:00 [TOOL] Row diagnostics placement validation passed: focused HTML hook test, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.
+- 2026-06-24T17:26:08+02:00 [TOOL] Backend-reconnect copy validation passed: focused HTML hook test, bundled Node `--check internal/updater/assets/ui.js`, `go test -count=1 ./...`, `go vet ./...`, browser tests from `tests/browser` with `-tags uitestsupport`, `git diff --check` with CRLF warnings only, and `powershell -NoProfile -ExecutionPolicy Bypass -File dev\scripts\Build-Workspace.ps1`; rebuilt `dist\WindowsUpdaterWebUI.exe` at 14,676,480 bytes.

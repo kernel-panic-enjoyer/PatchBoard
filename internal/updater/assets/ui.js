@@ -342,7 +342,7 @@
   }
   async function loadLogs(){
     try{
-      setLogConnectionState("reconnecting", "Reconnecting");
+      setLogConnectionState("reconnecting", "Reconnecting to backend");
       var response = await fetch(api("/api/logs", {since:String(lastLogID)}));
       var data = await response.json();
       if(!response.ok){ throw new Error(data.error || "Log polling failed"); }
@@ -359,7 +359,7 @@
         logPollDelay = Math.min(10000, Math.round(logPollDelay * 1.35));
       }
     }catch(e){
-      setLogConnectionState("disconnected", "Log reconnecting");
+      setLogConnectionState("disconnected", "Reconnecting to backend");
       logPollDelay = Math.min(15000, Math.round(logPollDelay * 1.6));
     }
   }
@@ -409,7 +409,7 @@
       }catch(e){}
     });
     eventStream.onerror = function(){
-      setLogConnectionState("disconnected", "Log reconnecting");
+      setLogConnectionState("disconnected", "Reconnecting to backend");
       if(eventStream){
         eventStream.close();
         eventStream = null;
@@ -1102,6 +1102,9 @@
     var showStatusBadge = options.statusBadge !== false;
     var compact = options.compact === true;
     function withOptionalBadge(text, muted){
+      if(!text){
+        return showStatusBadge ? stateBadge(pkg) : '<span class="muted">-</span>';
+      }
       var content = muted ? '<span class="muted">' + html(text) + '</span>' : html(text);
       if(!showStatusBadge){
         return content;
@@ -1117,7 +1120,7 @@
       }else if(state === "available" && !packageHasExactStoreTarget(pkg)){
         text = "Exact target unavailable";
       }else if(state === "available"){
-        text = offered ? offered : "Update available";
+        text = offered;
       }else if(state === "pending"){
         text = offered ? offered + " pending" : "Pending verification";
       }else if(state === "inapplicable"){
