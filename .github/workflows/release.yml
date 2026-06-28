@@ -43,7 +43,7 @@ jobs:
 
       - name: Build and validate
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version '${{ inputs.version }}'
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version '${{ inputs.version }}' -Strip
 
       - name: Distribution smoke
         shell: pwsh

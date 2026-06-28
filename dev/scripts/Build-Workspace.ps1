@@ -2,6 +2,7 @@ param(
     [switch]$SkipTests,
     [switch]$SkipVet,
     [switch]$TimestampedOutput,
+    [switch]$Strip,
     [string]$Version = ''
 )
 
@@ -72,13 +73,17 @@ if ($TimestampedOutput) {
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
-$ldflags = '-H=windowsgui'
+$ldflagsParts = @('-H=windowsgui')
 if ($Version.Trim() -ne '') {
     if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
         throw "Version must be semantic, for example 0.0.1"
     }
-    $ldflags = "$ldflags -X windows-updater-webui/internal/updater.appVersion=$Version"
+    $ldflagsParts += "-X windows-updater-webui/internal/updater.appVersion=$Version"
 }
+if ($Strip) {
+    $ldflagsParts += @('-s', '-w')
+}
+$ldflags = $ldflagsParts -join ' '
 go build -ldflags $ldflags -o $output .
 Assert-NativeSuccess "go build"
 $builtBinary = Get-Item -LiteralPath $output
@@ -94,6 +99,7 @@ $goos = (& go env GOOS)
 $goarch = (& go env GOARCH)
 $cgo = (& go env CGO_ENABLED)
 $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $output).Hash.ToLowerInvariant()
+$stripped = [bool]$Strip
 $metadata = [ordered]@{
     artifact = (Resolve-Path -LiteralPath $output).Path
     commit = $commit.Trim()
@@ -105,7 +111,10 @@ $metadata = [ordered]@{
     bytes = $builtBinary.Length
     sha256 = $sha256
     version = $(if ($Version.Trim() -ne '') { $Version.Trim() } else { '0.0.0-dev' })
-    unstripped = $true
+    stripped = $stripped
+    unstripped = -not $stripped
+    license = 'GPL-3.0-only'
+    repository = 'https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility'
     linker_flags = $ldflags
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
 }

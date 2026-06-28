@@ -27,6 +27,7 @@ type StatusResponse struct {
 	AutoTaskEnabled bool                     `json:"auto_task_enabled"`
 	Settings        StatusSettings           `json:"settings"`
 	AppUpdate       AppUpdateStatus          `json:"app_update"`
+	Application     ApplicationInfo          `json:"application"`
 	AsyncSnapshot
 }
 

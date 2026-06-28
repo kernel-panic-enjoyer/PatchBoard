@@ -107,3 +107,16 @@ func TestStatusSettingsExposeAppUpdatePromptDismissedVersion(t *testing.T) {
 		t.Fatalf("expected dismissed app update version in status settings, got %#v", settings)
 	}
 }
+
+func TestStatusSnapshotIncludesApplicationLicenseAndRepository(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+
+	status := (&App{}).statusSnapshot()
+	if status.Application.License != appLicenseID {
+		t.Fatalf("expected application license %q, got %#v", appLicenseID, status.Application)
+	}
+	if status.Application.Repository != appRepositoryURL {
+		t.Fatalf("expected application repository %q, got %#v", appRepositoryURL, status.Application)
+	}
+}

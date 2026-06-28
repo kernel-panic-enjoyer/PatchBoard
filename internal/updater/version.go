@@ -7,12 +7,29 @@ import (
 
 var appVersion = "0.0.0-dev"
 
+const (
+	appLicenseID     = "GPL-3.0-only"
+	appRepositoryURL = "https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility"
+)
+
+type ApplicationInfo struct {
+	License    string `json:"license"`
+	Repository string `json:"repository"`
+}
+
 func currentAppVersion() string {
 	version := strings.TrimSpace(appVersion)
 	if version == "" {
 		return "0.0.0-dev"
 	}
 	return version
+}
+
+func currentApplicationInfo() ApplicationInfo {
+	return ApplicationInfo{
+		License:    appLicenseID,
+		Repository: appRepositoryURL,
+	}
 }
 
 func normalizeAppVersion(version string) (string, bool) {

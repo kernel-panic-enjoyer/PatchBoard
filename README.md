@@ -154,10 +154,18 @@ For a versioned build:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version 0.0.1
 ```
 
-The production executable is intentionally unstripped. The build uses
-`-H=windowsgui` and does not use `-s`, `-w`, UPX, or packing. Each build writes
+Default local and CI validation builds are intentionally unstripped. Release
+builds add Go linker stripping with `-Strip`, which appends `-s -w` while still
+using `-H=windowsgui`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version 0.0.1 -Strip
+```
+
+No build uses UPX or executable packing. Each build writes
 `dist\WindowsUpdaterWebUI.metadata.json` with provenance including commit,
-dirty-worktree state, Go version, target platform, byte count, and SHA-256.
+dirty-worktree state, Go version, target platform, byte count, SHA-256,
+stripping state, license, and repository URL.
 
 Format Go sources with:
 
@@ -242,7 +250,7 @@ Official release executables are built and uploaded by
 
 To publish a release, dispatch the **Release** workflow from `main` with a
 semantic version such as `0.0.1`. The workflow builds
-`dist\WindowsUpdaterWebUI.exe`, generates
+the stripped `dist\WindowsUpdaterWebUI.exe`, generates
 `WindowsUpdaterWebUI.exe.sha256`, and creates the `v<version>` GitHub Release
 with the executable, metadata, and checksum assets.
 
@@ -255,8 +263,9 @@ Keep changes small and reviewable. For code changes, add focused regression
 tests before changing behavior where practical, run the relevant validation
 commands, and keep Microsoft Store identity and freshness invariants intact.
 
-Do not add SQLite, CGO, UPX, executable stripping, packing, or fuzzy Store
-identity matching.
+Do not add SQLite, CGO, UPX, executable packing, or fuzzy Store identity
+matching. Keep executable stripping limited to the release workflow/build
+script `-Strip` path.
 
 ## License
 

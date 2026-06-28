@@ -1156,6 +1156,7 @@
     latestStatus = data || {};
     renderManagers(data);
     renderAppUpdateStatus(data.app_update || {});
+    renderApplicationInfo(data.application || {});
     var startup = $("startup-toggle");
     if(startup){
       startup.disabled = !!data.loading;
@@ -1176,6 +1177,16 @@
       status.innerHTML = data.loading ? loadingText("Loading task status...") : html("Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled"));
     }
     renderDashboardSummary();
+  }
+
+  function renderApplicationInfo(info){
+    info = info || {};
+    var target = $("app-license-note");
+    if(!target){ return; }
+    var license = String(info.license || "GPL-3.0-only").trim() || "GPL-3.0-only";
+    var repository = String(info.repository || "https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility").trim();
+    var repoLink = repository ? ' - <a href="' + attr(repository) + '" target="_blank" rel="noreferrer">GitHub repository</a>' : "";
+    target.innerHTML = "Licensed under " + html(license) + repoLink;
   }
 
   function appUpdatePromptVersion(update){

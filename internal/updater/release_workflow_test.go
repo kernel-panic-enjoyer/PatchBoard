@@ -17,6 +17,7 @@ func TestReleaseWorkflowBuildsAndPublishesWindowsExecutable(t *testing.T) {
 		"contents: write",
 		"windows-latest",
 		"-Version",
+		"-Strip",
 		"WindowsUpdaterWebUI.exe.sha256",
 		"WindowsUpdaterWebUI.metadata.json",
 		"gh release create",
@@ -24,6 +25,28 @@ func TestReleaseWorkflowBuildsAndPublishesWindowsExecutable(t *testing.T) {
 	} {
 		if !strings.Contains(workflow, expected) {
 			t.Fatalf("release workflow missing %q", expected)
+		}
+	}
+}
+
+func TestBuildWorkspaceSupportsReleaseStrippingMetadata(t *testing.T) {
+	data, err := os.ReadFile("../../dev/scripts/Build-Workspace.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, expected := range []string{
+		"[switch]$Strip",
+		"'-s'",
+		"'-w'",
+		"stripped",
+		"license",
+		"GPL-3.0-only",
+		"repository",
+		"https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("build script missing %q", expected)
 		}
 	}
 }

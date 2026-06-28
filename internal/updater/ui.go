@@ -168,6 +168,9 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
       <pre id="session-log" class="session-log" role="tabpanel" tabindex="0" aria-labelledby="log-tab-all"></pre>
     </section>
   </main>
+  <footer class="app-footer" aria-label="Application information">
+    <p id="app-license-note" class="muted app-license-note">Licensed under GPL-3.0-only - <a href="https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility" target="_blank" rel="noreferrer">GitHub repository</a></p>
+  </footer>
   <script src="/assets/ui.js?v={{.AssetVersion}}" defer></script>
 </body>
 </html>`))

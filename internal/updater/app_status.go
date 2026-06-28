@@ -112,6 +112,7 @@ func buildStatusResponseContextWithUpdate(ctx context.Context, force bool, appUp
 		AutoTaskEnabled: autoTaskEnabled,
 		Settings:        statusSettingsFromState(state),
 		AppUpdate:       appUpdate,
+		Application:     currentApplicationInfo(),
 	}
 }
 
@@ -185,6 +186,9 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	}
 	if status.AppUpdate.CurrentVersion == "" {
 		status.AppUpdate = app.appUpdateStatusContext(ctx, false)
+	}
+	if status.Application.License == "" || status.Application.Repository == "" {
+		status.Application = currentApplicationInfo()
 	}
 	mergeStatusInventoryManagerDetails(&status, inventoryManagers)
 	status.AsyncSnapshot = asyncSnapshot(loading, fetchedAt, errText)
