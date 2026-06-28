@@ -21,6 +21,8 @@ WinRT worker so blocked Store APIs can be cancelled without orphaning helpers.
 - Searches for installable packages and filters out truncated winget IDs.
 - Installs packages from winget, Chocolatey, or Store after an explicit button click.
 - Updates individual packages, selected packages, or all packages.
+- Checks GitHub Releases for newer WindowsUpdaterWebUI builds and can replace
+  itself after a verified download and explicit user confirmation.
 - Supports Start with Windows through Windows Task Scheduler.
 - Supports opt-in daily auto-update for individual packages or all packages
   through Windows Task Scheduler.
@@ -65,7 +67,11 @@ Build output is written under `dist\`. The production executable is unstripped;
 the build script intentionally uses only `-H=windowsgui` and does not use
 `-s`, `-w`, UPX, or packing. Each build writes a sibling `.metadata.json` file
 with commit, dirty-worktree flag, Go version, target platform, byte count, and
-SHA-256.
+SHA-256. Release builds inject the application version with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version 0.0.1
+```
 
 ## Run
 
@@ -110,6 +116,9 @@ WindowsUpdateUtility is licensed under the GNU General Public License version
 
 ## Notes
 
+- Official release executables are built by GitHub Actions from `main` through
+  `.github/workflows/release.yml`. Do not upload local `dist\` builds to a
+  GitHub release.
 - Supported OS floor: Windows 10 or newer with the App Installer/WinGet stack
   available. Windows 11 is the primary validation target.
 - Architecture policy: x64 is the primary release target. ARM64 is supported by
@@ -128,8 +137,10 @@ WindowsUpdateUtility is licensed under the GNU General Public License version
   retained tails, not an unbounded complete history.
 - Internal unsupported modes such as `--elevated-worker` and
   `--store-inventory-worker` are same-binary implementation details for typed
-  privilege isolation and killable current-user Store inventory. They are not a
-  public automation interface.
+  privilege isolation and killable current-user Store inventory. The
+  `--self-update-apply` mode is likewise internal and exists only to complete a
+  verified self-replacement after the main process exits. They are not public
+  automation interfaces.
 - Hosted CI does not perform real Microsoft Store live validation. Store live
   tests are opt-in and must run on controlled Windows hardware with explicit
   environment gates.

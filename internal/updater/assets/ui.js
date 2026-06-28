@@ -1153,6 +1153,7 @@
   function renderStatus(data){
     latestStatus = data || {};
     renderManagers(data);
+    renderAppUpdateStatus(data.app_update || {});
     var startup = $("startup-toggle");
     if(startup){
       startup.disabled = !!data.loading;
@@ -1173,6 +1174,33 @@
       status.innerHTML = data.loading ? loadingText("Loading task status...") : html("Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled"));
     }
     renderDashboardSummary();
+  }
+
+  function renderAppUpdateStatus(update){
+    update = update || {};
+    var status = $("app-update-status");
+    var check = $("app-update-check");
+    var apply = $("app-update-apply");
+    var current = update.current_version || "0.0.0-dev";
+    if(status){
+      if(update.error){
+        status.textContent = "Current " + current + " - update check failed: " + update.error;
+      }else if(update.available){
+        status.textContent = "Current " + current + " - version " + (update.latest_version || update.latest_tag || "newer") + " is available.";
+      }else if(update.latest_version){
+        status.textContent = "Current " + current + " - up to date.";
+      }else{
+        status.textContent = "Current " + current + " - no published app release found.";
+      }
+    }
+    if(check){ check.disabled = !!(latestStatus && latestStatus.loading); }
+    if(apply){
+      apply.classList.toggle("hidden", !update.available);
+      apply.disabled = !update.available || !!(latestStatus && latestStatus.loading);
+      if(update.available){
+        apply.textContent = "Install " + (update.latest_version || "Update") + " and Restart";
+      }
+    }
   }
 
 
@@ -1594,6 +1622,62 @@
       scheduleStatusLoad(false, statusPollDelay);
     }
   }
+  async function checkAppUpdate(){
+    var button = $("app-update-check");
+    if(button){ button.disabled = true; }
+    var status = $("app-update-status");
+    if(status){ status.innerHTML = loadingText("Checking GitHub releases..."); }
+    try{
+      var response = await postForm("/api/app-update/check", {});
+      var data = await response.json();
+      if(!response.ok){ throw new Error(data.error || "Could not check for application update"); }
+      latestStatus = latestStatus || {};
+      latestStatus.app_update = data;
+      renderAppUpdateStatus(data);
+      if(data.available){
+        showToast("Application update " + (data.latest_version || data.latest_tag || "") + " is available.", "info");
+      }else if(data.error){
+        showToast("Application update check failed: " + data.error, "error");
+      }else{
+        showToast("Application is up to date.", "success");
+      }
+    }catch(e){
+      if(status){ status.textContent = "Application update check failed: " + e.message; }
+      showToast("Application update check failed: " + e.message, "error");
+    }finally{
+      if(button){ button.disabled = false; }
+    }
+  }
+  async function startAppSelfUpdate(){
+    var button = $("app-update-apply");
+    if(button){ button.disabled = true; }
+    showNotice("Preparing application update...", true);
+    try{
+      var response = await postForm("/api/app-update/apply", {});
+      var status = await response.json();
+      if(!response.ok){ throw new Error(status.error || status.notice || "Could not start application update"); }
+      upsertServerJob(status);
+      showNotice(status.notice || "Application update started...", true);
+      try{
+        var finalStatus = await waitForJob(status.job_id, function(jobStatus){
+          showNotice(jobStatus.notice || "Applying application update...", true);
+        });
+        if(jobSucceeded(finalStatus)){
+          showNotice(finalStatus.notice || "Restarting to apply application update...", true);
+        }else{
+          showNotice(finalStatus.notice || "Application update failed.");
+          showToast(finalStatus.notice || "Application update failed.", "error");
+          if(button){ button.disabled = false; }
+        }
+      }catch(waitErr){
+        showNotice("Application update is applying; reconnect after the app restarts.", true);
+      }
+    }catch(e){
+      showNotice("Could not start application update: " + e.message);
+      showToast("Could not start application update: " + e.message, "error");
+      if(button){ button.disabled = false; }
+    }
+  }
   async function loadPackages(force){
     var seq = ++packageRequestSeq;
     if(packageController){ packageController.abort(); }
@@ -1800,6 +1884,8 @@
         loadPackages(false);
       }else if(job.type === "inventory-refresh"){
         loadPackages(false);
+      }else if(job.type === "app-self-update"){
+        showToast(jobSucceeded(job) ? "Application update is ready; restarting." : "Application update failed.", jobSucceeded(job) ? "success" : "error");
       }
     });
   }
@@ -2633,6 +2719,8 @@
   $("auto-global-toggle").addEventListener("click", function(){
     toggleBooleanSetting(this, "/api/settings/auto-update", "global", "Auto-update setting updated.", "Could not update auto-update setting");
   });
+  $("app-update-check").addEventListener("click", function(){ checkAppUpdate(); });
+  $("app-update-apply").addEventListener("click", function(){ startAppSelfUpdate(); });
   $("auto-all").addEventListener("click", function(){ setAllAuto(true); });
   $("auto-none").addEventListener("click", function(){ setAllAuto(false); });
   $("clear-log-view").addEventListener("click", function(){

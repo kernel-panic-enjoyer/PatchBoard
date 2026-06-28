@@ -26,6 +26,7 @@ type StatusResponse struct {
 	StartupEnabled  bool                     `json:"startup_enabled"`
 	AutoTaskEnabled bool                     `json:"auto_task_enabled"`
 	Settings        StatusSettings           `json:"settings"`
+	AppUpdate       AppUpdateStatus          `json:"app_update"`
 	AsyncSnapshot
 }
 
@@ -86,6 +87,9 @@ type App struct {
 	statusQueued               bool
 	statusFetchedAt            time.Time
 	statusErr                  string
+	appUpdateChecker           appUpdateChecker
+	appUpdateStatus            AppUpdateStatus
+	appUpdateFetchedAt         time.Time
 	jobsMu                     sync.Mutex
 	jobs                       map[string]*OperationJob
 	jobSeq                     int64

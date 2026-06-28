@@ -2,8 +2,10 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 func commandJobNotice(action string, result CommandResult) string {
@@ -315,6 +317,85 @@ func (app *App) startInventoryRefreshJob() OperationJobStatus {
 			status.State = jobStateSucceeded
 			status.Notice = "Package status refreshed."
 		})
+	})
+}
+
+func (app *App) startSelfUpdateJob() OperationJobStatus {
+	return app.startOperationJob(jobTypeSelfUpdate, "", 1, nil, func(ctx context.Context, job *OperationJob) {
+		app.mutateOperationJob(job, func(status *OperationJobStatus) {
+			status.CurrentIndex = 1
+			status.CurrentPackage = "WindowsUpdaterWebUI"
+			status.Notice = "Checking for application update..."
+		})
+		if app.appUpdateChecker == nil {
+			result := validationCommandResult("self-update", fmt.Errorf("application self-update is not configured"))
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application self-update is not configured.")
+			return
+		}
+		update := app.appUpdateStatusContext(ctx, true)
+		if ctx.Err() != nil {
+			result := commandContextDoneResult(ctx, "self-update", "while checking for application update", []string{"all", "application"})
+			app.finishSelfUpdateJob(job, result, jobStateCancelled, "Application self-update cancelled.")
+			return
+		}
+		if update.Error != "" {
+			result := validationCommandResult("self-update", errors.New(update.Error))
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update check failed.")
+			return
+		}
+		if !update.Available {
+			result := CommandResult{OK: true, Command: "self-update", Stdout: "No newer application release is available."}
+			app.finishSelfUpdateJob(job, result, jobStateSucceeded, "Application is already up to date.")
+			return
+		}
+		app.mutateOperationJob(job, func(status *OperationJobStatus) {
+			status.Notice = "Downloading application update " + update.LatestVersion + "..."
+		})
+		dir, err := selfUpdateDownloadDir()
+		if err != nil {
+			result := workerCommandResultError("self-update", err)
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update download failed.")
+			return
+		}
+		artifact, err := downloadSelfUpdateArtifact(ctx, http.DefaultClient, update, dir)
+		if err != nil {
+			result := workerCommandResultError("self-update", err)
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update download failed.")
+			return
+		}
+		target, err := osExecutable()
+		if err != nil {
+			result := workerCommandResultError("self-update", err)
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update could not locate the running executable.")
+			return
+		}
+		app.mutateOperationJob(job, func(status *OperationJobStatus) {
+			status.Notice = "Preparing to restart and apply application update " + update.LatestVersion + "..."
+		})
+		if err := launchSelfUpdateApply(ctx, artifact, target); err != nil {
+			result := workerCommandResultError("self-update", err)
+			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update could not start the apply helper.")
+			return
+		}
+		result := CommandResult{
+			OK:      true,
+			Command: "self-update",
+			Stdout:  "Application update " + update.LatestVersion + " downloaded and verified. Restarting to apply it.",
+		}
+		app.finishSelfUpdateJob(job, result, jobStateSucceeded, "Application update downloaded. Restarting to apply it...")
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			app.requestShutdown("Application self-update")
+		}()
+	})
+}
+
+func (app *App) finishSelfUpdateJob(job *OperationJob, result CommandResult, state, notice string) {
+	app.mutateOperationJob(job, func(status *OperationJobStatus) {
+		status.Result = &result
+		status.Results = []UpdateResult{{Key: "app:self-update", Result: result}}
+		status.State = state
+		status.Notice = notice
 	})
 }
 

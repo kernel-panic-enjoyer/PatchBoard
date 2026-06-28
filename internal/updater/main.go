@@ -25,13 +25,14 @@ const (
 	defaultPort     = 4183
 	portSearchLimit = 50
 
-	flagHelp           = "--help"
-	flagNoBrowser      = "--no-browser"
-	flagPort           = "--port"
-	flagToken          = "--token"
-	flagTask           = "--task"
-	flagElevatedWorker = "--elevated-worker"
-	flagNoElevate      = "--no-elevate"
+	flagHelp            = "--help"
+	flagNoBrowser       = "--no-browser"
+	flagPort            = "--port"
+	flagToken           = "--token"
+	flagTask            = "--task"
+	flagElevatedWorker  = "--elevated-worker"
+	flagSelfUpdateApply = "--self-update-apply"
+	flagNoElevate       = "--no-elevate"
 )
 
 var cryptoRandomRead = rand.Read
@@ -47,19 +48,25 @@ func randomToken() (string, error) {
 type cliMode string
 
 const (
-	cliModeServer         cliMode = "server"
-	cliModeHelp           cliMode = "help"
-	cliModeAutoUpdate     cliMode = "auto-update"
-	cliModeElevatedWorker cliMode = "elevated-worker"
-	cliModeStoreInventory cliMode = "store-inventory-worker"
+	cliModeServer          cliMode = "server"
+	cliModeHelp            cliMode = "help"
+	cliModeAutoUpdate      cliMode = "auto-update"
+	cliModeElevatedWorker  cliMode = "elevated-worker"
+	cliModeStoreInventory  cliMode = "store-inventory-worker"
+	cliModeSelfUpdateApply cliMode = "self-update-apply"
 )
 
 type cliOptions struct {
-	Mode      cliMode
-	NoBrowser bool
-	Token     string
-	Port      int
-	PortSet   bool
+	Mode                cliMode
+	NoBrowser           bool
+	Token               string
+	Port                int
+	PortSet             bool
+	SelfUpdateTarget    string
+	SelfUpdateParentPID int
+	SelfUpdateSHA256    string
+	SelfUpdateRestart   bool
+	SelfUpdateElevated  bool
 }
 
 type trayController interface {
@@ -90,6 +97,12 @@ func parseCLI(args []string) (cliOptions, error) {
 	task := set.String(strings.TrimPrefix(flagTask, "--"), "", "")
 	elevatedWorker := set.Bool(strings.TrimPrefix(flagElevatedWorker, "--"), false, "")
 	storeInventoryWorker := set.Bool(strings.TrimPrefix(storeInventoryWorkerFlag, "--"), false, "")
+	selfUpdateApply := set.Bool(strings.TrimPrefix(flagSelfUpdateApply, "--"), false, "")
+	selfUpdateTarget := set.String("self-update-target", "", "")
+	selfUpdateParentPID := set.String("self-update-parent-pid", "", "")
+	selfUpdateSHA256 := set.String("self-update-sha256", "", "")
+	selfUpdateRestart := set.Bool("self-update-restart", false, "")
+	selfUpdateElevated := set.Bool("self-update-elevated", false, "")
 	noElevate := set.Bool(strings.TrimPrefix(flagNoElevate, "--"), false, "")
 	if err := set.Parse(args); err != nil {
 		return options, err
@@ -103,6 +116,19 @@ func parseCLI(args []string) (cliOptions, error) {
 	}
 	if *storeInventoryWorker {
 		options.Mode = cliModeStoreInventory
+		return options, nil
+	}
+	if *selfUpdateApply {
+		parentPID, err := parseSelfUpdateParentPID(*selfUpdateParentPID)
+		if err != nil {
+			return options, err
+		}
+		options.Mode = cliModeSelfUpdateApply
+		options.SelfUpdateTarget = strings.TrimSpace(*selfUpdateTarget)
+		options.SelfUpdateParentPID = parentPID
+		options.SelfUpdateSHA256 = strings.TrimSpace(*selfUpdateSHA256)
+		options.SelfUpdateRestart = *selfUpdateRestart
+		options.SelfUpdateElevated = *selfUpdateElevated
 		return options, nil
 	}
 	if *elevatedWorker {
@@ -142,8 +168,9 @@ Options:
   --help, -h     Show this help.
 
 Internal unsupported modes:
-  --elevated-worker and --store-inventory-worker are implementation details for
-  privileged package actions and isolated current-user Store inventory.`) + "\n"
+  --elevated-worker, --store-inventory-worker, and --self-update-apply are
+  implementation details for privileged package actions, isolated current-user
+  Store inventory, and verified application self-replacement.`) + "\n"
 }
 
 func listenerPort(listener net.Listener) int {
@@ -228,7 +255,8 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 	if err != nil {
 		return err
 	}
-	app := &App{token: token, sessionToken: sessionToken, listenHost: defaultHost, listenPort: actualPort, storeBackgroundScanEnabled: true}
+	checker := defaultGitHubReleaseChecker()
+	app := &App{token: token, sessionToken: sessionToken, listenHost: defaultHost, listenPort: actualPort, storeBackgroundScanEnabled: true, appUpdateChecker: checker}
 	defer func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {
@@ -338,6 +366,12 @@ func Main() {
 		return
 	case cliModeStoreInventory:
 		os.Exit(runStoreInventoryWorkerFromArgs())
+	case cliModeSelfUpdateApply:
+		if err := runSelfUpdateApply(selfUpdateApplyRequestFromOptions(options)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	case cliModeElevatedWorker:
 		if err := runElevatedWorkerFromArgs(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
