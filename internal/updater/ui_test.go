@@ -74,6 +74,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`id="updates-prev"`,
 		`id="updates-page-status"`,
 		`id="updates-next"`,
+		`Check for Updates`,
 		`class="table-pager"`,
 		`class="table-footer split"`,
 		`class="update-all-form"`,
@@ -440,8 +441,16 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	scanIndex := strings.Index(rendered, `id="scan-button"`)
 	connectionIndex := strings.Index(rendered, `id="log-connection-status"`)
 	shutdownIndex := strings.Index(rendered, `id="shutdown-form"`)
-	if scanIndex < 0 || connectionIndex < 0 || shutdownIndex < 0 || !(scanIndex < connectionIndex && connectionIndex < shutdownIndex) {
-		t.Fatalf("expected connection status in header actions between scan and stop controls, scan=%d connection=%d shutdown=%d", scanIndex, connectionIndex, shutdownIndex)
+	if connectionIndex < 0 || shutdownIndex < 0 || !(connectionIndex < shutdownIndex) {
+		t.Fatalf("expected connection status in header actions before stop control, connection=%d shutdown=%d", connectionIndex, shutdownIndex)
+	}
+	mainIndex := strings.Index(rendered, `<main>`)
+	installedIndex := strings.Index(rendered, `id="installed-section"`)
+	if scanIndex < 0 || mainIndex < 0 || installedIndex < 0 {
+		t.Fatalf("expected scan control in installed packages section, scan=%d main=%d installed=%d", scanIndex, mainIndex, installedIndex)
+	}
+	if strings.Contains(rendered[:mainIndex], `id="scan-button"`) || scanIndex < installedIndex {
+		t.Fatalf("expected scan control outside header and inside installed packages section, scan=%d main=%d installed=%d", scanIndex, mainIndex, installedIndex)
 	}
 	progressIndex := strings.Index(rendered, `id="update-progress"`)
 	updatesIndex := strings.Index(rendered, `Updates Available`)

@@ -1,5 +1,6 @@
 [PLANS]
 
+- 2026-06-28T21:00:15+02:00 [USER] Active objective: rename the Updates Available refresh control to "Check for Updates" and move "Scan Apps" out of the sticky top bar into Installed Packages.
 - 2026-06-28T20:42:35+02:00 [USER] Active objective: make GitHub Release executables use Go linker stripping while embedding/exposing GPLv3 and repository metadata in the app and release metadata.
 - 2026-06-28T20:24:45+02:00 [USER] Active objective: show a WebUI application self-update popup when a newer GitHub Release is detected, with durable "don't show again for this version" suppression.
 - 2026-06-28T19:29:41+02:00 [USER] Active objective: add CI-built GitHub Releases self-update support, expose prompt-first app update controls, and publish future `v0.0.1` assets from GitHub Actions rather than local uploads.
@@ -54,6 +55,7 @@
 
 [DECISIONS]
 
+- 2026-06-28T21:00:15+02:00 [CODE] The primary queue control remains wired to `/api/inventory/refresh` with id `refresh-packages`, but its label is "Check for Updates"; the app scan control remains id `scan-button` and is rendered in the Installed Packages section.
 - 2026-06-28T20:52:52+02:00 [USER] Standing workflow preference: after any code change, rebuild the executable with `dev/scripts/Build-Workspace.ps1` so `dist\WindowsUpdaterWebUI.exe` reflects the current source.
 - 2026-06-28T20:50:09+02:00 [CODE] Supersedes the 2026-06-28T20:42:35 WebUI placement: GPL/repository notice placement is the page footer, not the Automation/Application update panel; the notice stays on one line alongside the GitHub repository link when space allows.
 - 2026-06-28T20:42:35+02:00 [CODE] Release stripping is limited to `dev/scripts/Build-Workspace.ps1 -Strip`, which appends Go linker flags `-s -w`; default local and Windows CI validation builds remain unstripped and no UPX/packing is introduced.
@@ -216,6 +218,7 @@
 
 [OUTCOMES]
 
+- 2026-06-28T21:00:15+02:00 [TOOL] Scan/refresh UI cleanup validation passed: `go test -count=1 ./internal/updater`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check`, and `Build-Workspace.ps1`; rebuilt exe SHA-256 `7e6e5fd122f92920391d32d6507ee988cff83508d429f5051bbfe00b343884ce`.
 - 2026-06-28T20:52:52+02:00 [TOOL] Rebuilt executable after the footer UI change. First build attempt reached metadata generation but `dist\WindowsUpdaterWebUI.metadata.json` was temporarily locked; retry passed with `Binary size: 16029696 bytes` and SHA-256 `db902c328402407eae83324884b428c8783f49380a2ba9e06200be59e475d69b`.
 - 2026-06-28T20:50:09+02:00 [TOOL] GPL footer relocation validation passed: `go test -count=1 ./internal/updater`, bundled Node `--check internal/updater/assets/ui.js`, and `git diff --check` with CRLF warnings only.
 - 2026-06-28T20:42:35+02:00 [TOOL] Release stripping/GPL metadata validation passed: regression first failed with missing `StatusResponse.Application`/metadata symbols, then `go test -count=1 ./internal/updater`, `go test -count=1 ./...`, `go vet ./...`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check` with CRLF warnings only, default `Build-Workspace.ps1`, stripped `Build-Workspace.ps1 -Version 0.0.1 -Strip`, and `Smoke-Distribution.ps1 -Exe .\dist\WindowsUpdaterWebUI.exe` passed. Plain `node` is not on PATH. Stripped build size was 11,416,576 bytes and metadata recorded `stripped:true`, `license:GPL-3.0-only`, repository URL, and `-s -w`; binary string check found both GPL and repository strings.
