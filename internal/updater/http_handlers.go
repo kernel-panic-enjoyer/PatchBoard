@@ -63,6 +63,16 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		app.refreshStatus(true)
 		writeJSON(w, http.StatusAccepted, app.statusSnapshotContext(r.Context()))
+	case "/api/app-update/check":
+		if !requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		writeJSON(w, http.StatusOK, app.appUpdateStatusContext(r.Context(), true))
+	case "/api/app-update/apply":
+		if !requireMethod(w, r, http.MethodPost) {
+			return
+		}
+		jobAcceptedResponse(w, app.startSelfUpdateJob())
 	case "/api/packages":
 		if !requireMethod(w, r, http.MethodGet) {
 			return

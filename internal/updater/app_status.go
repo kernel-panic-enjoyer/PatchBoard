@@ -39,7 +39,7 @@ func (app *App) refreshStatus(force bool) {
 }
 
 func (app *App) runStatusRefresh(ctx context.Context, force bool) {
-	status := buildStatusResponseContext(ctx, force)
+	status := app.buildStatusResponseContext(ctx, force)
 	if ctx.Err() != nil {
 		app.mu.Lock()
 		app.statusLoading = false
@@ -74,6 +74,14 @@ func (app *App) runStatusRefresh(ctx context.Context, force bool) {
 }
 
 func buildStatusResponseContext(ctx context.Context, force bool) StatusResponse {
+	return buildStatusResponseContextWithUpdate(ctx, force, AppUpdateStatus{CurrentVersion: currentAppVersion()})
+}
+
+func (app *App) buildStatusResponseContext(ctx context.Context, force bool) StatusResponse {
+	return buildStatusResponseContextWithUpdate(ctx, force, app.appUpdateStatusContext(ctx, force))
+}
+
+func buildStatusResponseContextWithUpdate(ctx context.Context, force bool, appUpdate AppUpdateStatus) StatusResponse {
 	state := loadStateContext(ctx)
 	dir, _ := stateDir()
 	var startupEnabled bool
@@ -103,6 +111,7 @@ func buildStatusResponseContext(ctx context.Context, force bool) StatusResponse 
 		StartupEnabled:  startupEnabled,
 		AutoTaskEnabled: autoTaskEnabled,
 		Settings:        statusSettingsFromState(state),
+		AppUpdate:       appUpdate,
 	}
 }
 
@@ -114,7 +123,7 @@ func (app *App) refreshStatusSyncContext(ctx context.Context, reason string) Sta
 	app.statusErr = ""
 	app.mu.Unlock()
 
-	status := buildStatusResponseContext(ctx, true)
+	status := app.buildStatusResponseContext(ctx, true)
 	if ctx.Err() != nil {
 		app.mu.Lock()
 		cached := app.status
@@ -174,8 +183,38 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	} else {
 		status.Managers = cloneManagerStatuses(status.Managers)
 	}
+	if status.AppUpdate.CurrentVersion == "" {
+		status.AppUpdate = app.appUpdateStatusContext(ctx, false)
+	}
 	mergeStatusInventoryManagerDetails(&status, inventoryManagers)
 	status.AsyncSnapshot = asyncSnapshot(loading, fetchedAt, errText)
+	return status
+}
+
+func (app *App) appUpdateStatusContext(ctx context.Context, force bool) AppUpdateStatus {
+	current := currentAppVersion()
+	if app == nil || app.appUpdateChecker == nil {
+		return AppUpdateStatus{CurrentVersion: current}
+	}
+	app.mu.RLock()
+	cached := app.appUpdateStatus
+	fetchedAt := app.appUpdateFetchedAt
+	app.mu.RUnlock()
+	if !force && !fetchedAt.IsZero() && time.Since(fetchedAt) < appUpdateCacheTTL && cached.CurrentVersion != "" {
+		return cached
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, appUpdateCheckTimeout)
+	defer cancel()
+	status, err := app.appUpdateChecker.Check(checkCtx, current)
+	status.CurrentVersion = current
+	status.CheckedAt = time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	if err != nil {
+		status.Error = sanitizeProviderDiagnostic(err.Error())
+	}
+	app.mu.Lock()
+	app.appUpdateStatus = status
+	app.appUpdateFetchedAt = time.Now()
+	app.mu.Unlock()
 	return status
 }
 

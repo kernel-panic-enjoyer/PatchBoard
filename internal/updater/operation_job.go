@@ -24,6 +24,7 @@ const (
 	jobTypeScan             = "scan"
 	jobTypeManagerInstall   = "manager-install"
 	jobTypeInventoryRefresh = "inventory-refresh"
+	jobTypeSelfUpdate       = "app-self-update"
 )
 
 const operationJobRecentHistoryLimit = 25

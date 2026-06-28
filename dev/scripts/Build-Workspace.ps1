@@ -1,7 +1,8 @@
 param(
     [switch]$SkipTests,
     [switch]$SkipVet,
-    [switch]$TimestampedOutput
+    [switch]$TimestampedOutput,
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,7 +72,14 @@ if ($TimestampedOutput) {
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
-go build -ldflags='-H=windowsgui' -o $output .
+$ldflags = '-H=windowsgui'
+if ($Version.Trim() -ne '') {
+    if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+        throw "Version must be semantic, for example 0.0.1"
+    }
+    $ldflags = "$ldflags -X windows-updater-webui/internal/updater.appVersion=$Version"
+}
+go build -ldflags $ldflags -o $output .
 Assert-NativeSuccess "go build"
 $builtBinary = Get-Item -LiteralPath $output
 $builtMiB = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:N3}', ($builtBinary.Length / 1MB))
@@ -96,8 +104,9 @@ $metadata = [ordered]@{
     cgo_enabled = $cgo.Trim()
     bytes = $builtBinary.Length
     sha256 = $sha256
+    version = $(if ($Version.Trim() -ne '') { $Version.Trim() } else { '0.0.0-dev' })
     unstripped = $true
-    linker_flags = '-H=windowsgui'
+    linker_flags = $ldflags
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
 }
 $metadataPath = [IO.Path]::ChangeExtension($output, '.metadata.json')
