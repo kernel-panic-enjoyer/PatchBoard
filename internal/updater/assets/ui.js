@@ -682,9 +682,11 @@
     }
     return failed.length + " update command(s) finished with errors. " + commandText(failed[0].result);
   }
-  function postForm(path, params){
+  function postForm(path, params, options){
     var body = params instanceof URLSearchParams ? params : new URLSearchParams(params || {});
-    return fetch(api(path), {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-Windows-Updater-WebUI":"1"}, body:body});
+    var request = {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-Windows-Updater-WebUI":"1"}, body:body};
+    if(options && options.keepalive){ request.keepalive = true; }
+    return fetch(api(path), request);
   }
   async function postCommandPayload(path, params, fallbackMessage){
     var response = await postForm(path, params);
@@ -1231,7 +1233,7 @@
     var params = new URLSearchParams();
     params.set("version", version);
     try{
-      var response = await postForm("/api/settings/app-update-prompt", params);
+      var response = await postForm("/api/settings/app-update-prompt", params, {keepalive:true});
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Could not save app update prompt preference"); }
       latestStatus = latestStatus || {};

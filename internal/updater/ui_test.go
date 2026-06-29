@@ -50,6 +50,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`openAppUpdateModal`,
 		`closeAppUpdateModal`,
 		`/api/settings/app-update-prompt`,
+		`{keepalive:true}`,
 		`packageDiagnosticsButton`,
 		`diagnostics-button`,
 		`/api/store/diagnostics/export`,

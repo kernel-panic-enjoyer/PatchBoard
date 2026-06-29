@@ -108,6 +108,30 @@ func TestStatusSettingsExposeAppUpdatePromptDismissedVersion(t *testing.T) {
 	}
 }
 
+func TestStatusSnapshotReloadsPersistedSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	state := defaultState()
+	state.AppUpdatePromptDismissedVersion = "1.2.3"
+	if err := saveState(state); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		status: StatusResponse{
+			StateDir: dir,
+			Settings: StatusSettings{
+				Theme: "dark",
+			},
+		},
+		statusFetchedAt: time.Now(),
+	}
+
+	status := app.statusSnapshot()
+	if status.Settings.AppUpdatePromptDismissedVersion != "1.2.3" {
+		t.Fatalf("expected status snapshot to reload persisted settings, got %#v", status.Settings)
+	}
+}
+
 func TestStatusSnapshotIncludesApplicationLicenseAndRepository(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", dir)

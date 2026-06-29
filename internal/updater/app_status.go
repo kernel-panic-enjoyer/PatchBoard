@@ -174,8 +174,8 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	inventoryManagers := cloneManagerStatuses(app.inventory.Managers)
 	app.mu.RUnlock()
 
+	status.Settings = statusSettingsFromState(loadStateContext(ctx))
 	if status.StateDir == "" {
-		status.Settings = statusSettingsFromState(loadStateContext(ctx))
 		status.StateDir, _ = stateDir()
 		status.Admin = isAdmin()
 	}
