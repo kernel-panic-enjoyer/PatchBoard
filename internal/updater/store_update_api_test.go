@@ -264,8 +264,9 @@ func TestStoreStaleEvidenceHiddenFromPrimaryUpdateQueueAssets(t *testing.T) {
 	}
 	body := uiJS[start : start+end]
 	for _, expected := range []string{
+		`if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }`,
 		`if(pkg.stale){ return false; }`,
-		`return !!pkg.can_update_now || state === "unknown" || state === "conflict" || state === "pending";`,
+		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("packageNeedsUpdateAttentionBase should contain %q; body:\n%s", expected, body)
@@ -273,6 +274,9 @@ func TestStoreStaleEvidenceHiddenFromPrimaryUpdateQueueAssets(t *testing.T) {
 	}
 	if strings.Contains(body, "|| !!pkg.stale") {
 		t.Fatalf("stale Store evidence should not enter the primary update queue; body:\n%s", body)
+	}
+	if strings.Contains(body, `state === "unknown"`) {
+		t.Fatalf("unknown Store evidence should not enter the primary update queue; body:\n%s", body)
 	}
 }
 

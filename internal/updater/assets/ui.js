@@ -858,11 +858,11 @@
     return !!pkg.update_available;
   }
   function packageNeedsUpdateAttentionBase(pkg){
-    if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return true; }
+    if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }
     if(!storeAssessmentActive(pkg)){ return !!pkg.update_available; }
     var state = storeUpdateState(pkg);
     if(pkg.stale){ return false; }
-    return !!pkg.can_update_now || state === "unknown" || state === "conflict" || state === "pending";
+    return !!pkg.can_update_now || state === "conflict" || state === "pending";
   }
   function packageSuppressedByCompletedUpdate(pkg){
     return !!(pkg && pkg.key && completedUpdateKeys[pkg.key] && packageNeedsUpdateAttentionBase(pkg));
@@ -1341,7 +1341,7 @@
       }else if(state === "conflict"){
         text = "Provider conflict";
       }else if(state === "unknown"){
-        text = "Unknown";
+        return showStatusBadge ? stateBadge(pkg) : '<span class="muted">-</span>';
       }else if(state === "current"){
         text = "Current";
       }else{
@@ -1356,7 +1356,7 @@
       if(compact){
         return '<span class="muted">-</span>';
       }
-      return withOptionalBadge("Unknown", true);
+      return showStatusBadge ? stateBadge(pkg) : '<span class="muted">-</span>';
     }
     var available = html(pkg.available_version);
     return available;

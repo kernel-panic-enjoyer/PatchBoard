@@ -332,7 +332,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`pkg.preference_eligible`,
 		`pkg.cannot_update_reason`,
 		`pkg.exact_target_kind`,
-		`return !!pkg.can_update_now || state === "unknown" || state === "conflict"`,
+		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
 		`row-actions`,
 		`.row-actions{display:flex`,
 		`--row-update-action-width:148px`,
@@ -500,5 +500,27 @@ func TestCompletedUpdateJobsClearGlobalProgress(t *testing.T) {
 	}
 	if strings.Contains(body, `}else if(!updateBusy){`) {
 		t.Fatalf("completed update job cleanup must not depend on updateBusy already being false; body:\n%s", body)
+	}
+}
+
+func TestStoreUnknownRowsStayOutOfPrimaryUpdateQueue(t *testing.T) {
+	for _, expected := range []string{
+		`if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }`,
+		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
+		`return showStatusBadge ? stateBadge(pkg) : '<span class="muted">-</span>';`,
+	} {
+		if !strings.Contains(uiJS, expected) {
+			t.Fatalf("expected Store unknown handling to contain %q", expected)
+		}
+	}
+	for _, unexpected := range []string{
+		`if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return true; }`,
+		`state === "unknown" || state === "conflict"`,
+		`text = "Unknown";`,
+		`return withOptionalBadge("Unknown", true);`,
+	} {
+		if strings.Contains(uiJS, unexpected) {
+			t.Fatalf("Store unknown packages should not render as update rows or duplicate Unknown text, found %q", unexpected)
+		}
 	}
 }

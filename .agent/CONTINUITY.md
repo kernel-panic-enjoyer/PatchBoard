@@ -1,5 +1,10 @@
 [PLANS]
 
+- 2026-06-29T16:04:04+02:00 [USER] Active objective: explain and fix why pre-scan/unknown Microsoft Store packages appear in `Updates Available` and why the available cell duplicates `Unknown`.
+- 2026-06-29T15:53:10+02:00 [USER] Active objective: run a Codex Security repository-wide scan on `C:\Users\User\Documents\Updater` and produce the final scan report.
+- 2026-06-28T21:36:05+02:00 [USER] Active objective: release `v0.1.1` from `main` with a compact changelog after the dependency bump.
+- 2026-06-28T21:27:08+02:00 [USER] Active objective: bump existing dependencies to latest stable releases across Go modules, GitHub Actions, and the CI/dev Node runtime; there are no tracked npm/package-lock/pnpm/yarn dependencies.
+- 2026-06-28T21:06:03+02:00 [USER] Active objective: release `v0.1.0` from `main` with a compact changelog.
 - 2026-06-28T21:00:15+02:00 [USER] Active objective: rename the Updates Available refresh control to "Check for Updates" and move "Scan Apps" out of the sticky top bar into Installed Packages.
 - 2026-06-28T20:42:35+02:00 [USER] Active objective: make GitHub Release executables use Go linker stripping while embedding/exposing GPLv3 and repository metadata in the app and release metadata.
 - 2026-06-28T20:24:45+02:00 [USER] Active objective: show a WebUI application self-update popup when a newer GitHub Release is detected, with durable "don't show again for this version" suppression.
@@ -55,6 +60,9 @@
 
 [DECISIONS]
 
+- 2026-06-29T16:04:04+02:00 [CODE] Store packages without an active assessment, and Store assessments with state `unknown`, are diagnostics/health states only; they must not populate the primary update queue. The Available cell renders a single unknown badge/placeholder rather than badge plus duplicate `Unknown` text.
+- 2026-06-29T15:53:10+02:00 [TOOL] Codex Security scan uses terminal/chat artifact workflow because dedicated setup continuation tools were not exposed; preflight passed with native `multi_agent_v1`, 6 usable worker slots, goal tools available, and scan id `131d62542c94_20260629T135310Z`.
+- 2026-06-28T21:27:08+02:00 [CODE] Dependency bump scope includes root Go module, `tests/browser` Go module, and workflow runtime/action pins. Node is represented only by workflow `node-version` and `node --check`; no tracked Node package manifest exists.
 - 2026-06-28T21:00:15+02:00 [CODE] The primary queue control remains wired to `/api/inventory/refresh` with id `refresh-packages`, but its label is "Check for Updates"; the app scan control remains id `scan-button` and is rendered in the Installed Packages section.
 - 2026-06-28T20:52:52+02:00 [USER] Standing workflow preference: after any code change, rebuild the executable with `dev/scripts/Build-Workspace.ps1` so `dist\WindowsUpdaterWebUI.exe` reflects the current source.
 - 2026-06-28T20:50:09+02:00 [CODE] Supersedes the 2026-06-28T20:42:35 WebUI placement: GPL/repository notice placement is the page footer, not the Automation/Application update panel; the notice stays on one line alongside the GitHub repository link when space allows.
@@ -113,6 +121,7 @@
 
 [PROGRESS]
 
+- 2026-06-29T15:53:10+02:00 [TOOL] Security scan artifacts are under `C:\Users\User\AppData\Local\Temp\codex-security-scans\Updater\131d62542c94_20260629T135310Z`; Phase 1 threat model was generated at the shared threat-model path and copied unchanged into `artifacts\01_context\threat_model.md`.
 - 2026-06-25T18:03:00+02:00 [CODE] Store scan pipeline now runs aggregate providers before exact Store CLI work, supports optimized vs deep scan modes, reuses fresh verified PFN/ProductID mappings only for aggregate positives needing exact targets, and records scan metrics for command planning and outcomes.
 - 2026-06-28T17:18:03+02:00 [CODE] Store aggregate provider runs now carry a non-persisted `PositiveUpdateHint` planner flag when Store CLI reports update text without exact associations; `planExactWork` expands that hint into exact targeted checks across product-like current-user Store PFNs.
 - 2026-06-28T17:32:12+02:00 [CODE] Frontend update visibility is split into a base package-attention predicate plus a completed-update suppression layer keyed by package key; suppressions are not applied to jobs that predated UI initialization.
@@ -218,6 +227,10 @@
 
 [OUTCOMES]
 
+- 2026-06-29T16:04:04+02:00 [TOOL] Store unknown queue fix validation passed: log export `2026-06-29_15-53-31` showed Store scan incomplete/unknown after `store.exe updates --apply false`; code root cause was `packageNeedsUpdateAttentionBase` returning true for Store packages before an active assessment. `go test -count=1 ./internal/updater`, browser `go test -tags uitestsupport -count=1 ./...`, bundled Node `--check`, `go test -count=1 ./...`, `go vet ./...`, `git diff --check` (CRLF warnings only), and `Build-Workspace.ps1` passed. Rebuilt exe SHA-256 `c273b163f478960c7bd2f1b5789ec66043379c8350333ed2058157b7aa076c38`.
+- 2026-06-28T21:36:05+02:00 [TOOL] Committed dependency bump as `131d62542c9420a0db7e38d7389dc0929ca51120`, pushed `main`, dispatched release workflow run `28333539922`, and published `v0.1.1` at `https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/releases/tag/v0.1.1`. Release is non-draft/non-prerelease, points to `131d62542c9420a0db7e38d7389dc0929ca51120`, and has CI-built assets `WindowsUpdaterWebUI.exe`, metadata, and SHA-256 plus compact changelog.
+- 2026-06-28T21:27:08+02:00 [TOOL] Dependency bump validation passed: root `golang.org/x/sys` updated to `v0.46.0`; browser module updated `chromedp/cdproto`, `go-json-experiment/json`, `ledongthuc/pdf`, `orisano/pixelmatch`, and `x/sys`; workflows updated to `actions/checkout@v7.0.0`, `setup-go@v6.5.0`, `setup-node@v6.4.0`, `upload-artifact@v7.0.1`, and Node `26`. `go list -m -u all` in both modules showed no same-path updates; `go test -count=1 ./internal/updater`, `go test -count=1 ./...`, browser `go test -tags uitestsupport -count=1 ./...`, `go vet ./...`, bundled Node `--check`, `git diff --check` (CRLF warnings only), and `Build-Workspace.ps1` passed. Rebuilt exe SHA-256 `31b0def0acbd5024a131000115cc0483a9e6fe9b99fd844991fe2a60b21d91db`.
+- 2026-06-28T21:06:03+02:00 [TOOL] Released `v0.1.0` from commit `2d4183bc36a4e1e151eebcbb89044f378f6e7dd4` using GitHub Actions run `28332746452`; workflow succeeded, published non-draft/non-prerelease release `https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/releases/tag/v0.1.0`, and uploaded CI-built assets `WindowsUpdaterWebUI.exe`, `WindowsUpdaterWebUI.metadata.json`, and `WindowsUpdaterWebUI.exe.sha256`. Release notes were edited to a compact changelog and verified by readback.
 - 2026-06-28T21:00:15+02:00 [TOOL] Scan/refresh UI cleanup validation passed: `go test -count=1 ./internal/updater`, bundled Node `--check internal/updater/assets/ui.js`, `git diff --check`, and `Build-Workspace.ps1`; rebuilt exe SHA-256 `7e6e5fd122f92920391d32d6507ee988cff83508d429f5051bbfe00b343884ce`.
 - 2026-06-28T20:52:52+02:00 [TOOL] Rebuilt executable after the footer UI change. First build attempt reached metadata generation but `dist\WindowsUpdaterWebUI.metadata.json` was temporarily locked; retry passed with `Binary size: 16029696 bytes` and SHA-256 `db902c328402407eae83324884b428c8783f49380a2ba9e06200be59e475d69b`.
 - 2026-06-28T20:50:09+02:00 [TOOL] GPL footer relocation validation passed: `go test -count=1 ./internal/updater`, bundled Node `--check internal/updater/assets/ui.js`, and `git diff --check` with CRLF warnings only.

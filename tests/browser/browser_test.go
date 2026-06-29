@@ -588,6 +588,16 @@ func TestBrowserHidesStaleStoreEvidenceFromUpdatesQueue(t *testing.T) {
 				Packages: []updater.Package{
 					{Key: "winget:Visible.Update", Manager: updater.ManagerWinget, ID: "Visible.Update", Name: "Visible Winget Update", Version: "1.0.0", AvailableVersion: "1.1.0", UpdateAvailable: true, UpdateSupported: true, Installed: true, Source: updater.SourceWinget, PreferenceEligible: true, CanUpdateNow: true},
 					{
+						Key:                "store:Hidden.Unknown_abc123",
+						Manager:            updater.ManagerStore,
+						ID:                 "Hidden.Unknown_abc123",
+						Name:               "Hidden Unknown Store",
+						Version:            "1.0.0",
+						Installed:          true,
+						UpdateSupported:    false,
+						CannotUpdateReason: "Store state is unknown.",
+					},
+					{
 						Key:                        "store:Hidden.Store_abc123",
 						Manager:                    updater.ManagerStore,
 						ID:                         "Hidden.Store_abc123",
@@ -633,6 +643,9 @@ func TestBrowserHidesStaleStoreEvidenceFromUpdatesQueue(t *testing.T) {
 	}
 	if strings.Contains(updatesBody, "Hidden Stale Store") || strings.Contains(updatesBody, "Stale evidence") {
 		t.Fatalf("stale Store evidence should stay out of Updates Available:\n%s", updatesBody)
+	}
+	if strings.Contains(updatesBody, "Hidden Unknown Store") || strings.Contains(updatesBody, "Store state is unknown") {
+		t.Fatalf("unknown Store inventory should stay out of Updates Available:\n%s", updatesBody)
 	}
 }
 
