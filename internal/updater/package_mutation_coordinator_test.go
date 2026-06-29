@@ -116,18 +116,27 @@ func TestPackageMutationCoordinatorWaitingHelperCancelsPromptly(t *testing.T) {
 	if err := holder.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if holder.Process != nil && holder.ProcessState == nil {
+			_ = os.WriteFile(releaseHolder, []byte("release"), 0o644)
+			_ = holder.Wait()
+		}
+	})
 	waitForTestFile(t, holderReady, 5*time.Second)
 
 	waiter := packageMutationHelperCommand(t, "wait-timeout", mutexName, "", "", waiterTimedOut)
-	started := time.Now()
-	if err := waiter.Run(); err != nil {
+	if err := waiter.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if waiter.Process != nil && waiter.ProcessState == nil {
+			_ = waiter.Process.Kill()
+			_ = waiter.Wait()
+		}
+	})
+	waitForTestFile(t, waiterTimedOut, 10*time.Second)
+	if err := waiter.Wait(); err != nil {
 		t.Fatalf("waiting helper should exit cleanly after context timeout: %v", err)
-	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
-		t.Fatalf("waiting helper cancellation took too long: %s", elapsed)
-	}
-	if !testFileExists(waiterTimedOut) {
-		t.Fatal("waiting helper did not record timeout")
 	}
 
 	if err := os.WriteFile(releaseHolder, []byte("release"), 0o644); err != nil {
@@ -200,7 +209,11 @@ func TestPackageMutationCoordinatorHelperProcess(t *testing.T) {
 	case mode == "wait-timeout":
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		defer cancel()
+		started := time.Now()
 		_, err := defaultPackageMutationCoordinator.Acquire(ctx, nil)
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Fatalf("waiting helper cancellation took too long after helper startup: %s", elapsed)
+		}
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("expected timeout while waiting for package mutation mutex, got %v", err)
 		}
