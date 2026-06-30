@@ -859,7 +859,7 @@
     if(!storeAssessmentActive(pkg)){ return !!pkg.update_available; }
     var state = storeUpdateState(pkg);
     if(pkg.stale){ return false; }
-    return !!pkg.can_update_now || state === "conflict" || state === "pending";
+    return !!pkg.can_update_now || state === "conflict";
   }
   function packageHiddenAfterSuccessfulUpdate(pkg){
     return !!(pkg && pkg.key && completedUpdateKeys[pkg.key] && packageShouldAppearInUpdateQueueBeforeSessionSuppression(pkg));

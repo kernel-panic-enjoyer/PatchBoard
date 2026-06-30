@@ -153,6 +153,7 @@ const (
 	backendStoreCLI              = "store-cli"
 	backendAppXInventory         = "appx-inventory"
 	backendWingetMSStoreFallback = "winget-msstore-fallback"
+	backendWinRT                 = "winrt"
 	inventoryBackendAppX         = "AppX"
 )
 

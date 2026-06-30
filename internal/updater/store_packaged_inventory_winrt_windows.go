@@ -380,6 +380,27 @@ func winrtRelease(object unsafe.Pointer) {
 	_, _, _ = syscall.SyscallN(unknown.Vtbl.Release, uintptr(object))
 }
 
+func winrtRuntimeClassName(object unsafe.Pointer) string {
+	if object == nil {
+		return ""
+	}
+	inspectable := (*winrtInspectable)(object)
+	var handle uintptr
+	if err := winrtCall("IInspectable.GetRuntimeClassName", inspectable.Vtbl.GetRuntimeClassName, uintptr(object), uintptr(unsafe.Pointer(&handle))); err != nil {
+		return ""
+	}
+	defer func() {
+		if handle != 0 {
+			_, _, _ = syscall.SyscallN(procWindowsDeleteString.Addr(), handle)
+		}
+	}()
+	return winrtHStringToString(handle)
+}
+
+type winrtInspectable struct {
+	Vtbl *winrtInspectableVtbl
+}
+
 func winrtCall(label string, proc uintptr, args ...uintptr) error {
 	hr, _, _ := syscall.SyscallN(proc, args...)
 	if failedHRESULT(hr) {

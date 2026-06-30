@@ -266,7 +266,7 @@ func TestStoreStaleEvidenceHiddenFromPrimaryUpdateQueueAssets(t *testing.T) {
 	for _, expected := range []string{
 		`if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }`,
 		`if(pkg.stale){ return false; }`,
-		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
+		`return !!pkg.can_update_now || state === "conflict";`,
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("packageShouldAppearInUpdateQueueBeforeSessionSuppression should contain %q; body:\n%s", expected, body)
@@ -277,6 +277,28 @@ func TestStoreStaleEvidenceHiddenFromPrimaryUpdateQueueAssets(t *testing.T) {
 	}
 	if strings.Contains(body, `state === "unknown"`) {
 		t.Fatalf("unknown Store evidence should not enter the primary update queue; body:\n%s", body)
+	}
+	if strings.Contains(body, `state === "pending"`) {
+		t.Fatalf("queue-only pending Store evidence should not enter the primary update queue; body:\n%s", body)
+	}
+}
+
+func TestWinRTPendingQueueDiagnosticsStayOutOfPrimaryQueue(t *testing.T) {
+	response := transactionalPackagesResponse(t, []StoreCatalogProvider{
+		pendingWinRTDiscoveryProvider("OpenAI.Codex_abc123"),
+	}, false)
+	got := findStorePackageByPFN(t, response.Packages, "OpenAI.Codex_abc123")
+	if got.UpdateState != string(StoreUpdatePending) || got.UpdateAvailable || got.CanUpdateNow || got.UpdateSupported {
+		t.Fatalf("pending Store queue evidence must stay non-actionable: %#v", got)
+	}
+	if response.StoreScanHealth.Counts["pending"] == 0 {
+		t.Fatalf("expected pending Store diagnostic count: %#v", response.StoreScanHealth)
+	}
+	if response.StoreScanHealth.Healthy || response.StoreScanHealth.Authoritative {
+		t.Fatalf("pending queue evidence should keep Store health diagnostic-only: %#v", response.StoreScanHealth)
+	}
+	if len(got.ProviderSummaries) == 0 {
+		t.Fatalf("expected per-package provider diagnostics for pending queue evidence: %#v", got)
 	}
 }
 
@@ -368,4 +390,26 @@ func findStorePackageByPFN(t *testing.T, packages []Package, pfn string) Package
 	}
 	t.Fatalf("Store package with PFN %q not found in %#v", pfn, packages)
 	return Package{}
+}
+
+func pendingWinRTDiscoveryProvider(pfn string) StoreCatalogProvider {
+	return fakeCatalogProvider{id: storeWinRTDiscoveryProviderID, fn: func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily) StoreCatalogProviderRun {
+		identity := StoreInstalledIdentity{UserSID: scan.UserSID, PackageFamilyName: pfn}
+		return StoreCatalogProviderRun{
+			Provider:    StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID, Name: "WinRT Store update discovery", Backend: backendWinRT},
+			StartedAt:   scan.StartedAt,
+			CompletedAt: scan.CompletedAt,
+			Health:      StoreProviderHealthy,
+			Observations: []StoreProviderObservation{{
+				Provider:         StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID, Name: "WinRT Store update discovery", Backend: backendWinRT},
+				Health:           StoreProviderHealthy,
+				Kind:             StoreObservationPendingUpdate,
+				Identity:         identity,
+				ScanID:           scan.ScanID,
+				ObservedAt:       scan.CompletedAt,
+				InstalledVersion: "1.0.0",
+				Diagnostics:      "WinRT Store queue reported a pending package state. state=paused",
+			}},
+		}
+	}}
 }

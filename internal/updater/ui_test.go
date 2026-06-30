@@ -335,7 +335,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`pkg.preference_eligible`,
 		`pkg.cannot_update_reason`,
 		`pkg.exact_target_kind`,
-		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
+		`return !!pkg.can_update_now || state === "conflict";`,
 		`row-actions`,
 		`.row-actions{display:flex`,
 		`--row-update-action-width:132px`,
@@ -515,7 +515,7 @@ func TestCompletedUpdateJobsClearGlobalProgress(t *testing.T) {
 func TestStoreUnknownRowsStayOutOfPrimaryUpdateQueue(t *testing.T) {
 	for _, expected := range []string{
 		`if(pkg && pkg.manager === "store" && !storeAssessmentActive(pkg)){ return false; }`,
-		`return !!pkg.can_update_now || state === "conflict" || state === "pending";`,
+		`return !!pkg.can_update_now || state === "conflict";`,
 		`return showStatusBadge ? stateBadge(pkg) : '<span class="muted">-</span>';`,
 	} {
 		if !strings.Contains(uiJS, expected) {

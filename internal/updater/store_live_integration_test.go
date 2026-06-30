@@ -30,7 +30,77 @@ import (
 const (
 	liveStoreVP9PackageFamilyName = "Microsoft.VP9VideoExtensions_8wekyb3d8bbwe"
 	liveStoreVP9ProductID         = "9N4D0MSMP0PT"
+
+	liveStoreWinRTDiscoveryWorkerHelperEnv = "UPDATER_STORE_WINRT_DISCOVERY_LIVE_WORKER_HELPER"
 )
+
+func TestLiveWinRTStoreUpdateDiscoveryWorker(t *testing.T) {
+	if os.Getenv(liveStoreWinRTDiscoveryWorkerHelperEnv) == "1" {
+		os.Exit(runStoreUpdateDiscoveryWorker(os.Stdin, os.Stdout, os.Stderr, winrtStoreUpdateDiscoveryProvider{}))
+	}
+	if os.Getenv("UPDATER_RUN_STORE_LIVE_WINRT_DISCOVERY_TESTS") != "1" {
+		t.Skip("set UPDATER_RUN_STORE_LIVE_WINRT_DISCOVERY_TESTS=1 to run the live WinRT Store update discovery worker probe")
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("live WinRT Store update discovery requires Windows")
+	}
+	if isAdmin() {
+		t.Skip("live WinRT Store update discovery must run as the non-elevated interactive user")
+	}
+	ensureLiveWorkspaceDirs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatalf("current user SID: %v", err)
+	}
+	scanStarted := time.Now().UTC()
+	scan := StoreScanGeneration{
+		ScanID:           "live-winrt-discovery-" + scanStarted.Format("20060102T150405.000000000Z"),
+		UserSID:          userSID,
+		StartedAt:        scanStarted,
+		WindowsVersion:   liveCommandOutput(ctx, "cmd.exe", "/d", "/c", "ver"),
+		Architecture:     runtime.GOARCH,
+		ProviderVersions: map[string]string{},
+		ProviderHealth:   map[string]StoreProviderHealth{},
+		CompletionStatus: StoreScanRunning,
+	}
+	provider := storeUpdateDiscoveryWorkerProvider{
+		Executable: os.Args[0],
+		Args: []string{
+			"-test.run=TestLiveWinRTStoreUpdateDiscoveryWorker",
+			"--",
+			storeUpdateDiscoveryWorkerFlag,
+		},
+		Env: []string{liveStoreWinRTDiscoveryWorkerHelperEnv + "=1"},
+	}
+	response, result := provider.Discover(ctx, scan, nil)
+	evidence := map[string]any{
+		"windows_version": strings.TrimSpace(scan.WindowsVersion),
+		"architecture":    scan.Architecture,
+		"scan_id":         scan.ScanID,
+		"worker_ok":       result.OK,
+		"worker_code":     result.Code,
+		"completed":       response.Completed,
+		"partial":         response.Partial,
+		"item_count":      len(response.Items),
+		"errors":          response.Errors,
+		"stderr":          sanitizeProviderDiagnostic(result.Stderr),
+		"stdout":          sanitizeProviderDiagnostic(result.Stdout),
+	}
+	formatted, _ := json.MarshalIndent(evidence, "", "  ")
+	t.Logf("sanitized live WinRT Store update discovery evidence:\n%s", formatted)
+	if result.OK {
+		if _, err := validateStoreUpdateDiscoveryWorkerResponse(scan, response, nil); err != nil {
+			t.Fatalf("live WinRT Store update discovery returned invalid evidence: %v\n%s", err, formatted)
+		}
+		return
+	}
+	if response.ScanID != scan.ScanID || !strings.EqualFold(response.UserSID, scan.UserSID) {
+		t.Fatalf("live WinRT Store update discovery returned malformed failure envelope: %#v\n%s", response, formatted)
+	}
+}
 
 func TestLiveStoreCLIExactVP9Assessment(t *testing.T) {
 	if os.Getenv("UPDATER_RUN_STORE_LIVE_TESTS") != "1" {

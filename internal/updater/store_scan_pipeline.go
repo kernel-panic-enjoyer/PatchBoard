@@ -99,6 +99,7 @@ func defaultStoreScanPipelineContext(ctx context.Context, repository StoreScanRe
 		Repository:        repository,
 		InventoryProvider: storePackagedAppInventoryProvider(),
 		CatalogProviders: []StoreCatalogProvider{
+			storeWinRTDiscoveryCatalogProvider{},
 			storeCLIExactCatalogProvider{Version: storeVersion},
 			storeCLIUpdatesCatalogProvider{Version: storeVersion},
 			wingetMSStoreExactCatalogProvider{Version: wingetVersion},
@@ -325,6 +326,9 @@ func synthesizeMissingProviderObservations(scan StoreScanGeneration, run StoreCa
 	if run.Health == StoreProviderHealthy {
 		return run
 	}
+	if run.Provider.Key() == storeWinRTDiscoveryProviderID {
+		return run
+	}
 	kind := observationKindForProviderHealth(run.Health)
 	seen := map[string]bool{}
 	for _, observation := range run.Observations {
@@ -402,6 +406,7 @@ func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan Store
 	state := pipeline.planningState(ctx)
 	incompleteAggregate := aggregateCoverageIncomplete(aggregateRuns)
 	displayOnlyPositiveHint := aggregatePositiveHintRequiresExactSweep(aggregateRuns)
+	aggregateNegativeGuard := aggregateNegativeRequiresExactSweep(aggregateRuns)
 	reusableMappings := reusableStoreMappings(previousSnapshot, previousFound, byPFN, scan.StartedAt, exactProviderVersion)
 	positiveNeedingTargets := positiveAggregateObservationsWithoutExactTarget(scan, aggregateRuns)
 	planned := map[string]bool{}
@@ -422,7 +427,7 @@ func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan Store
 		planned[key] = true
 		plan.stateCheckPFNs[key] = true
 	}
-	if displayOnlyPositiveHint {
+	if displayOnlyPositiveHint || aggregateNegativeGuard {
 		for _, family := range byPFN {
 			key := strings.ToLower(family.Identity.PackageFamilyName)
 			planned[key] = true
@@ -489,6 +494,20 @@ func aggregatePositiveHintRequiresExactSweep(runs []StoreCatalogProviderRun) boo
 	for _, run := range runs {
 		if run.PositiveUpdateHint && run.Provider.Key() == storeCLIUpdatesProviderID && run.Health != StoreProviderUnsupported {
 			return true
+		}
+	}
+	return false
+}
+
+func aggregateNegativeRequiresExactSweep(runs []StoreCatalogProviderRun) bool {
+	for _, run := range runs {
+		if run.Provider.Key() != storeCLIUpdatesProviderID || run.Health != StoreProviderHealthy {
+			continue
+		}
+		for _, observation := range run.Observations {
+			if observation.Health == StoreProviderHealthy && observation.Kind == StoreObservationAuthoritativeNegative {
+				return true
+			}
 		}
 	}
 	return false
@@ -965,7 +984,7 @@ func requiredStoreCatalogProviders(runs []StoreCatalogProviderRun) []StoreProvid
 
 func storeCatalogProviderRequired(provider StoreProviderIdentity) bool {
 	switch provider.Key() {
-	case storeCLIExactProviderID, wingetMSStoreExactProviderID, storeMappingReuseProviderID:
+	case storeCLIExactProviderID, wingetMSStoreExactProviderID, storeMappingReuseProviderID, storeWinRTDiscoveryProviderID:
 		return false
 	case storeCLIUpdatesProviderID:
 		return true

@@ -299,7 +299,7 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 		return assessment
 	}
 
-	if len(positives) > 0 && (len(negatives) > 0 || len(inapplicable) > 0) {
+	if len(positives) > 0 && (len(inapplicable) > 0 || !negativeEvidenceSupersededByExactPositive(positives, negatives)) {
 		return storeAssessmentDecision(assessment, StoreUpdateConflict, positives[0], "healthy providers disagree")
 	}
 	if len(positives) > 0 {
@@ -344,6 +344,47 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 
 	assessment.Reason = "evidence is not authoritative"
 	return assessment
+}
+
+func negativeEvidenceSupersededByExactPositive(positives, negatives []StoreProviderObservation) bool {
+	if len(negatives) == 0 {
+		return true
+	}
+	if !hasExactStoreCatalogPositive(positives) {
+		return false
+	}
+	for _, negative := range negatives {
+		if !knownStoreFalseNegativeProvider(negative.Provider.Key()) {
+			return false
+		}
+	}
+	return true
+}
+
+func knownStoreFalseNegativeProvider(provider string) bool {
+	switch provider {
+	case storeCLIUpdatesProviderID, storeCLIExactProviderID, wingetMSStoreExactProviderID:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasExactStoreCatalogPositive(positives []StoreProviderObservation) bool {
+	for _, positive := range positives {
+		if positive.Target == nil || !positive.Target.ExactFor(positive.Identity) {
+			continue
+		}
+		switch positive.Provider.Key() {
+		case storeCLIExactProviderID, wingetMSStoreExactProviderID, storeWinRTDiscoveryProviderID:
+			return true
+		}
+		switch positive.Target.Provider.Key() {
+		case storeCLIExactProviderID, wingetMSStoreExactProviderID, storeWinRTDiscoveryProviderID:
+			return true
+		}
+	}
+	return false
 }
 
 type positiveStoreTargetConsensus struct {

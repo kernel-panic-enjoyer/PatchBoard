@@ -53,6 +53,7 @@ const (
 	cliModeAutoUpdate      cliMode = "auto-update"
 	cliModeElevatedWorker  cliMode = "elevated-worker"
 	cliModeStoreInventory  cliMode = "store-inventory-worker"
+	cliModeStoreDiscovery  cliMode = "store-update-discovery-worker"
 	cliModeSelfUpdateApply cliMode = "self-update-apply"
 )
 
@@ -97,6 +98,7 @@ func parseCLI(args []string) (cliOptions, error) {
 	task := set.String(strings.TrimPrefix(flagTask, "--"), "", "")
 	elevatedWorker := set.Bool(strings.TrimPrefix(flagElevatedWorker, "--"), false, "")
 	storeInventoryWorker := set.Bool(strings.TrimPrefix(storeInventoryWorkerFlag, "--"), false, "")
+	storeUpdateDiscoveryWorker := set.Bool(strings.TrimPrefix(storeUpdateDiscoveryWorkerFlag, "--"), false, "")
 	selfUpdateApply := set.Bool(strings.TrimPrefix(flagSelfUpdateApply, "--"), false, "")
 	selfUpdateTarget := set.String("self-update-target", "", "")
 	selfUpdateParentPID := set.String("self-update-parent-pid", "", "")
@@ -116,6 +118,10 @@ func parseCLI(args []string) (cliOptions, error) {
 	}
 	if *storeInventoryWorker {
 		options.Mode = cliModeStoreInventory
+		return options, nil
+	}
+	if *storeUpdateDiscoveryWorker {
+		options.Mode = cliModeStoreDiscovery
 		return options, nil
 	}
 	if *selfUpdateApply {
@@ -168,9 +174,10 @@ Options:
   --help, -h     Show this help.
 
 Internal unsupported modes:
-  --elevated-worker, --store-inventory-worker, and --self-update-apply are
-  implementation details for privileged package actions, isolated current-user
-  Store inventory, and verified application self-replacement.`) + "\n"
+  --elevated-worker, --store-inventory-worker, --store-update-discovery-worker,
+  and --self-update-apply are implementation details for privileged package
+  actions, isolated current-user Store inventory/discovery, and verified
+  application self-replacement.`) + "\n"
 }
 
 func listenerPort(listener net.Listener) int {
@@ -366,6 +373,8 @@ func Main() {
 		return
 	case cliModeStoreInventory:
 		os.Exit(runStoreInventoryWorkerFromArgs())
+	case cliModeStoreDiscovery:
+		os.Exit(runStoreUpdateDiscoveryWorkerFromArgs())
 	case cliModeSelfUpdateApply:
 		if err := runSelfUpdateApply(selfUpdateApplyRequestFromOptions(options)); err != nil {
 			fmt.Fprintln(os.Stderr, err)

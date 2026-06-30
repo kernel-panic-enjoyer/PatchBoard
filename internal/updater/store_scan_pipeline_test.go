@@ -223,7 +223,7 @@ func TestStoreScanPipelineRecordsSystemContext(t *testing.T) {
 	}
 }
 
-func TestOptimizedStoreScanHealthyAggregateNoUpdatesAvoidsExactChecks(t *testing.T) {
+func TestOptimizedStoreScanHealthyAggregateNoUpdatesRunsExactFalseNegativeGuard(t *testing.T) {
 	restoreAvailable := replacePackageActionManagerAvailable(func(manager string) bool {
 		return manager == managerStore
 	})
@@ -256,16 +256,70 @@ func TestOptimizedStoreScanHealthyAggregateNoUpdatesAvoidsExactChecks(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if counts["store-show"] != 0 || counts["store-update-targeted"] != 0 {
-		t.Fatalf("optimized no-update scan ran exact work: counts=%#v", counts)
+	if counts["store-show"] != 2 || counts["store-update-targeted"] != 2 {
+		t.Fatalf("optimized no-update scan should guard aggregate negatives with exact checks: counts=%#v", counts)
 	}
-	if result.Scan.Metrics.ExactChecksPlanned != 0 || result.Scan.Metrics.CommandCountByFamily["store-show"] != 0 {
-		t.Fatalf("scan metrics reported exact work for complete no-update aggregate: %#v", result.Scan.Metrics)
+	if result.Scan.Metrics.ExactChecksPlanned != 2 || result.Scan.Metrics.CommandCountByFamily["store-show"] != 2 {
+		t.Fatalf("scan metrics did not report exact false-negative guard work: %#v", result.Scan.Metrics)
 	}
 	for _, assessment := range result.Assessments {
 		if assessment.State != StoreUpdateCurrent {
 			t.Fatalf("complete aggregate no-update should project current assessments: %#v", result.Assessments)
 		}
+	}
+}
+
+func TestOptimizedStoreScanAggregateNoUpdatesExactPFNPositiveBecomesActionable(t *testing.T) {
+	restoreAvailable := replacePackageActionManagerAvailable(func(manager string) bool {
+		return manager == managerStore
+	})
+	defer restoreAvailable()
+
+	store := newTestStoreScanRepository(t)
+	userSID := "S-1-5-21-aggregate-false-negative"
+	calculatorPFN := "Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+	cameraPFN := "Microsoft.WindowsCamera_8wekyb3d8bbwe"
+	counts := map[string]int{}
+	pipeline := newMultiFamilyStoreScanPipeline(store, userSID, []string{calculatorPFN, cameraPFN}, []StoreCatalogProvider{
+		countingStoreCLIExactProvider(t, counts, map[string]string{
+			calculatorPFN: "9WZDNCRFHVN5",
+			cameraPFN:     "9WZDNCRFJBBG",
+		}, map[string]string{
+			calculatorPFN: strings.Join([]string{
+				"Checking updates...",
+				"Checking updates for Windows-Rechner...",
+				"",
+				"Update available for 'Windows-Rechner'",
+				"",
+				"Would you like to apply the update? [y/n] (y):",
+				"Failed to read input in non-interactive mode.",
+			}, "\n"),
+			cameraPFN: "Already up to date",
+		}),
+		storeCLIUpdatesCatalogProvider{
+			Version: "store-cli-test-v1",
+			Run: func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+				counts["store-updates"]++
+				return CommandResult{OK: true, Command: strings.Join(args, " "), Stdout: "No updates found"}
+			},
+		},
+	})
+	restoreSID := replaceStoreScanSID(userSID)
+	defer restoreSID()
+
+	result, err := pipeline.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["store-show"] != 2 || counts["store-update-targeted"] != 2 {
+		t.Fatalf("aggregate no-updates false-negative guard should exact-check product-like PFNs: counts=%#v", counts)
+	}
+	byPFN := assessmentsByPFN(result.Assessments)
+	if got := byPFN[calculatorPFN]; got.State != StoreUpdateAvailable || !got.ExactActionTargetAvailable || got.StoreProductID != "9WZDNCRFHVN5" {
+		t.Fatalf("exact calculator update evidence did not become actionable: %#v", got)
+	}
+	if got := byPFN[cameraPFN]; got.State != StoreUpdateCurrent || got.ExactActionTargetAvailable {
+		t.Fatalf("exact negative camera evidence should remain current and non-actionable: %#v", got)
 	}
 }
 
