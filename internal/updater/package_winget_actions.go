@@ -96,7 +96,6 @@ func runWingetUpgradeTargetWithInstallFallbackContext(ctx context.Context, manag
 		ForcedInstallCommand:     func() []string { return wingetInstallCommand(manager, id, true) },
 		UnknownVersionRetryLabel: "winget include-unknown retry",
 		PinnedRetryLabel:         "winget include-pinned retry",
-		ForcedInstallLabel:       "winget forced install fallback",
 	})
 }
 
@@ -111,7 +110,6 @@ func runWingetUpgradeNameWithInstallFallbackContext(ctx context.Context, manager
 		ForcedInstallCommand:     func() []string { return wingetInstallNameCommand(manager, name, true) },
 		UnknownVersionRetryLabel: "winget include-unknown name retry",
 		PinnedRetryLabel:         "winget include-pinned name retry",
-		ForcedInstallLabel:       "winget forced install name fallback",
 	})
 }
 
@@ -123,7 +121,6 @@ type wingetUpgradeAttempt struct {
 	ForcedInstallCommand     func() []string
 	UnknownVersionRetryLabel string
 	PinnedRetryLabel         string
-	ForcedInstallLabel       string
 }
 
 func runWingetUpgradeAttemptWithFallbacks(ctx context.Context, attempt wingetUpgradeAttempt) CommandResult {
@@ -156,13 +153,25 @@ func runWingetUpgradeAttemptWithFallbacks(ctx context.Context, attempt wingetUpg
 			return result
 		}
 	}
-	if shouldForceInstallAfterWingetUpgrade(result) {
+	if shouldRetryWingetForceUpgrade(result) {
 		if ctx.Err() != nil {
 			return result
 		}
-		appLog("Winget upgrade for %s reported no applicable upgrade; trying forced install fallback.", attempt.Description)
-		fallback := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, attempt.ForcedInstallCommand()...)
-		return mergeCommandAttemptsWithFinalResult(result, fallback, attempt.ForcedInstallLabel)
+		appLog("Winget upgrade for %s reported no applicable upgrade; retrying with --force.", attempt.Description)
+		retry := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, attempt.UpgradeCommand("--force")...)
+		result = mergeCommandAttemptsWithFinalResult(result, retry, "winget force upgrade retry")
+		if retry.OK || ctx.Err() != nil {
+			return result
+		}
+		if shouldRetryWingetForceUpgrade(retry) && attempt.ForcedInstallCommand != nil {
+			appLog("Winget forced upgrade for %s still reported no applicable upgrade; retrying with exact forced install.", attempt.Description)
+			install := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, attempt.ForcedInstallCommand()...)
+			result = mergeCommandAttemptsWithFinalResult(result, install, "winget forced install fallback")
+			if install.OK || ctx.Err() != nil {
+				return result
+			}
+		}
+		return requireExplicitWingetRepair(result)
 	}
 	return result
 }

@@ -30,7 +30,7 @@ func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	})
 }
 
-func shouldForceInstallAfterWingetUpgrade(result CommandResult) bool {
+func shouldRetryWingetForceUpgrade(result CommandResult) bool {
 	if result.OK {
 		return false
 	}

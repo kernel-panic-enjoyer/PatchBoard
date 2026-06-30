@@ -418,6 +418,79 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 	}
 }
 
+func TestElevatedBatchProgressIsLoggedInParentSession(t *testing.T) {
+	oldLogs := sessionLogs
+	sessionLogs = &LogBuffer{}
+	defer func() { sessionLogs = oldLogs }()
+
+	restore := replaceBulkUpdateBatchHooks(
+		func(pkg Package) bool { return true },
+		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
+			results := make([]UpdateResult, 0, len(packages))
+			for index, pkg := range packages {
+				progress(index+1, pkg)
+				results = append(results, UpdateResult{Key: pkg.Key, Result: CommandResult{OK: true, Command: "batch " + pkg.ID}})
+			}
+			return results, CommandResult{OK: true, Command: "package_update_batch"}
+		},
+		func(ctx context.Context, manager, id string) CommandResult {
+			t.Fatalf("package %s:%s should have used elevated batch", manager, id)
+			return CommandResult{}
+		},
+	)
+	defer restore()
+
+	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
+		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
+	}}}}
+	if _, err := app.startUpdateJob(nil); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForUpdateJobStopped(t, app)
+	if status.State != jobStateSucceeded {
+		t.Fatalf("expected successful batch, got %#v", status)
+	}
+
+	joined := joinLogMessages(sessionLogs.Since(0))
+	for _, want := range []string{
+		"Starting elevated package batch for 2 package(s).",
+		"Elevated package batch running 1/2: Vendor One.",
+		"Elevated package batch running 2/2: Vendor Two.",
+		"Elevated package batch finished with code 0.",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("parent session log missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+func TestWingetUpdateUsesTightPackageActionTimeout(t *testing.T) {
+	oldRunner := packageActionCommandRunner
+	defer func() { packageActionCommandRunner = oldRunner }()
+
+	var timeouts []time.Duration
+	packageActionCommandRunner = func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+		timeouts = append(timeouts, timeout)
+		return CommandResult{Code: 124, Command: strings.Join(args, " "), Stderr: "Timed out."}
+	}
+
+	result := runWingetUpgradePackageWithInstallFallbackContext(context.Background(), managerWinget, Package{
+		Manager: managerWinget,
+		ID:      "Vendor.App",
+		Name:    "Vendor App",
+	})
+	if result.Code != 124 {
+		t.Fatalf("expected timeout result, got %#v", result)
+	}
+	if len(timeouts) != 1 {
+		t.Fatalf("expected one winget command attempt, got %d", len(timeouts))
+	}
+	if timeouts[0] > 20*time.Minute {
+		t.Fatalf("package update command timeout is too loose: %s", timeouts[0])
+	}
+}
+
 func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 	started := make(chan struct{})
 	var once sync.Once

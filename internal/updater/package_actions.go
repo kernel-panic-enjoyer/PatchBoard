@@ -11,7 +11,10 @@ import (
 const (
 	packageActionRetryGap    = 2 * time.Second
 	packageActionMaxAttempts = 3
-	packageActionTimeout     = time.Hour
+	// Mutable package-manager commands can hand off to silent installers. Keep
+	// the timeout tight enough that a hidden installer cannot leave an update
+	// job looking stuck for an hour.
+	packageActionTimeout = 20 * time.Minute
 )
 
 var packageActionCommandRunner = runCommandContext

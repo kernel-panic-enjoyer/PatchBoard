@@ -46,7 +46,7 @@ func (tail *boundedOutputTail) Write(data []byte) (int, error) {
 }
 
 func (tail *boundedOutputTail) String() string {
-	output := validUTF8TailString(tail.buffer)
+	output := validUTF8TailString([]byte(decodeCommandOutputBytes(tail.buffer)))
 	if tail.omitted == 0 {
 		return output
 	}

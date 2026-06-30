@@ -247,21 +247,26 @@ func (app *App) updateJobSnapshot(job *OperationJob) OperationJobStatus {
 func (app *App) updateElevatedPackageBatchForJob(ctx context.Context, job *OperationJob, packages []Package) CommandResult {
 	first := packages[0]
 	nextIndex := app.nextUpdateJobPackageIndex(job)
+	startNotice := fmt.Sprintf("Starting elevated package batch for %d package(s). Approve the Windows UAC prompt if shown.", len(packages))
+	appLogContext(ctx, "%s", startNotice)
 	app.mutateOperationJob(job, func(status *OperationJobStatus) {
 		status.State = jobStateStarting
 		status.CurrentIndex = nextIndex
 		status.CurrentKey = first.Key
 		status.CurrentPackage = updateJobPackageName(first)
-		status.Notice = "Starting elevated package batch..."
+		status.Notice = startNotice
 	})
 	results, result := elevatedPackageUpdateBatchRunner(ctx, packages, func(index int, pkg Package) {
+		notice := fmt.Sprintf("Elevated package batch running %d/%d: %s.", index, len(packages), updateJobPackageName(pkg))
+		appLogContext(ctx, "%s", notice)
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			status.CurrentIndex = nextIndex + index - 1
 			status.CurrentKey = pkg.Key
 			status.CurrentPackage = updateJobPackageName(pkg)
-			status.Notice = "Starting elevated package batch..."
+			status.Notice = notice
 		})
 	})
+	appLogContext(ctx, "Elevated package batch finished with code %d.", result.Code)
 	app.mutateOperationJob(job, func(status *OperationJobStatus) {
 		status.Results = append(status.Results, results...)
 		status.Result = &result

@@ -105,6 +105,10 @@ func parseCLI(args []string) (cliOptions, error) {
 	selfUpdateSHA256 := set.String("self-update-sha256", "", "")
 	selfUpdateRestart := set.Bool("self-update-restart", false, "")
 	selfUpdateElevated := set.Bool("self-update-elevated", false, "")
+	workerPipe := set.String("worker-pipe", "", "")
+	workerCapability := set.String("worker-capability", "", "")
+	workerUserSID := set.String("worker-user-sid", "", "")
+	workerSessionID := set.String("worker-session-id", "", "")
 	noElevate := set.Bool(strings.TrimPrefix(flagNoElevate, "--"), false, "")
 	if err := set.Parse(args); err != nil {
 		return options, err
@@ -115,6 +119,13 @@ func parseCLI(args []string) (cliOptions, error) {
 	if *help {
 		options.Mode = cliModeHelp
 		return options, nil
+	}
+	workerProtocolFlagSet := strings.TrimSpace(*workerPipe) != "" ||
+		strings.TrimSpace(*workerCapability) != "" ||
+		strings.TrimSpace(*workerUserSID) != "" ||
+		strings.TrimSpace(*workerSessionID) != ""
+	if workerProtocolFlagSet && !*elevatedWorker {
+		return options, errors.New("worker protocol flags require --elevated-worker")
 	}
 	if *storeInventoryWorker {
 		options.Mode = cliModeStoreInventory

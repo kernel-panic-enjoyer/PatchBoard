@@ -37,6 +37,11 @@ type elevatedWorkerProcess struct {
 	handle windows.Handle
 }
 
+type elevatedWorkerExit struct {
+	Code uint32
+	Err  error
+}
+
 func (process elevatedWorkerProcess) Close() {
 	if process.handle != 0 {
 		_ = windows.CloseHandle(process.handle)
@@ -47,6 +52,24 @@ func (process elevatedWorkerProcess) Terminate() {
 	if process.handle != 0 {
 		_ = windows.TerminateProcess(process.handle, uint32(commandCancelledCode))
 	}
+}
+
+func (process elevatedWorkerProcess) Wait() elevatedWorkerExit {
+	if process.handle == 0 {
+		return elevatedWorkerExit{}
+	}
+	event, err := windows.WaitForSingleObject(process.handle, windows.INFINITE)
+	if err != nil {
+		return elevatedWorkerExit{Err: err}
+	}
+	if event != windows.WAIT_OBJECT_0 {
+		return elevatedWorkerExit{Err: fmt.Errorf("unexpected elevated worker wait result %d", event)}
+	}
+	var code uint32
+	if err := windows.GetExitCodeProcess(process.handle, &code); err != nil {
+		return elevatedWorkerExit{Err: err}
+	}
+	return elevatedWorkerExit{Code: code}
 }
 
 func runElevatedWorkerOperation(ctx context.Context, invocation elevatedWorkerInvocation) CommandResult {
@@ -94,27 +117,84 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 	}
 	defer server.Close()
 
+	appLogContext(ctx, "Launching elevated worker for %s. Approve the Windows UAC prompt if shown.", invocation.Operation)
 	process, err := launchElevatedWorkerProcess(pipeName, capability, userSID, sessionID)
 	if err != nil {
+		appLogContext(ctx, "Elevated worker launch failed for %s: %s.", invocation.Operation, err)
 		return elevatedWorkerResponse{}, err
 	}
 	defer process.Close()
 
+	appLogContext(ctx, "Elevated worker launched for %s; waiting for connection.", invocation.Operation)
 	startupCtx, cancelStartup := context.WithTimeout(ctx, elevatedWorkerStartupTimeout)
-	conn, err := server.Accept(startupCtx)
+	conn, err := acceptElevatedWorkerConnection(startupCtx, server, process)
 	cancelStartup()
 	if err != nil {
 		process.Terminate()
+		appLogContext(ctx, "Elevated worker did not connect for %s: %s.", invocation.Operation, err)
 		return elevatedWorkerResponse{}, fmt.Errorf("elevated worker did not connect: %w", err)
 	}
 	defer conn.Close()
+	appLogContext(ctx, "Elevated worker connected for %s.", invocation.Operation)
+
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	closeDone := func() {
+		doneOnce.Do(func() {
+			close(done)
+		})
+	}
+	defer closeDone()
+	go func() {
+		select {
+		case <-ctx.Done():
+			process.Terminate()
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
 
 	response, err := exchangeElevatedWorkerRequest(ctx, conn, auth, request, invocation.Progress)
+	closeDone()
 	if err != nil {
 		process.Terminate()
 		return elevatedWorkerResponse{}, err
 	}
 	return response, nil
+}
+
+func acceptElevatedWorkerConnection(ctx context.Context, server *elevatedWorkerPipeServer, process elevatedWorkerProcess) (io.ReadWriteCloser, error) {
+	type acceptResult struct {
+		conn io.ReadWriteCloser
+		err  error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		conn, err := server.Accept(ctx)
+		acceptCh <- acceptResult{conn: conn, err: err}
+	}()
+
+	var exitCh chan elevatedWorkerExit
+	if process.handle != 0 {
+		exitCh = make(chan elevatedWorkerExit, 1)
+		go func() {
+			exitCh <- process.Wait()
+		}()
+	}
+
+	select {
+	case accepted := <-acceptCh:
+		return accepted.conn, accepted.err
+	case exited := <-exitCh:
+		server.Close()
+		if exited.Err != nil {
+			return nil, fmt.Errorf("elevated worker exited before connecting: %w", exited.Err)
+		}
+		return nil, fmt.Errorf("elevated worker exited before connecting with code %d", exited.Code)
+	case <-ctx.Done():
+		server.Close()
+		return nil, ctx.Err()
+	}
 }
 
 func validateWorkerOperationPayloadFromAny(operation string, payload any) error {
@@ -131,9 +211,12 @@ func exchangeElevatedWorkerRequest(ctx context.Context, conn io.ReadWriteCloser,
 	decoder.DisallowUnknownFields()
 
 	var writeMu sync.Mutex
+	writeMu.Lock()
 	if err := encoder.Encode(request); err != nil {
+		writeMu.Unlock()
 		return elevatedWorkerResponse{}, fmt.Errorf("send elevated worker request: %w", err)
 	}
+	writeMu.Unlock()
 
 	responseCh := make(chan elevatedWorkerResponse, 1)
 	errCh := make(chan error, 1)
@@ -168,28 +251,12 @@ func exchangeElevatedWorkerRequest(ctx context.Context, conn io.ReadWriteCloser,
 	case err := <-errCh:
 		return elevatedWorkerResponse{}, fmt.Errorf("read elevated worker response: %w", err)
 	case <-ctx.Done():
-		cancelMessage := newElevatedWorkerCancel(auth, request.RequestID)
-		writeMu.Lock()
-		_ = encoder.Encode(cancelMessage)
-		writeMu.Unlock()
-		select {
-		case response := <-responseCh:
-			return response, nil
-		case <-errCh:
-			return elevatedWorkerResponse{
-				Version:   elevatedWorkerProtocolVersion,
-				RequestID: request.RequestID,
-				OK:        false,
-				Result:    CommandResult{Code: commandCancelledCode, Command: request.Operation, Stderr: "Cancelled."},
-			}, nil
-		case <-time.After(elevatedWorkerCancelTimeout):
-			return elevatedWorkerResponse{
-				Version:   elevatedWorkerProtocolVersion,
-				RequestID: request.RequestID,
-				OK:        false,
-				Result:    CommandResult{Code: commandCancelledCode, Command: request.Operation, Stderr: "Cancelled; elevated worker did not stop before timeout."},
-			}, nil
-		}
+		return elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			RequestID: request.RequestID,
+			OK:        false,
+			Result:    CommandResult{Code: commandCancelledCode, Command: request.Operation, Stderr: "Cancelled."},
+		}, nil
 	}
 }
 
@@ -347,27 +414,7 @@ func serveElevatedWorkerConnection(conn io.ReadWriter, auth elevatedWorkerAuthCo
 		return errors.New("first worker message must be a request")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cancelDone := make(chan struct{})
-	go func() {
-		defer close(cancelDone)
-		for {
-			var message elevatedWorkerMessage
-			if err := decoder.Decode(&message); err != nil {
-				cancel()
-				return
-			}
-			if err := validateElevatedWorkerMessage(message, auth); err != nil {
-				cancel()
-				return
-			}
-			if message.Type == workerMessageCancel && message.RequestID == request.RequestID {
-				cancel()
-				return
-			}
-		}
-	}()
+	ctx := context.Background()
 
 	progress := func(index int, pkg Package) {
 		_ = encoder.Encode(elevatedWorkerResponse{
@@ -396,11 +443,6 @@ func serveElevatedWorkerConnection(conn io.ReadWriter, auth elevatedWorkerAuthCo
 		response.Error = strings.TrimSpace(result.Result.Stderr)
 	}
 	_ = encoder.Encode(response)
-	cancel()
-	select {
-	case <-cancelDone:
-	case <-time.After(elevatedWorkerShutdownTimeout):
-	}
 	return nil
 }
 

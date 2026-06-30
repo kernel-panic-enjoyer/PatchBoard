@@ -678,8 +678,8 @@ func streamCommandOutputContext(ctx context.Context, reader io.Reader, stream st
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
-			chunk := string(buffer[:n])
-			_, _ = output.Write(buffer[:n])
+			chunk := decodeCommandOutputBytes(buffer[:n])
+			_, _ = output.Write([]byte(chunk))
 			pending = appendLogChunkContext(ctx, stream, pending, chunk, categories, emit)
 		}
 		if err != nil {

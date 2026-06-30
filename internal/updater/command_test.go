@@ -598,6 +598,32 @@ func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) 
 	}
 }
 
+func TestStreamCommandOutputNormalizesWindowsTextToUTF8(t *testing.T) {
+	oldLogs := sessionLogs
+	sessionLogs = &LogBuffer{}
+	defer func() { sessionLogs = oldLogs }()
+
+	raw := []byte("Gefunden f\xfcr App\nSchon installiert: f\xc3\xbcr Benutzer\n")
+	var output bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(1)
+	streamCommandOutputCategorized(bytes.NewReader(raw), "stdout", &output, &wg, nil)
+	wg.Wait()
+
+	got := output.String()
+	if strings.Contains(got, "fÃ¼r") || strings.Contains(got, "\ufffd") {
+		t.Fatalf("command output was not normalized to UTF-8: %q", got)
+	}
+	if !strings.Contains(got, "für App") || !strings.Contains(got, "für Benutzer") {
+		t.Fatalf("expected decoded and mojibake-repaired output, got %q", got)
+	}
+	entries := sessionLogs.Since(0)
+	joined := joinLogMessages(entries)
+	if strings.Contains(joined, "fÃ¼r") || strings.Contains(joined, "\ufffd") || !strings.Contains(joined, "für App") || !strings.Contains(joined, "für Benutzer") {
+		t.Fatalf("session log was not normalized to UTF-8: %#v", entries)
+	}
+}
+
 func TestBoundedOutputTailRetainsNewestOutputWithMarker(t *testing.T) {
 	tail := newBoundedOutputTail(12)
 	if _, err := tail.Write([]byte("first line\n")); err != nil {

@@ -14,8 +14,6 @@ func defaultElevatedPackageUpdateBatchEligible(pkg Package) bool {
 	switch pkg.Manager {
 	case managerChoco:
 		return true
-	case managerWinget:
-		return currentUserCanElevateSameUser()
 	default:
 		return false
 	}

@@ -17,7 +17,12 @@ func hiddenSysProcAttr() *syscall.SysProcAttr {
 func launchEnv() []string {
 	env := os.Environ()
 	path := launchPath(os.Getenv("PATH"))
-	return upsertEnv(env, "PATH", path)
+	env = upsertEnv(env, "PATH", path)
+	env = upsertEnv(env, "PYTHONUTF8", "1")
+	env = upsertEnv(env, "PYTHONIOENCODING", "utf-8")
+	env = upsertEnv(env, "LANG", "C.UTF-8")
+	env = upsertEnv(env, "LC_ALL", "C.UTF-8")
+	return env
 }
 
 func launchPath(path string) string {

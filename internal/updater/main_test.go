@@ -34,6 +34,35 @@ func TestParseCLIRejectsNoElevateContract(t *testing.T) {
 	}
 }
 
+func TestParseCLIElevatedWorkerAllowsInternalProtocolFlags(t *testing.T) {
+	options, err := parseCLI([]string{
+		"--elevated-worker",
+		"--worker-pipe=\\\\.\\pipe\\WindowsUpdaterWebUI-test",
+		"--worker-capability=test-capability",
+		"--worker-user-sid=S-1-5-21-test-1001",
+		"--worker-session-id=7",
+	})
+	if err != nil {
+		t.Fatalf("parse elevated worker CLI: %v", err)
+	}
+	if options.Mode != cliModeElevatedWorker {
+		t.Fatalf("mode = %q, want %q", options.Mode, cliModeElevatedWorker)
+	}
+}
+
+func TestParseCLIRejectsWorkerProtocolFlagsOutsideElevatedWorker(t *testing.T) {
+	for _, args := range [][]string{
+		{"--worker-pipe=\\\\.\\pipe\\WindowsUpdaterWebUI-test"},
+		{"--store-inventory-worker", "--worker-capability=test-capability"},
+		{"--store-update-discovery-worker", "--worker-user-sid=S-1-5-21-test-1001"},
+	} {
+		_, err := parseCLI(args)
+		if err == nil || !strings.Contains(err.Error(), "worker protocol flags require --elevated-worker") {
+			t.Fatalf("parseCLI(%v) error = %v, want worker protocol mode error", args, err)
+		}
+	}
+}
+
 func TestParseCLIHelpAndServerOptions(t *testing.T) {
 	help, err := parseCLI([]string{"--help"})
 	if err != nil || help.Mode != cliModeHelp {

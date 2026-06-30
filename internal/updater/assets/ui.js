@@ -2064,7 +2064,7 @@
     if(status.running){
       var name = status.current_package || "package";
       var counter = status.total ? " (" + (status.current_index || 0) + "/" + status.total + ")" : "";
-      if(status.state === "starting"){ return "Starting update: " + name + counter; }
+      if(status.state === "starting"){ return status.notice || ("Starting update: " + name + counter); }
       if(status.state === "accepted"){ return "Update accepted: " + name + counter; }
       if(status.state === "verifying"){ return "Verifying update: " + name + counter; }
       return (mode === "selected" ? "Updating selected packages: " : "Updating all packages: ") + name + counter;
@@ -2097,7 +2097,7 @@
       return pkg && (pkg.manager === "winget" || pkg.manager === "choco");
     }).length;
     if(eligibleCount < 2){ return ""; }
-    return "WinGet and Chocolatey packages will use one UAC prompt when elevation is needed.";
+    return "Chocolatey packages will use one UAC prompt when elevation is needed; WinGet updates run in the current user context.";
   }
   function updatePreflightSummaryText(preflight){
     var summary = updateOptionsSummary(preflight ? preflight.options : null);

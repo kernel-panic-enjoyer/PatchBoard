@@ -228,7 +228,7 @@ func TestDecodeWorkerPayloadRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestExchangeElevatedWorkerRequestSendsCancel(t *testing.T) {
+func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testing.T) {
 	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
 	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageInstall, elevatedWorkerPackageInstallPayload{
 		Manager:   managerWinget,
@@ -241,28 +241,15 @@ func TestExchangeElevatedWorkerRequestSendsCancel(t *testing.T) {
 	defer client.Close()
 	defer server.Close()
 
-	seenCancel := make(chan struct{})
+	requestRead := make(chan struct{})
 	go func() {
 		decoder := json.NewDecoder(server)
 		decoder.DisallowUnknownFields()
-		encoder := json.NewEncoder(server)
 		var gotRequest elevatedWorkerMessage
 		if err := decoder.Decode(&gotRequest); err != nil {
 			return
 		}
-		var cancel elevatedWorkerMessage
-		if err := decoder.Decode(&cancel); err != nil {
-			return
-		}
-		if cancel.Type == workerMessageCancel && cancel.RequestID == gotRequest.RequestID {
-			close(seenCancel)
-		}
-		_ = encoder.Encode(elevatedWorkerResponse{
-			Version:   elevatedWorkerProtocolVersion,
-			RequestID: gotRequest.RequestID,
-			OK:        false,
-			Result:    CommandResult{Code: commandCancelledCode, Command: gotRequest.Operation, Stderr: "Cancelled."},
-		})
+		close(requestRead)
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -274,13 +261,12 @@ func TestExchangeElevatedWorkerRequestSendsCancel(t *testing.T) {
 		}
 		done <- response.Result
 	}()
-	cancel()
-
 	select {
-	case <-seenCancel:
+	case <-requestRead:
 	case <-time.After(time.Second):
-		t.Fatal("expected cancel message")
+		t.Fatal("expected request to be sent before cancellation")
 	}
+	cancel()
 	select {
 	case result := <-done:
 		if result.Code != commandCancelledCode {
@@ -346,6 +332,85 @@ func TestExchangeElevatedWorkerRequestReportsProgress(t *testing.T) {
 	select {
 	case progress := <-progressCh:
 		if progress.CurrentIndex != 2 || progress.PackageKey != "choco:gh" || progress.PackageManager != managerChoco {
+			t.Fatalf("unexpected progress: %#v", progress)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected progress callback")
+	}
+}
+
+func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *testing.T) {
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git"},
+		{Manager: managerChoco, ID: "gh"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	go func() {
+		decoder := json.NewDecoder(server)
+		decoder.DisallowUnknownFields()
+		var got elevatedWorkerMessage
+		if err := decoder.Decode(&got); err != nil {
+			return
+		}
+		if got.RequestID != request.RequestID {
+			return
+		}
+		encoder := json.NewEncoder(server)
+		_ = encoder.Encode(elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			Type:      workerResponseProgress,
+			RequestID: request.RequestID,
+			Progress: &elevatedWorkerProgress{
+				CurrentIndex:   1,
+				Total:          2,
+				PackageKey:     "winget:Git.Git",
+				PackageName:    "Git",
+				PackageID:      "Git.Git",
+				PackageManager: managerWinget,
+			},
+		})
+		_ = encoder.Encode(elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			RequestID: request.RequestID,
+			OK:        true,
+			Result:    CommandResult{OK: true, Command: request.Operation},
+		})
+	}()
+
+	progressCh := make(chan elevatedWorkerProgress, 1)
+	done := make(chan elevatedWorkerResponse, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		response, err := exchangeElevatedWorkerRequest(context.Background(), client, auth, request, func(progress elevatedWorkerProgress) {
+			progressCh <- progress
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- response
+	}()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("exchange returned error: %v", err)
+	case response := <-done:
+		if !response.OK {
+			t.Fatalf("expected final response ok, got %#v", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("exchange blocked while sending a normal request/response sequence")
+	}
+	select {
+	case progress := <-progressCh:
+		if progress.CurrentIndex != 1 || progress.PackageKey != "winget:Git.Git" {
 			t.Fatalf("unexpected progress: %#v", progress)
 		}
 	case <-time.After(time.Second):

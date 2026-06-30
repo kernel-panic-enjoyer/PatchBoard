@@ -401,7 +401,39 @@ func TestPackageActionCommandDoesNotTreatWingetNoApplicableUpgradeAsSuccess(t *t
 	result := runPackageActionCommand(context.Background(), managerWinget, time.Second, "winget", "upgrade", "--id", "example")
 
 	if result.OK {
-		t.Fatalf("winget no-applicable-upgrade should remain available for forced-install fallback, got %#v", result)
+		t.Fatalf("winget no-applicable-upgrade should not be treated as success, got %#v", result)
+	}
+}
+
+func TestWingetNoApplicableUpgradeRetriesForcedInstallAfterForcedUpgrade(t *testing.T) {
+	var commands []string
+	restore := replacePackageActionHooks(
+		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+			command := strings.Join(args, " ")
+			commands = append(commands, command)
+			if strings.Contains(command, " install ") && strings.Contains(command, "--force") {
+				return CommandResult{OK: true, Command: command, Stdout: "Forced install succeeded"}
+			}
+			return CommandResult{Code: 1, Command: command, Stdout: "No applicable upgrade found."}
+		},
+		func(manager string) bool { return manager == managerWinget },
+	)
+	defer restore()
+
+	pkg := Package{Manager: managerWinget, ID: "Apple.Bonjour", Name: "Bonjour"}
+	result := runWingetUpgradePackageWithInstallFallbackContext(context.Background(), managerWinget, pkg)
+
+	if !result.OK {
+		t.Fatalf("expected forced install fallback to succeed, got %#v", result)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("expected ID upgrade, forced ID upgrade, and forced ID install, got commands=%#v result=%#v", commands, result)
+	}
+	if !strings.Contains(commands[1], " upgrade ") || !strings.Contains(commands[1], "--force") {
+		t.Fatalf("expected second command to be forced upgrade, commands=%#v result=%#v", commands, result)
+	}
+	if !strings.Contains(commands[2], " install ") || !strings.Contains(commands[2], "--force") {
+		t.Fatalf("expected third command to be forced install fallback, commands=%#v result=%#v", commands, result)
 	}
 }
 
@@ -628,23 +660,23 @@ func TestPrivilegedPackageActionRequiredOnlyForChocolatey(t *testing.T) {
 	}
 }
 
-func TestWingetNoApplicableUpgradeUsesFallbackDetection(t *testing.T) {
+func TestWingetNoApplicableUpgradeRequiresForcedUpgradeRetry(t *testing.T) {
 	english := CommandResult{Code: 1, Stdout: "No applicable upgrade found."}
-	if !shouldForceInstallAfterWingetUpgrade(english) {
-		t.Fatal("expected English no-applicable-upgrade output to trigger fallback")
+	if !shouldRetryWingetForceUpgrade(english) {
+		t.Fatal("expected English no-applicable-upgrade output to trigger force upgrade retry")
 	}
 	if shouldRetryWingetIncludeUnknown(english) {
 		t.Fatal("plain no-applicable-upgrade output should not trigger include-unknown retry")
 	}
 
 	german := CommandResult{Code: 1, Stdout: "Es wurde kein anwendbares Upgrade gefunden."}
-	if !shouldForceInstallAfterWingetUpgrade(german) {
-		t.Fatal("expected German no-applicable-upgrade output to trigger fallback")
+	if !shouldRetryWingetForceUpgrade(german) {
+		t.Fatal("expected German no-applicable-upgrade output to trigger force upgrade retry")
 	}
 
 	success := CommandResult{OK: true, Stdout: "No applicable upgrade found."}
-	if shouldForceInstallAfterWingetUpgrade(success) {
-		t.Fatal("successful winget command should not trigger fallback")
+	if shouldRetryWingetForceUpgrade(success) {
+		t.Fatal("successful winget command should not trigger force upgrade retry")
 	}
 
 	unknownVersion := CommandResult{Code: 1, Stdout: "No applicable upgrade found for packages with unknown installed version. Use --include-unknown to include packages with unknown versions."}
