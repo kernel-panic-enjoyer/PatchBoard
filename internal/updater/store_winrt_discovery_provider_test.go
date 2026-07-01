@@ -14,7 +14,7 @@ func TestWinRTDiscoveryExactPFNPositiveBecomesActionable(t *testing.T) {
 	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
 
 	provider := storeWinRTDiscoveryCatalogProvider{
-		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
 			return storeUpdateDiscoveryWorkerResponse{
 				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
 				ScanID:          scan.ScanID,
@@ -45,6 +45,50 @@ func TestWinRTDiscoveryExactPFNPositiveBecomesActionable(t *testing.T) {
 	}
 }
 
+func TestStoreUpdateDiscoveryCandidatesReuseFreshVerifiedProductIDs(t *testing.T) {
+	userSID := "S-1-5-21-winrt-candidate-product"
+	pfn := "Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+	productID := "9WZDNCRFHVN5"
+	providerVersion := "store-cli-test-v1"
+	scan := completedStoreScan("scan-winrt-candidate-product", userSID, StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
+	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
+	verifiedAt := scan.StartedAt.Add(-time.Hour)
+	previous := StoreScanSnapshot{
+		Published: true,
+		Scan: StoreScanGeneration{
+			ScanID:           "previous-winrt-candidate-product",
+			UserSID:          userSID,
+			StartedAt:        verifiedAt.Add(-time.Second),
+			CompletedAt:      verifiedAt,
+			CompletionStatus: StoreScanCompleted,
+		},
+		ProviderRuns: []StoreCatalogProviderRun{{
+			Provider:  StoreProviderIdentity{ID: storeCLIExactProviderID, Name: "Store CLI exact catalog", Backend: backendStoreCLI},
+			Version:   providerVersion,
+			Health:    StoreProviderHealthy,
+			StartedAt: verifiedAt.Add(-time.Second),
+			Mappings: []VerifiedStoreIdentityMapping{{
+				InstalledIdentity:     families[0].Identity,
+				ProductID:             productID,
+				Provider:              StoreProviderIdentity{ID: storeCLIExactProviderID, Name: "Store CLI exact catalog", Backend: backendStoreCLI},
+				ScanID:                "previous-winrt-candidate-product",
+				VerifiedAt:            verifiedAt,
+				Evidence:              "store show exact PFN/Product ID association",
+				IdentityName:          families[0].Primary.IdentityName,
+				PublisherID:           families[0].Primary.PublisherID,
+				ProcessorArchitecture: families[0].Primary.ProcessorArchitecture,
+				ProductLike:           families[0].ProductLike,
+				ProviderVersion:       providerVersion,
+			}},
+		}},
+	}
+
+	candidates := storeUpdateDiscoveryCandidates(scan, families, previous, true, scan.StartedAt, providerVersion)
+	if len(candidates) != 1 || candidates[0].PackageFamilyName != pfn || candidates[0].ProductID != productID {
+		t.Fatalf("expected Product ID candidate for %s, got %#v", pfn, candidates)
+	}
+}
+
 func TestWinRTDiscoveryPartialPositiveIsDiagnosticOnly(t *testing.T) {
 	userSID := "S-1-5-21-winrt-partial"
 	pfn := "Microsoft.WindowsCalculator_8wekyb3d8bbwe"
@@ -52,7 +96,7 @@ func TestWinRTDiscoveryPartialPositiveIsDiagnosticOnly(t *testing.T) {
 	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
 
 	provider := storeWinRTDiscoveryCatalogProvider{
-		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
 			return storeUpdateDiscoveryWorkerResponse{
 				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
 				ScanID:          scan.ScanID,
@@ -190,7 +234,7 @@ func TestWinRTDiscoveryQueueOnlyPendingIsDiagnosticOnly(t *testing.T) {
 	scan := completedStoreScan("scan-winrt-pending", userSID, StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
 	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
 	provider := storeWinRTDiscoveryCatalogProvider{
-		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
 			return storeUpdateDiscoveryWorkerResponse{
 				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
 				ScanID:          scan.ScanID,
@@ -223,7 +267,7 @@ func TestWinRTDiscoveryQueuedUpdateExactPFNBecomesActionable(t *testing.T) {
 	scan := completedStoreScan("scan-winrt-queued-update", userSID, StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
 	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
 	provider := storeWinRTDiscoveryCatalogProvider{
-		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
 			return storeUpdateDiscoveryWorkerResponse{
 				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
 				ScanID:          scan.ScanID,
@@ -258,7 +302,7 @@ func TestWinRTDiscoveryInvalidWorkerResponseIsNotPartiallyTrusted(t *testing.T) 
 	scan := completedStoreScan("scan-winrt-invalid", userSID, StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
 	families := testStoreInventory(scan, pfn, "1.0.0.0").Families
 	provider := storeWinRTDiscoveryCatalogProvider{
-		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+		Discover: func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
 			return storeUpdateDiscoveryWorkerResponse{
 				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
 				ScanID:          scan.ScanID,

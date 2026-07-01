@@ -42,9 +42,13 @@ const (
 )
 
 type storeWinRTDiscoveryCatalogProvider struct {
-	Discover func(context.Context, StoreScanGeneration, []StorePackagedAppFamily) (storeUpdateDiscoveryWorkerResponse, CommandResult)
-	Now      func() time.Time
-	Version  string
+	Discover               func(context.Context, StoreScanGeneration, []StorePackagedAppFamily, []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult)
+	Now                    func() time.Time
+	Version                string
+	PreviousSnapshot       StoreScanSnapshot
+	PreviousSnapshotFound  bool
+	MappingProviderVersion string
+	CurrentMappings        []VerifiedStoreIdentityMapping
 }
 
 type storeUpdateDiscoveryCandidate struct {
@@ -109,11 +113,15 @@ func (provider storeWinRTDiscoveryCatalogProvider) Observe(ctx context.Context, 
 		run.CompletedAt = provider.now()
 		return run
 	}
+	candidates := storeUpdateDiscoveryCandidatesWithMappings(scan, families, provider.PreviousSnapshot, provider.PreviousSnapshotFound, scan.StartedAt, provider.MappingProviderVersion, provider.CurrentMappings)
 	discover := provider.Discover
 	if discover == nil {
-		discover = storeUpdateDiscoveryWorkerProvider{}.Discover
+		worker := storeUpdateDiscoveryWorkerProvider{Candidates: candidates}
+		discover = func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily, candidates []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+			return worker.Discover(ctx, scan, families)
+		}
 	}
-	response, result := discover(ctx, scan, families)
+	response, result := discover(ctx, scan, families, candidates)
 	run.CompletedAt = provider.now()
 	if ctx.Err() != nil {
 		run.Health = StoreProviderIncomplete
@@ -306,16 +314,47 @@ func normalizeStoreUpdateDiscoveryItem(item storeUpdateDiscoveryItem) (storeUpda
 	return item, nil
 }
 
-func storeUpdateDiscoveryCandidates(scan StoreScanGeneration, families []StorePackagedAppFamily) []storeUpdateDiscoveryCandidate {
+func storeUpdateDiscoveryCandidates(scan StoreScanGeneration, families []StorePackagedAppFamily, previous StoreScanSnapshot, previousFound bool, now time.Time, mappingProviderVersion string) []storeUpdateDiscoveryCandidate {
+	return storeUpdateDiscoveryCandidatesWithMappings(scan, families, previous, previousFound, now, mappingProviderVersion, nil)
+}
+
+func storeUpdateDiscoveryCandidatesWithMappings(scan StoreScanGeneration, families []StorePackagedAppFamily, previous StoreScanSnapshot, previousFound bool, now time.Time, mappingProviderVersion string, currentMappings []VerifiedStoreIdentityMapping) []storeUpdateDiscoveryCandidate {
 	candidates := make([]storeUpdateDiscoveryCandidate, 0, len(families))
+	byPFN := productLikeFamiliesByPFN(scan, families)
+	reusableMappings := reusableStoreMappings(previous, previousFound, byPFN, now, mappingProviderVersion)
+	for identity, mapping := range reusableCurrentStoreMappings(scan, byPFN, now, mappingProviderVersion, currentMappings) {
+		reusableMappings[identity] = mapping
+	}
 	for _, family := range families {
 		if !family.ProductLike || !family.Identity.Resolved() || family.Identity.UserSID != scan.UserSID {
 			continue
 		}
-		candidates = append(candidates, storeUpdateDiscoveryCandidate{PackageFamilyName: family.Identity.PackageFamilyName})
+		candidate := storeUpdateDiscoveryCandidate{PackageFamilyName: family.Identity.PackageFamilyName}
+		if mapping, ok := reusableMappings[family.Identity]; ok {
+			candidate.ProductID = mapping.ProductID
+		}
+		candidates = append(candidates, candidate)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		return strings.ToLower(candidates[i].PackageFamilyName) < strings.ToLower(candidates[j].PackageFamilyName)
 	})
 	return candidates
+}
+
+func reusableCurrentStoreMappings(scan StoreScanGeneration, families map[string]StorePackagedAppFamily, now time.Time, currentProviderVersion string, mappings []VerifiedStoreIdentityMapping) map[StoreInstalledIdentity]VerifiedStoreIdentityMapping {
+	reusable := map[StoreInstalledIdentity]VerifiedStoreIdentityMapping{}
+	if len(mappings) == 0 {
+		return reusable
+	}
+	for _, mapping := range mappings {
+		if !mapping.VerifiedFor(mapping.InstalledIdentity, scan) {
+			continue
+		}
+		family, ok := families[strings.ToLower(mapping.InstalledIdentity.PackageFamilyName)]
+		if !ok || !mappingReusableForFamily(mapping, mapping.ProviderVersion, family, now, currentProviderVersion) {
+			continue
+		}
+		reusable[mapping.InstalledIdentity] = mapping
+	}
+	return reusable
 }

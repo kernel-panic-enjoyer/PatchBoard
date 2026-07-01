@@ -102,6 +102,19 @@ func TestStoreUpdateDiscoveryWorkerStructuredErrorWithNonzeroExitIsNotHealthy(t 
 	}
 }
 
+func TestStoreUpdateDiscoveryWorkerProviderSendsProductIDCandidates(t *testing.T) {
+	scan := completedStoreScan("scan-winrt-candidate-request", "S-1-5-21-winrt-worker", StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
+	provider := testStoreUpdateDiscoveryWorkerProvider(t, "validate-product-candidate")
+	provider.Candidates = []storeUpdateDiscoveryCandidate{{
+		PackageFamilyName: "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+		ProductID:         "9WZDNCRFHVN5",
+	}}
+	response, result := provider.Discover(context.Background(), scan, nil)
+	if !result.OK || !response.Completed {
+		t.Fatalf("expected helper to accept Product ID candidate, response=%#v result=%#v", response, result)
+	}
+}
+
 func TestStoreUpdateDiscoveryWorkerInvalidResponseWithNonzeroExitIsRejected(t *testing.T) {
 	scan := completedStoreScan("scan-winrt-invalid-nonzero", "S-1-5-21-winrt-worker", StoreProviderIdentity{ID: storeWinRTDiscoveryProviderID})
 	provider := testStoreUpdateDiscoveryWorkerProvider(t, "invalid-nonzero")
@@ -157,6 +170,30 @@ func TestStoreUpdateDiscoveryWorkerHelperProcess(t *testing.T) {
 	case "invalid-nonzero":
 		fmt.Fprint(os.Stdout, "{not-json")
 		os.Exit(7)
+	case "validate-product-candidate":
+		var request storeUpdateDiscoveryWorkerRequest
+		if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+			os.Exit(2)
+		}
+		if len(request.Candidates) != 1 ||
+			request.Candidates[0].PackageFamilyName != "Microsoft.WindowsCalculator_8wekyb3d8bbwe" ||
+			request.Candidates[0].ProductID != "9WZDNCRFHVN5" {
+			_ = encodeStoreUpdateDiscoveryWorkerResponse(os.Stdout, storeUpdateDiscoveryWorkerResponse{
+				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
+				ScanID:          request.ScanID,
+				UserSID:         request.UserSID,
+				Partial:         true,
+				Errors:          []string{fmt.Sprintf("unexpected candidates: %#v", request.Candidates)},
+			})
+			os.Exit(1)
+		}
+		_ = encodeStoreUpdateDiscoveryWorkerResponse(os.Stdout, storeUpdateDiscoveryWorkerResponse{
+			ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
+			ScanID:          request.ScanID,
+			UserSID:         request.UserSID,
+			Completed:       true,
+		})
+		os.Exit(0)
 	case "hang":
 		if pidFile := helperArgValue("--pid-file"); pidFile != "" {
 			_ = os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600)

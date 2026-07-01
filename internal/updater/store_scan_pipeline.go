@@ -67,6 +67,7 @@ type StoreScanPipeline struct {
 
 type storeScanProviderPlan struct {
 	aggregateProviders []StoreCatalogProvider
+	winRTProviders     []StoreCatalogProvider
 	exactProvider      *storeCLIExactCatalogProvider
 }
 
@@ -170,14 +171,15 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 		previous = previousAssessmentsFromSnapshot(previousSnapshot)
 	}
 	plan := pipeline.planCatalogProviders()
-	aggregateStarted := pipeline.now()
-	aggregateRuns := pipeline.runCatalogProviders(ctx, scan, inventory.Families, plan.aggregateProviders)
-	aggregateDuration := pipeline.now().Sub(aggregateStarted)
 	exactProviderVersion := ""
 	if plan.exactProvider != nil {
 		exactProviderVersion = plan.exactProvider.Version
 	}
-	exactPlan := pipeline.planExactWork(ctx, scan, inventory.Families, aggregateRuns, previousSnapshot, previousFound, exactProviderVersion)
+	aggregateProviders := catalogProvidersWithStoreMappingContext(plan.aggregateProviders, previousSnapshot, previousFound, exactProviderVersion, nil)
+	aggregateStarted := pipeline.now()
+	aggregateRuns := pipeline.runCatalogProviders(ctx, scan, inventory.Families, aggregateProviders)
+	aggregateDuration := pipeline.now().Sub(aggregateStarted)
+	exactPlan := pipeline.planExactWork(ctx, scan, inventory.Families, aggregateRuns, previousSnapshot, previousFound, exactProviderVersion, len(plan.winRTProviders) > 0)
 	providerRuns := []StoreCatalogProviderRun{inventoryRun}
 	providerRuns = append(providerRuns, aggregateRuns...)
 	if exactPlan.mappingReuseRun != nil {
@@ -188,6 +190,15 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 		exactProvider.StateCheckPFNs = exactPlan.stateCheckPFNs
 		exactRuns := pipeline.runCatalogProviders(ctx, scan, exactPlan.families, []StoreCatalogProvider{exactProvider})
 		providerRuns = append(providerRuns, exactRuns...)
+	}
+	if len(plan.winRTProviders) > 0 {
+		currentMappings := storeMappingsFromProviderRuns(providerRuns)
+		winRTProviders := catalogProvidersWithStoreMappingContext(plan.winRTProviders, previousSnapshot, previousFound, exactProviderVersion, currentMappings)
+		winRTStarted := pipeline.now()
+		winRTRuns := pipeline.runCatalogProviders(ctx, scan, inventory.Families, winRTProviders)
+		aggregateDuration += pipeline.now().Sub(winRTStarted)
+		aggregateRuns = append(aggregateRuns, winRTRuns...)
+		providerRuns = append(providerRuns, winRTRuns...)
 	}
 	scan.CompletedAt = pipeline.now()
 	scan.ProviderHealth = providerHealthMap(providerRuns)
@@ -382,6 +393,12 @@ func (pipeline *StoreScanPipeline) planCatalogProviders() storeScanProviderPlan 
 				copied := *typed
 				plan.exactProvider = &copied
 			}
+		case storeWinRTDiscoveryCatalogProvider:
+			plan.winRTProviders = append(plan.winRTProviders, typed)
+		case *storeWinRTDiscoveryCatalogProvider:
+			if typed != nil {
+				plan.winRTProviders = append(plan.winRTProviders, typed)
+			}
 		default:
 			plan.aggregateProviders = append(plan.aggregateProviders, provider)
 		}
@@ -389,7 +406,38 @@ func (pipeline *StoreScanPipeline) planCatalogProviders() storeScanProviderPlan 
 	return plan
 }
 
-func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily, aggregateRuns []StoreCatalogProviderRun, previousSnapshot StoreScanSnapshot, previousFound bool, exactProviderVersion string) storeExactWorkPlan {
+func catalogProvidersWithStoreMappingContext(providers []StoreCatalogProvider, previous StoreScanSnapshot, previousFound bool, exactProviderVersion string, currentMappings []VerifiedStoreIdentityMapping) []StoreCatalogProvider {
+	if len(providers) == 0 {
+		return nil
+	}
+	copied := make([]StoreCatalogProvider, len(providers))
+	for index, provider := range providers {
+		switch typed := provider.(type) {
+		case storeWinRTDiscoveryCatalogProvider:
+			typed.PreviousSnapshot = previous
+			typed.PreviousSnapshotFound = previousFound
+			typed.MappingProviderVersion = exactProviderVersion
+			typed.CurrentMappings = currentMappings
+			copied[index] = typed
+		case *storeWinRTDiscoveryCatalogProvider:
+			if typed == nil {
+				copied[index] = provider
+				continue
+			}
+			clone := *typed
+			clone.PreviousSnapshot = previous
+			clone.PreviousSnapshotFound = previousFound
+			clone.MappingProviderVersion = exactProviderVersion
+			clone.CurrentMappings = currentMappings
+			copied[index] = &clone
+		default:
+			copied[index] = provider
+		}
+	}
+	return copied
+}
+
+func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily, aggregateRuns []StoreCatalogProviderRun, previousSnapshot StoreScanSnapshot, previousFound bool, exactProviderVersion string, ensureMappingCoverage bool) storeExactWorkPlan {
 	plan := storeExactWorkPlan{stateCheckPFNs: map[string]bool{}}
 	byPFN := productLikeFamiliesByPFN(scan, families)
 	if pipeline.DeepExactScan {
@@ -444,6 +492,14 @@ func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan Store
 			plan.stateCheckPFNs[key] = true
 		}
 	}
+	if ensureMappingCoverage {
+		for key, family := range byPFN {
+			if _, ok := reusableMappings[family.Identity]; ok || planned[key] {
+				continue
+			}
+			planned[key] = true
+		}
+	}
 	for key := range planned {
 		if family, ok := byPFN[key]; ok {
 			plan.families = append(plan.families, family)
@@ -454,6 +510,14 @@ func (pipeline *StoreScanPipeline) planExactWork(ctx context.Context, scan Store
 	})
 	plan.mappingsRefreshed = len(plan.families)
 	return plan
+}
+
+func storeMappingsFromProviderRuns(providerRuns []StoreCatalogProviderRun) []VerifiedStoreIdentityMapping {
+	var mappings []VerifiedStoreIdentityMapping
+	for _, run := range providerRuns {
+		mappings = append(mappings, run.Mappings...)
+	}
+	return mappings
 }
 
 func (pipeline *StoreScanPipeline) planningState(ctx context.Context) State {

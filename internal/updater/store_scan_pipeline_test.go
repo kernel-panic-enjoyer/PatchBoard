@@ -428,6 +428,74 @@ func TestOptimizedStoreScanVP9AggregatePositiveReusesCachedMapping(t *testing.T)
 	}
 }
 
+func TestOptimizedStoreScanFeedsCurrentMappingsToWinRTDiscovery(t *testing.T) {
+	restoreAvailable := replacePackageActionManagerAvailable(func(manager string) bool {
+		return manager == managerStore
+	})
+	defer restoreAvailable()
+
+	store := newTestStoreScanRepository(t)
+	userSID := "S-1-5-21-winrt-current-mapping"
+	pfn := "Microsoft.WindowsCalculator_8wekyb3d8bbwe"
+	productID := "9WZDNCRFHVN5"
+	counts := map[string]int{}
+	var capturedCandidates []storeUpdateDiscoveryCandidate
+	winRTRuns := 0
+	winRTProvider := storeWinRTDiscoveryCatalogProvider{
+		Version: "winrt-test-v1",
+		Discover: func(ctx context.Context, scan StoreScanGeneration, families []StorePackagedAppFamily, candidates []storeUpdateDiscoveryCandidate) (storeUpdateDiscoveryWorkerResponse, CommandResult) {
+			winRTRuns++
+			capturedCandidates = append([]storeUpdateDiscoveryCandidate(nil), candidates...)
+			for _, candidate := range candidates {
+				if candidate.PackageFamilyName == pfn && candidate.ProductID == productID {
+					return storeUpdateDiscoveryWorkerResponse{
+						ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
+						ScanID:          scan.ScanID,
+						UserSID:         scan.UserSID,
+						Completed:       true,
+						Items: []storeUpdateDiscoveryItem{{
+							PackageFamilyName: pfn,
+							ProductID:         productID,
+							OfferAvailable:    true,
+							InstallState:      storeInstallStateReadyToDownload,
+						}},
+					}, CommandResult{OK: true, Command: "fake winrt current mapping discovery"}
+				}
+			}
+			return storeUpdateDiscoveryWorkerResponse{
+				ProtocolVersion: storeUpdateDiscoveryWorkerProtocolVersion,
+				ScanID:          scan.ScanID,
+				UserSID:         scan.UserSID,
+				Completed:       true,
+			}, CommandResult{OK: true, Command: "fake winrt missing product candidate"}
+		},
+	}
+	pipeline := newMultiFamilyStoreScanPipeline(store, userSID, []string{pfn}, []StoreCatalogProvider{
+		winRTProvider,
+		countingStoreCLIExactProviderWithVersion(t, counts, "store-cli-test-v1", map[string]string{pfn: productID}, nil),
+	})
+	restoreSID := replaceStoreScanSID(userSID)
+	defer restoreSID()
+
+	result, err := pipeline.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winRTRuns != 1 {
+		t.Fatalf("expected one WinRT discovery run after mapping refresh, got %d", winRTRuns)
+	}
+	if len(capturedCandidates) != 1 || capturedCandidates[0].PackageFamilyName != pfn || capturedCandidates[0].ProductID != productID {
+		t.Fatalf("expected current mapping Product ID candidate, got %#v", capturedCandidates)
+	}
+	if counts["store-show"] != 1 || counts["store-update-targeted"] != 0 {
+		t.Fatalf("expected one mapping-only Store CLI show and no targeted update check, counts=%#v", counts)
+	}
+	got := result.Assessments[0]
+	if got.State != StoreUpdateAvailable || got.StoreProductID != productID || !got.ExactActionTargetAvailable {
+		t.Fatalf("expected actionable WinRT assessment from same-scan mapping, got %#v", got)
+	}
+}
+
 func TestOptimizedStoreScanVP9AggregatePositiveRefreshesExpiredMapping(t *testing.T) {
 	restoreAvailable := replacePackageActionManagerAvailable(func(manager string) bool {
 		return manager == managerStore

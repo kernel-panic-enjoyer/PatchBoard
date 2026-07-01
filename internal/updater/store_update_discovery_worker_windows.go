@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	storeUpdateDiscoveryCommand = "WinRT AppInstallManager update discovery"
-	storeUpdateDiscoveryTimeout = 4 * time.Minute
+	storeUpdateDiscoveryCommand    = "WinRT AppInstallManager update discovery"
+	storeUpdateDiscoveryTimeout    = 4 * time.Minute
+	storeUpdateDiscoveryDefaultSKU = "0010"
 )
 
 var (
@@ -40,6 +41,7 @@ type storeUpdateDiscoveryWorkerProvider struct {
 	Env                []string
 	Timeout            time.Duration
 	SkipElevationCheck bool
+	Candidates         []storeUpdateDiscoveryCandidate
 }
 
 type winrtStoreUpdateDiscoveryProvider struct {
@@ -83,7 +85,7 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 		ScanID:          scan.ScanID,
 		UserSID:         scan.UserSID,
 		Deadline:        deadline.UTC(),
-		Candidates:      storeUpdateDiscoveryCandidates(scan, families),
+		Candidates:      provider.discoveryCandidates(scan, families),
 	}
 	requestBytes, err := encodeStoreUpdateDiscoveryWorkerRequest(request)
 	if err != nil {
@@ -211,6 +213,13 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 	}
 	result.OK = true
 	return response, result
+}
+
+func (provider storeUpdateDiscoveryWorkerProvider) discoveryCandidates(scan StoreScanGeneration, families []StorePackagedAppFamily) []storeUpdateDiscoveryCandidate {
+	if provider.Candidates != nil {
+		return provider.Candidates
+	}
+	return storeUpdateDiscoveryCandidates(scan, families, StoreScanSnapshot{}, false, time.Time{}, "")
 }
 
 func runStoreUpdateDiscoveryWorkerFromArgs() int {
@@ -439,14 +448,18 @@ func enumerateWinRTStoreUpdates(ctx context.Context, userSID string, candidates 
 
 	manager := (*winrtAppInstallManager)(managerPtr)
 	searchItems, searchErr := searchWinRTStoreUpdates(ctx, managerPtr, manager)
+	targetedItems, targetedErr := searchTargetedWinRTStoreUpdates(ctx, managerPtr, manager, candidates)
 	queueItems, queueErr := currentWinRTStoreInstallItems(managerPtr, manager)
-	items := mergeStoreUpdateDiscoveryItems(searchItems, queueItems)
-	if searchErr != nil && queueErr != nil {
-		return items, fmt.Errorf("SearchForAllUpdatesAsync failed: %v; AppInstallItems failed: %w", searchErr, queueErr)
+	items := mergeStoreUpdateDiscoveryItems(searchItems, targetedItems, queueItems)
+	if searchErr != nil && targetedErr != nil && queueErr != nil {
+		return items, fmt.Errorf("SearchForAllUpdatesAsync failed: %v; targeted SearchForUpdatesAsync failed: %v; AppInstallItems failed: %w", searchErr, targetedErr, queueErr)
 	}
 	if len(items) == 0 {
 		if searchErr != nil {
 			return items, searchErr
+		}
+		if targetedErr != nil {
+			return items, targetedErr
 		}
 		if queueErr != nil {
 			return items, queueErr
@@ -487,6 +500,111 @@ func searchWinRTStoreUpdates(ctx context.Context, managerPtr unsafe.Pointer, man
 	return items, nil
 }
 
+func searchTargetedWinRTStoreUpdates(ctx context.Context, managerPtr unsafe.Pointer, manager *winrtAppInstallManager, candidates []storeUpdateDiscoveryCandidate) ([]storeUpdateDiscoveryItem, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	seenProductIDs := map[string]bool{}
+	items := make([]storeUpdateDiscoveryItem, 0)
+	var firstErr error
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return items, err
+		}
+		productID := strings.TrimSpace(candidate.ProductID)
+		if productID == "" {
+			continue
+		}
+		productKey := strings.ToLower(productID)
+		if seenProductIDs[productKey] {
+			continue
+		}
+		seenProductIDs[productKey] = true
+		item, err := searchSingleWinRTStoreProductUpdate(ctx, managerPtr, manager, productID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if item == nil {
+			continue
+		}
+		items = append(items, *item)
+	}
+	if len(items) > 0 {
+		return items, nil
+	}
+	if errors.Is(firstErr, context.Canceled) || errors.Is(firstErr, context.DeadlineExceeded) {
+		return nil, firstErr
+	}
+	return nil, nil
+}
+
+func searchSingleWinRTStoreProductUpdate(ctx context.Context, managerPtr unsafe.Pointer, manager *winrtAppInstallManager, productID string) (*storeUpdateDiscoveryItem, error) {
+	var firstErr error
+	for _, skuID := range []string{storeUpdateDiscoveryDefaultSKU, ""} {
+		item, err := searchSingleWinRTStoreProductUpdateSKU(ctx, managerPtr, manager, productID, skuID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if item != nil {
+			return item, nil
+		}
+	}
+	return nil, firstErr
+}
+
+func searchSingleWinRTStoreProductUpdateSKU(ctx context.Context, managerPtr unsafe.Pointer, manager *winrtAppInstallManager, productID, skuID string) (*storeUpdateDiscoveryItem, error) {
+	productHString, err := newHString(productID)
+	if err != nil {
+		return nil, err
+	}
+	defer productHString.Delete()
+	skuHString, err := newHString(skuID)
+	if err != nil {
+		return nil, err
+	}
+	defer skuHString.Delete()
+
+	var asyncPtr unsafe.Pointer
+	if err := winrtCall("IAppInstallManager.SearchForUpdatesAsync", manager.Vtbl.SearchForUpdatesAsync, uintptr(managerPtr), productHString.Handle, skuHString.Handle, uintptr(unsafe.Pointer(&asyncPtr))); err != nil {
+		return nil, err
+	}
+	if asyncPtr == nil {
+		return nil, nil
+	}
+	defer winrtRelease(asyncPtr)
+
+	resultPtr, err := waitForStoreUpdateDiscoveryItemAsync(ctx, asyncPtr, "SearchForUpdatesAsync")
+	if err != nil {
+		return nil, err
+	}
+	if resultPtr == nil {
+		return nil, nil
+	}
+	defer winrtRelease(resultPtr)
+
+	item, err := storeUpdateDiscoveryItemFromWinRT(resultPtr, storeUpdateDiscoverySourceSearch)
+	if err != nil {
+		return nil, err
+	}
+	if item.ProductID == "" {
+		item.ProductID = productID
+	} else if !strings.EqualFold(item.ProductID, productID) {
+		return nil, fmt.Errorf("SearchForUpdatesAsync returned Product ID %q for requested Product ID %q", item.ProductID, productID)
+	}
+	item.Diagnostic = appendDiagnostic(item.Diagnostic, "targeted Product ID discovery")
+	item, err = normalizeStoreUpdateDiscoveryItem(item)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func currentWinRTStoreInstallItems(managerPtr unsafe.Pointer, manager *winrtAppInstallManager) ([]storeUpdateDiscoveryItem, error) {
 	var viewPtr unsafe.Pointer
 	if err := winrtCall("IAppInstallManager.AppInstallItems", manager.Vtbl.GetAppInstallItems, uintptr(managerPtr), uintptr(unsafe.Pointer(&viewPtr))); err != nil {
@@ -497,6 +615,45 @@ func currentWinRTStoreInstallItems(managerPtr unsafe.Pointer, manager *winrtAppI
 	}
 	defer winrtRelease(viewPtr)
 	return appInstallItemsFromVectorView(viewPtr, storeUpdateDiscoverySourceQueue)
+}
+
+func waitForStoreUpdateDiscoveryItemAsync(ctx context.Context, asyncPtr unsafe.Pointer, operationName string) (unsafe.Pointer, error) {
+	infoPtr, err := winrtQueryInterface(asyncPtr, iidIAsyncInfo)
+	if err != nil {
+		return nil, fmt.Errorf("IAsyncInfo: %w", err)
+	}
+	defer winrtRelease(infoPtr)
+	info := (*winrtAsyncInfo)(infoPtr)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var status int32
+		if err := winrtCall("IAsyncInfo.Status", info.Vtbl.GetStatus, uintptr(infoPtr), uintptr(unsafe.Pointer(&status))); err != nil {
+			return nil, err
+		}
+		switch status {
+		case 1:
+			operation := (*winrtAsyncOperationStoreInstallItem)(asyncPtr)
+			var resultPtr unsafe.Pointer
+			if err := winrtCall("IAsyncOperation<AppInstallItem>.GetResults", operation.Vtbl.GetResults, uintptr(asyncPtr), uintptr(unsafe.Pointer(&resultPtr))); err != nil {
+				return nil, err
+			}
+			return resultPtr, nil
+		case 2:
+			return nil, fmt.Errorf("%s was cancelled", operationName)
+		case 3:
+			var code uint32
+			_ = winrtCall("IAsyncInfo.ErrorCode", info.Vtbl.GetErrorCode, uintptr(infoPtr), uintptr(unsafe.Pointer(&code)))
+			return nil, fmt.Errorf("%s failed: HRESULT 0x%08X", operationName, code)
+		}
+		select {
+		case <-ctx.Done():
+			_ = winrtCall("IAsyncInfo.Cancel", info.Vtbl.Cancel, uintptr(infoPtr))
+			_ = winrtCall("IAsyncInfo.Close", info.Vtbl.Close, uintptr(infoPtr))
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func waitForStoreUpdateDiscoveryAsync(ctx context.Context, asyncPtr unsafe.Pointer) (unsafe.Pointer, error) {
@@ -779,6 +936,17 @@ type winrtAsyncOperationStoreInstallItemList struct {
 }
 
 type winrtAsyncOperationStoreInstallItemListVtbl struct {
+	winrtInspectableVtbl
+	PutCompleted uintptr
+	GetCompleted uintptr
+	GetResults   uintptr
+}
+
+type winrtAsyncOperationStoreInstallItem struct {
+	Vtbl *winrtAsyncOperationStoreInstallItemVtbl
+}
+
+type winrtAsyncOperationStoreInstallItemVtbl struct {
 	winrtInspectableVtbl
 	PutCompleted uintptr
 	GetCompleted uintptr
