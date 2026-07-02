@@ -92,7 +92,7 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .hero-topline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .hero-copy h2{margin:5px 0 7px;font-size:28px;line-height:1.14;letter-spacing:0;max-width:760px}
 .hero-copy p{margin:0}
-.connection-badge{vertical-align:middle}
+.connection-badge{width:27ch;justify-content:center;text-align:center;vertical-align:middle;overflow:hidden}
 .header-actions .connection-badge{min-height:36px;padding-inline:10px;flex:0 0 auto}
 .eyebrow,.panel-kicker{display:block;color:var(--teal);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em}
 .hero-search{justify-content:flex-end;align-items:stretch}

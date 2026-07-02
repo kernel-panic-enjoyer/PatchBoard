@@ -38,6 +38,10 @@
   var connectionStaleAfterMs = heartbeatIntervalMs + 5000;
   var lastBackendContactAt = 0;
   var connectionWatchdogTimer = null;
+  var reconnectingAnimationIntervalMs = 600;
+  var reconnectingAnimationTimer = null;
+  var reconnectingAnimationDots = 0;
+  var reconnectingAnimationBaseMessage = "Reconnecting to backend";
   var jobsInitialized = false;
   var serverJobs = [];
   var completedJobIDs = {};
@@ -388,10 +392,48 @@
   function setLogConnectionState(state, message){
     var target = $("log-connection-status");
     if(!target){ return; }
-    target.textContent = message || state;
     target.classList.toggle("ok", state === "connected");
     target.classList.toggle("warn", state === "reconnecting");
     target.classList.toggle("error", state === "disconnected");
+    if(state === "reconnecting"){
+      startReconnectingAnimation(message || "Reconnecting to backend");
+      return;
+    }
+    stopReconnectingAnimation();
+    target.textContent = message || state;
+  }
+  function reconnectingAnimationText(){
+    return reconnectingAnimationBaseMessage + ".".repeat(reconnectingAnimationDots);
+  }
+  function renderReconnectingAnimation(){
+    var target = $("log-connection-status");
+    if(!target){
+      stopReconnectingAnimation();
+      return;
+    }
+    target.textContent = reconnectingAnimationText();
+  }
+  function stopReconnectingAnimation(){
+    if(reconnectingAnimationTimer){
+      clearInterval(reconnectingAnimationTimer);
+      reconnectingAnimationTimer = null;
+    }
+    reconnectingAnimationDots = 0;
+  }
+  function startReconnectingAnimation(message){
+    var nextMessage = String(message || "Reconnecting to backend").replace(/\.+$/, "");
+    if(reconnectingAnimationTimer && reconnectingAnimationBaseMessage === nextMessage){
+      renderReconnectingAnimation();
+      return;
+    }
+    reconnectingAnimationBaseMessage = nextMessage;
+    reconnectingAnimationDots = 0;
+    renderReconnectingAnimation();
+    if(reconnectingAnimationTimer){ return; }
+    reconnectingAnimationTimer = setInterval(function(){
+      reconnectingAnimationDots = (reconnectingAnimationDots + 1) % 4;
+      renderReconnectingAnimation();
+    }, reconnectingAnimationIntervalMs);
   }
   function backendContactIsFresh(){
     return !!lastBackendContactAt && Date.now() - lastBackendContactAt < connectionStaleAfterMs;
