@@ -42,6 +42,35 @@
   var reconnectingAnimationTimer = null;
   var reconnectingAnimationDots = 0;
   var reconnectingAnimationBaseMessage = "Reconnecting to backend";
+  var currentBackendConnectionState = "reconnecting";
+  var backendHasConnected = false;
+  var backendActionControlSelector = [
+    "#theme-toggle",
+    "#shutdown-button",
+    "#search-form button[type='submit']",
+    "#scan-button",
+    "#refresh-packages",
+    "#store-rescan-button",
+    "#store-diagnostics-export-button",
+    "#startup-toggle",
+    "#auto-global-toggle",
+    "#auto-all",
+    "#auto-none",
+    "#app-update-check",
+    "#app-update-apply",
+    "#app-update-modal-apply",
+    "#update-all-button",
+    "#update-selected-button",
+    "#confirm-update-job",
+    "#cancel-updates-button",
+    "#retry-failed-updates",
+    "#view-update-job-log",
+    "#export-log-view",
+    ".auto-package",
+    ".install-form button",
+    ".manager-install-form button",
+    ".update-form button"
+  ].join(",");
   var jobsInitialized = false;
   var serverJobs = [];
   var completedJobIDs = {};
@@ -390,17 +419,75 @@
     }
   }
   function setLogConnectionState(state, message){
+    currentBackendConnectionState = state;
     var target = $("log-connection-status");
-    if(!target){ return; }
-    target.classList.toggle("ok", state === "connected");
-    target.classList.toggle("warn", state === "reconnecting");
-    target.classList.toggle("error", state === "disconnected");
-    if(state === "reconnecting"){
-      startReconnectingAnimation(message || "Reconnecting to backend");
-      return;
+    if(target){
+      target.classList.toggle("ok", state === "connected");
+      target.classList.toggle("warn", state === "reconnecting");
+      target.classList.toggle("error", state === "disconnected");
+      if(state === "reconnecting"){
+        startReconnectingAnimation(message || "Reconnecting to backend");
+        applyBackendAvailabilityState();
+        return;
+      }
+      stopReconnectingAnimation();
+      target.textContent = message || state;
     }
-    stopReconnectingAnimation();
-    target.textContent = message || state;
+    applyBackendAvailabilityState();
+  }
+  function backendIsConnected(){
+    return currentBackendConnectionState === "connected";
+  }
+  function backendUnavailableNotice(){
+    showNotice("Backend is reconnecting. Controls will re-enable once connected.");
+  }
+  function applyBackendAvailabilityState(){
+    var connected = backendIsConnected();
+    document.documentElement.classList.toggle("backend-disconnected", !connected);
+    document.querySelectorAll(backendActionControlSelector).forEach(function(control){
+      if(connected){
+        if(control.dataset.backendDisabled === "true"){
+          control.disabled = false;
+          delete control.dataset.backendDisabled;
+          control.removeAttribute("aria-disabled");
+        }
+        return;
+      }
+      if(!control.disabled){
+        control.disabled = true;
+        control.dataset.backendDisabled = "true";
+      }
+      control.setAttribute("aria-disabled", "true");
+    });
+  }
+  function backendActionControlFromTarget(target){
+    return target && target.closest ? target.closest(backendActionControlSelector) : null;
+  }
+  function backendFormRequiresConnection(form){
+    if(!form || !form.matches){ return false; }
+    return form.id === "search-form" ||
+      form.id === "shutdown-form" ||
+      form.id === "update-selected-form" ||
+      form.matches(".install-form,.manager-install-form,.update-form,.update-all-form");
+  }
+  function blockBackendActionWhenDisconnected(event){
+    if(backendIsConnected()){ return false; }
+    if(backendActionControlFromTarget(event.target)){
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      backendUnavailableNotice();
+      return true;
+    }
+    return false;
+  }
+  function blockBackendFormWhenDisconnected(event){
+    if(backendIsConnected() || !backendFormRequiresConnection(event.target)){ return false; }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    backendUnavailableNotice();
+    return true;
   }
   function reconnectingAnimationText(){
     return reconnectingAnimationBaseMessage + ".".repeat(reconnectingAnimationDots);
@@ -439,6 +526,7 @@
     return !!lastBackendContactAt && Date.now() - lastBackendContactAt < connectionStaleAfterMs;
   }
   function markBackendContact(message){
+    backendHasConnected = true;
     lastBackendContactAt = Date.now();
     setLogConnectionState("connected", message || "Connected");
     scheduleConnectionWatchdog();
@@ -532,7 +620,7 @@
     }
     stopLogPolling();
     closeEventStream();
-    setLogConnectionState("reconnecting", "Connecting");
+    setLogConnectionState("reconnecting", backendHasConnected ? "Reconnecting to backend" : "Connecting to backend");
     eventStream = new EventSource(api("/api/events", {since:String(lastLogID)}));
     eventStream.onopen = function(){
       markBackendContact("Connected");
@@ -644,6 +732,7 @@
       cancel.disabled = !cancelVisible;
     }
     panel.classList.toggle("hidden", !show);
+    applyBackendAvailabilityState();
   }
   function setInstallProgress(show, message){
     var panel = $("install-progress");
@@ -683,6 +772,7 @@
       row.classList.toggle("updating-current", !!currentKey && row.dataset.key === currentKey);
     });
     updateSelectedActionState();
+    applyBackendAvailabilityState();
   }
   function compactNoticeText(value){
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -1196,6 +1286,7 @@
       if(managersRendered){ return; }
       var placeholder = '<p class="muted">' + (data.loading ? loadingText('Checking package managers...') : 'No package manager status yet.') + '</p>';
       if(target.innerHTML !== placeholder){ target.innerHTML = placeholder; }
+      applyBackendAvailabilityState();
       return;
     }
     managersRendered = true;
@@ -1229,6 +1320,7 @@
       return '<div class="manager manager-missing"><div class="manager-main"><span class="manager-dot">' + icon("alert") + '</span><div><strong>' + html(managerLabel(name)) + '</strong><span class="muted">' + html(manager.error || '') + '</span></div></div>' + availability + details + '<form class="manager-install-form" method="post" action="/api/managers/install"><input type="hidden" name="manager" value="' + attr(name) + '"><button type="submit">' + icon("install") + '<span>Install ' + html(managerLabel(name)) + '</span></button></form></div>';
     }).join("");
     if(target.innerHTML !== markup){ target.innerHTML = markup; }
+    applyBackendAvailabilityState();
   }
   function renderStatus(data){
     latestStatus = data || {};
@@ -1255,6 +1347,7 @@
       status.innerHTML = data.loading ? loadingText("Loading task status...") : html("Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled"));
     }
     renderDashboardSummary();
+    applyBackendAvailabilityState();
   }
 
   function renderApplicationInfo(info){
@@ -1368,6 +1461,7 @@
       }
     }
     maybeShowAppUpdatePrompt(update);
+    applyBackendAvailabilityState();
   }
 
 
@@ -1522,6 +1616,7 @@
       target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">' + html(emptyState.body) + '</td></tr>';
       var emptyLabel = loading ? loadingText('Checking...') : html(emptyState.pager);
       renderEmptyPager(status, emptyLabel, prev, next);
+      applyBackendAvailabilityState();
       return;
     }
     var page = pagedItems(updates, updatePage, updatePageSize);
@@ -1533,6 +1628,7 @@
       return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td><input form="update-selected-form" type="checkbox" name="package_key" value="' + attr(pkg.key) + '" aria-label="Select ' + attr(pkg.name) + ' for update"' + (checked ? ' checked' : '') + ((updateBusy || !selectable) ? ' disabled' : '') + '></td><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg, {compact:true}) + '</td><td>' + clippedCellText(pkg.version) + '</td><td>' + packageAvailableCell(pkg) + '</td><td>' + autoButton(pkg) + '</td><td class="action-cell">' + updateActionCell(pkg) + '</td></tr>';
     }).join("");
     renderPager(page, status, prev, next);
+    applyBackendAvailabilityState();
   }
   function renderInstalledTable(loading){
     var target = $("packages-body");
@@ -1547,6 +1643,7 @@
     if(visiblePackages.length === 0){
 		target.innerHTML = loading ? loadingTableRow(7, "Loading packages...") : '<tr><td colspan="7">' + (hasFilter ? 'No packages match your filter.' : 'No managed packages found.') + '</td></tr>';
       renderEmptyPager(status, loading ? loadingText('Loading...') : html(hasFilter ? 'No matches' : 'No packages'), prev, next);
+      applyBackendAvailabilityState();
       return;
     }
     var page = pagedItems(visiblePackages, installedPage, installedPageSize);
@@ -1557,6 +1654,7 @@
 		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg, {compact:true}) + '</td><td>' + clippedCellText(pkg.version) + '</td><td>' + packageAvailableCell(pkg, {statusBadge:false, compact:true}) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td class="action-cell">' + installedAction(pkg) + '</td></tr>';
 	}).join("");
     renderPager(page, status, prev, next, hasFilter ? " matches" : "");
+    applyBackendAvailabilityState();
   }
   function renderPackageTables(){
     var updateQueuePackages = packages.filter(packageShouldAppearInUpdateQueue);
@@ -1571,6 +1669,7 @@
     $("update-all-button").disabled = updateBusy || updateJobRunning || bulkUpdatePackages.length === 0;
     updateSelectedActionState();
     renderDashboardSummary();
+    applyBackendAvailabilityState();
   }
   function renderStoreLoadingNotes(loading){
     ["updates-store-loading", "installed-store-loading"].forEach(function(id){
@@ -1786,6 +1885,7 @@
     if(searchResults.length === 0){
       body.innerHTML = '<tr><td colspan="6">No installable results.</td></tr>';
       renderEmptyPager(status, html("No results"), prev, next);
+      applyBackendAvailabilityState();
       return;
     }
     var page = pagedItems(searchResults, searchPage, searchPageSize);
@@ -1794,6 +1894,7 @@
       return '<tr><td><strong>' + html(pkg.name) + '</strong></td><td>' + searchSourceCell(pkg) + '</td><td><code class="package-id">' + html(pkg.id) + '</code></td><td>' + searchMatchCell(pkg) + '</td><td>' + html(pkg.version || "") + '</td><td>' + searchActionCell(pkg) + '</td></tr>';
     }).join("");
     renderPager(page, status, prev, next);
+    applyBackendAvailabilityState();
   }
 
 
@@ -1867,6 +1968,7 @@
       showToast("Application update check failed: " + e.message, "error");
     }finally{
       if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
   async function startAppSelfUpdate(){
@@ -1889,6 +1991,7 @@
           showNotice(finalStatus.notice || "Application update failed.");
           showToast(finalStatus.notice || "Application update failed.", "error");
           if(button){ button.disabled = false; }
+          applyBackendAvailabilityState();
         }
       }catch(waitErr){
         showNotice("Application update is applying; reconnect after the app restarts.", true);
@@ -1897,6 +2000,7 @@
       showNotice("Could not start application update: " + e.message);
       showToast("Could not start application update: " + e.message, "error");
       if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
   async function loadPackages(force){
@@ -2469,6 +2573,7 @@
       jobLog.disabled = !status.job_id;
       jobLog.dataset.jobId = status.job_id || "";
     }
+    applyBackendAvailabilityState();
   }
   function renderLatestUpdateResult(jobs){
     var latest = null;
@@ -2516,6 +2621,7 @@
       showToast("Could not load job log: " + e.message, "error");
     }finally{
       if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
   async function startUpdateJob(params, keys, message){
@@ -2575,6 +2681,7 @@
     }catch(e){
       showNotice("Could not cancel updates: " + e.message);
       if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
 
@@ -2629,6 +2736,7 @@
     }finally{
       setInstallProgress(false);
       if(button && !installSucceeded){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
   async function installManagerFromForm(form){
@@ -2660,6 +2768,7 @@
       showToast("Package manager install failed: " + e.message, "error");
     }finally{
       if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
     }
   }
   async function setPackageAuto(key, enabled, button){
@@ -2682,6 +2791,7 @@
       startInventoryRefresh().catch(function(){ loadPackages(false); });
     }
     button.disabled = false;
+    applyBackendAvailabilityState();
   }
   async function setAllAuto(enabled){
     var params = new URLSearchParams();
@@ -2699,10 +2809,17 @@
     }finally{
       loadStatus(true);
       startInventoryRefresh().catch(function(){ loadPackages(false); });
+      applyBackendAvailabilityState();
     }
   }
 
 
+  document.addEventListener("click", function(event){
+    blockBackendActionWhenDisconnected(event);
+  }, true);
+  document.addEventListener("submit", function(event){
+    blockBackendFormWhenDisconnected(event);
+  }, true);
   document.addEventListener("click", function(event){
     var openStoreStatus = event.target.closest("[data-store-status-open]");
     if(openStoreStatus){
@@ -2816,6 +2933,7 @@
         showNotice("Application is stopping.");
       }).catch(function(e){
         if(button){ button.disabled = false; }
+        applyBackendAvailabilityState();
         showNotice("Stop failed: " + e.message);
         showToast("Stop failed: " + e.message, "error");
       });
@@ -2904,6 +3022,7 @@
       }
     }catch(e){ showNotice("Scan failed: " + e.message); showToast("Scan failed: " + e.message, "error"); }
     button.disabled = false;
+    applyBackendAvailabilityState();
   });
   $("refresh-packages").addEventListener("click", function(){
     startInventoryRefresh().catch(function(e){
@@ -2984,6 +3103,7 @@
       showToast(failurePrefix + ": " + e.message, "error");
     }finally{
       button.disabled = false;
+      applyBackendAvailabilityState();
       loadStatus(true);
     }
   }
@@ -3017,6 +3137,7 @@
   updateSpinnerPhase();
   observeSpinnerPresence();
   startSpinnerLoop();
+  applyBackendAvailabilityState();
   if(reducedMotionQuery){
     var onReducedMotionChange = function(){
       stopSpinnerLoop();

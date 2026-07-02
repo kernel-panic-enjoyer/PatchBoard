@@ -260,6 +260,26 @@ func TestBrowserConnectionBadgeExpiresWhenBackendStops(t *testing.T) {
 	if strings.Contains(text, "Connected") {
 		t.Fatalf("connection badge stayed connected after backend stopped: %q", text)
 	}
+
+	var disabled bool
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`[
+		  "#shutdown-button",
+		  "#search-form button[type='submit']",
+		  "#refresh-packages",
+		  "#scan-button",
+		  "#app-update-check",
+		  "#export-log-view"
+		].every((selector) => {
+		  const control = document.querySelector(selector);
+		  return !!control && control.disabled === true;
+		})`, &disabled),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !disabled {
+		t.Fatal("backend API controls stayed enabled after backend stopped")
+	}
 }
 
 func TestBrowserConnectionBadgeRecoversFromSilentEventStream(t *testing.T) {
