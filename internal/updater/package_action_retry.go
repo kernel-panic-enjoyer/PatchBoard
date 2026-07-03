@@ -35,9 +35,25 @@ func shouldRetryWingetForceUpgrade(result CommandResult) bool {
 		return false
 	}
 	normalizedOutput := normalizedCommandOutput(result)
+	return wingetOutputReportsNoApplicableUpgrade(normalizedOutput) ||
+		wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput)
+}
+
+func wingetOutputReportsNoApplicableUpgrade(normalizedOutput string) bool {
 	return outputContainsAny(normalizedOutput, []string{
 		"no applicable upgrade",
 		"kein anwendbares upgrade",
+	})
+}
+
+func wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput string) bool {
+	return outputContainsAny(normalizedOutput, []string{
+		"installation technology",
+		"install technology",
+		"installer technology",
+		"installationstechnologie",
+		"uninstall the package",
+		"deinstallieren sie das paket",
 	})
 }
 

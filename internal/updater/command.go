@@ -12,6 +12,7 @@ import (
 const (
 	commandTimeoutCode       = 124
 	commandCancelledCode     = 130
+	commandSkippedCode       = 204
 	commandLaunchFailureCode = 127
 )
 

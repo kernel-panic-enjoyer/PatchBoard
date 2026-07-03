@@ -11,6 +11,9 @@ func requireExplicitUnknownVersionUpdate(commandResult CommandResult) CommandRes
 }
 
 func requireExplicitWingetRepair(commandResult CommandResult) CommandResult {
+	if wingetOutputReportsInstallerTechnologyMismatch(normalizedCommandOutput(commandResult)) {
+		return appendCommandStderr(commandResult, "Winget reported an installer technology mismatch. Automatic uninstall/reinstall is not performed; use an explicit repair action if you want to replace this package manually.")
+	}
 	return appendCommandStderr(commandResult, "Winget reported no applicable upgrade even after forced upgrade and forced install retries. Use an explicit repair action if you want to reinstall this package manually.")
 }
 

@@ -86,6 +86,66 @@ func packageAllowedInBulkUpdate(pkg Package, options UpdateOptions) bool {
 	return packageUpdatePolicy(pkg, options).CanUpdateNow
 }
 
+func (app *App) revalidateUpdatePackagesForJob(ctx context.Context, requestedPackages []Package) ([]Package, []UpdateResult) {
+	if len(requestedPackages) == 0 {
+		return nil, nil
+	}
+	inventory, err := app.effectiveInventorySnapshot(ctx)
+	if err != nil {
+		skippedResults := make([]UpdateResult, 0, len(requestedPackages))
+		for _, requestedPackage := range requestedPackages {
+			skippedResults = append(skippedResults, skippedUpdateResult(requestedPackage, "Could not refresh package status before update: "+err.Error()))
+		}
+		return nil, skippedResults
+	}
+	revalidatedPackages := make([]Package, 0, len(requestedPackages))
+	skippedResults := make([]UpdateResult, 0)
+	inventoryPackages := inventory.Packages
+	for _, requestedPackage := range requestedPackages {
+		freshPackage, ok := findPackageForUpdateRetry(inventoryPackages, requestedPackage)
+		if !ok {
+			skippedResults = append(skippedResults, skippedUpdateResult(requestedPackage, "Package is no longer present in refreshed inventory."))
+			continue
+		}
+		updateKey := normalizedJobPackageKey(freshPackage)
+		if updateKey == "" {
+			updateKey = normalizedJobPackageKey(requestedPackage)
+		}
+		if updateKey == "" {
+			updateKey = requestedPackage.Key
+		}
+		freshPackage.Key = updateKey
+		freshPackage.AllowUnknownVersionUpdate = requestedPackage.AllowUnknownVersionUpdate
+		freshPackage.AllowPinnedUpdate = requestedPackage.AllowPinnedUpdate
+		options := UpdateOptions{
+			AllowUnknownVersion: requestedPackage.AllowUnknownVersionUpdate,
+			AllowPinned:         requestedPackage.AllowPinnedUpdate,
+		}
+		if policy := packageUpdatePolicy(freshPackage, options); !policy.CanUpdateNow {
+			reason := firstNonEmpty(policy.CannotUpdateReason, "No update available.")
+			skippedResults = append(skippedResults, skippedUpdateResult(freshPackage, "No longer actionable after refresh: "+reason))
+			continue
+		}
+		revalidatedPackages = append(revalidatedPackages, freshPackage)
+	}
+	return revalidatedPackages, skippedResults
+}
+
+func skippedUpdateResult(pkg Package, reason string) UpdateResult {
+	key := normalizedJobPackageKey(pkg)
+	if key == "" {
+		key = pkg.Key
+	}
+	return UpdateResult{
+		Key: key,
+		Result: CommandResult{
+			Code:    commandSkippedCode,
+			Command: "update " + updateJobPackageName(pkg),
+			Stdout:  "Skipped: " + strings.TrimSpace(reason),
+		},
+	}
+}
+
 func packageHasFreshStoreAvailableAssessment(pkg Package) bool {
 	if pkg.Manager != managerStore {
 		return true

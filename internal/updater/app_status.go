@@ -180,9 +180,7 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	} else {
 		snapshot.Managers = cloneManagerStatuses(snapshot.Managers)
 	}
-	if snapshot.AppUpdate.CurrentVersion == "" {
-		snapshot.AppUpdate = app.appUpdateStatusContext(ctx, false)
-	}
+	snapshot.AppUpdate = app.appUpdateStatusContext(ctx, false)
 	if snapshot.Application.License == "" || snapshot.Application.Repository == "" {
 		snapshot.Application = currentApplicationInfo()
 	}
@@ -196,13 +194,6 @@ func (app *App) appUpdateStatusContext(ctx context.Context, forceRefresh bool) A
 	if app == nil || app.appUpdateChecker == nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}
 	}
-	app.mu.RLock()
-	cachedStatus := app.appUpdateStatus
-	cachedAt := app.appUpdateFetchedAt
-	app.mu.RUnlock()
-	if !forceRefresh && !cachedAt.IsZero() && time.Since(cachedAt) < appUpdateCacheTTL && cachedStatus.CurrentVersion != "" {
-		return cachedStatus
-	}
 	checkCtx, cancel := context.WithTimeout(ctx, appUpdateCheckTimeout)
 	defer cancel()
 	updateStatus, err := app.appUpdateChecker.Check(checkCtx, currentVersion)
@@ -212,10 +203,6 @@ func (app *App) appUpdateStatusContext(ctx context.Context, forceRefresh bool) A
 	if err != nil {
 		updateStatus.Error = sanitizeProviderDiagnostic(err.Error())
 	}
-	app.mu.Lock()
-	app.appUpdateStatus = updateStatus
-	app.appUpdateFetchedAt = time.Now()
-	app.mu.Unlock()
 	return updateStatus
 }
 

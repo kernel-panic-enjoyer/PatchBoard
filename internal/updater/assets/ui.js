@@ -1605,7 +1605,7 @@
       return String(value || "").toLowerCase().indexOf(query) !== -1;
     });
   }
-  function renderUpdatesTable(updates, loading){
+  function renderUpdatesTable(updates, loading, loadingMessage, loadingPager){
     var target = $("updates-body");
     var status = $("updates-page-status");
     var prev = $("updates-prev");
@@ -1613,8 +1613,8 @@
     if(!target){ return; }
     if(updates.length === 0){
       var emptyState = updatesEmptyState();
-      target.innerHTML = loading ? loadingTableRow(7, "Checking for updates...") : '<tr><td colspan="7">' + html(emptyState.body) + '</td></tr>';
-      var emptyLabel = loading ? loadingText('Checking...') : html(emptyState.pager);
+      target.innerHTML = loading ? loadingTableRow(7, loadingMessage || "Checking for updates...") : '<tr><td colspan="7">' + html(emptyState.body) + '</td></tr>';
+      var emptyLabel = loading ? loadingText(loadingPager || 'Checking...') : html(emptyState.pager);
       renderEmptyPager(status, emptyLabel, prev, next);
       applyBackendAvailabilityState();
       return;
@@ -1656,6 +1656,9 @@
     renderPager(page, status, prev, next, hasFilter ? " matches" : "");
     applyBackendAvailabilityState();
   }
+  function updatesTableShowsLoadingRow(){
+    return visibleUpdates().length === 0 && (latestPackagesLoading || (latestStoreLoading && updatesManagerFilter === "all"));
+  }
   function renderPackageTables(){
     var updateQueuePackages = packages.filter(packageShouldAppearInUpdateQueue);
     var autoPreferencePackages = packages.filter(packageCanUseAutoUpdatePreference);
@@ -1663,7 +1666,14 @@
     pruneSelectedUpdateKeys();
     $("auto-all").disabled = updateBusy || autoPreferencePackages.length === 0;
     $("auto-none").disabled = updateBusy || autoPreferencePackages.length === 0;
-    renderUpdatesTable(visibleUpdates(), latestPackagesLoading);
+    var storeOnlyUpdatesLoading = !latestPackagesLoading && latestStoreLoading && updatesManagerFilter === "all";
+    var updatesLoading = latestPackagesLoading || storeOnlyUpdatesLoading;
+    renderUpdatesTable(
+      visibleUpdates(),
+      updatesLoading,
+      storeOnlyUpdatesLoading ? "Microsoft Store is still checking for updates..." : "Checking for updates...",
+      storeOnlyUpdatesLoading ? "Checking Store..." : "Checking..."
+    );
     renderInstalledTable(latestPackagesLoading);
     var bulkUpdatePackages = updateQueuePackages.filter(packageCanBeIncludedInBulkUpdate);
     $("update-all-button").disabled = updateBusy || updateJobRunning || bulkUpdatePackages.length === 0;
@@ -1672,10 +1682,10 @@
     applyBackendAvailabilityState();
   }
   function renderStoreLoadingNotes(loading){
-    ["updates-store-loading", "installed-store-loading"].forEach(function(id){
-      var node = $(id);
-      if(node){ node.classList.toggle("hidden", !loading); }
-    });
+    var updatesNote = $("updates-store-loading");
+    if(updatesNote){ updatesNote.classList.toggle("hidden", !loading || updatesTableShowsLoadingRow()); }
+    var installedNote = $("installed-store-loading");
+    if(installedNote){ installedNote.classList.toggle("hidden", !loading); }
   }
   function syncManagerFilterOptions(data){
     [["updates-manager-filter", "updates"], ["installed-manager-filter", "installed"]].forEach(function(spec){
@@ -1709,8 +1719,8 @@
     latestStoreLoading = !!data.store_loading;
     syncManagerFilterOptions(data);
     renderStoreScanHealth();
-    renderStoreLoadingNotes(latestStoreLoading);
     renderPackageTables();
+    renderStoreLoadingNotes(latestStoreLoading);
   }
 
 
@@ -2297,7 +2307,14 @@
     }
   }
 
-
+  function appendUpdateJobCounter(message, counter){
+    message = String(message || "");
+    if(!counter || message.indexOf(counter) !== -1){ return message; }
+    if(message.slice(-3) === "..."){
+      return message.slice(0, -3) + counter + "...";
+    }
+    return message + counter;
+  }
   function updateJobMessage(status){
     status = status || {};
     var mode = status.mode === "selected" ? "selected" : "all";
@@ -2310,7 +2327,7 @@
     if(status.running){
       var name = status.current_package || "package";
       var counter = status.total ? " (" + (status.current_index || 0) + "/" + status.total + ")" : "";
-      if(status.state === "starting"){ return status.notice || ("Starting update: " + name + counter); }
+      if(status.state === "starting"){ return appendUpdateJobCounter(status.notice || ("Starting update: " + name), counter); }
       if(status.state === "accepted"){ return "Update accepted: " + name + counter; }
       if(status.state === "verifying"){ return "Verifying update: " + name + counter; }
       return (mode === "selected" ? "Updating selected packages: " : "Updating all packages: ") + name + counter;
@@ -2523,11 +2540,15 @@
     if(!result){ return status && status.cancel_requested ? "skipped" : "skipped"; }
     if(result.code === 130){ return "cancelled"; }
     if(result.code === 202){ return "accepted_not_verified"; }
+    if(result.code === 204){ return "skipped"; }
     return result.ok ? "succeeded" : "failed";
   }
   function updateResultText(result, statusText){
     if(!result){
       return statusText === "skipped" ? "No command was run for this package." : "No command result recorded.";
+    }
+    if(result.code === 204){
+      return firstMeaningfulOutputLine(result.stdout) || firstMeaningfulOutputLine(result.stderr) || "No command was run for this package.";
     }
     if(result.ok){ return "Command succeeded."; }
     if(result.code === 130){ return "Command cancelled."; }

@@ -223,6 +223,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Succeeded`,
 		`Failed`,
 		`Skipped`,
+		`result.code === 204`,
 		`Cancelled`,
 		`status.package_keys`,
 		`applyUpdateJobPackageKeys`,
@@ -349,9 +350,12 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`packageMatchesManagerFilter`,
 		`visibleUpdates`,
 		`renderStoreLoadingNotes`,
+		`updatesTableShowsLoadingRow`,
 		`syncManagerFilterOptions`,
 		`data.store_loading`,
 		`data.loading || data.store_loading`,
+		`storeOnlyUpdatesLoading`,
+		`Checking Store...`,
 		`packages.filter(packageShouldAppearInUpdateQueue)`,
 		`packageMatchesInstalledSearch`,
 		`packageAvailableCell`,
@@ -386,6 +390,9 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`managerLabel`,
 		`backendLabel`,
 		`managerCell(pkg, {compact:true})`,
+		`appendUpdateJobCounter`,
+		`message.slice(-3) === "..."`,
+		`appendUpdateJobCounter(status.notice || ("Starting update: " + name), counter)`,
 		`function icon(name)`,
 		`function spinner()`,
 		`function loadingText(message)`,
@@ -494,6 +501,12 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	updatesIndex := strings.Index(rendered, `Updates Available`)
 	if progressIndex < 0 || updatesIndex < 0 || progressIndex > updatesIndex {
 		t.Fatalf("expected update progress banner before updates table, progress=%d updates=%d", progressIndex, updatesIndex)
+	}
+	updateResultsIndex := strings.Index(rendered, `id="update-results-panel"`)
+	updatePreflightIndex := strings.Index(rendered, `id="update-preflight-panel"`)
+	updatesSectionIndex := strings.Index(rendered, `id="updates-section"`)
+	if updateResultsIndex < 0 || updatePreflightIndex < 0 || updatesSectionIndex < 0 || !(updateResultsIndex < updatePreflightIndex && updatePreflightIndex < updatesSectionIndex) {
+		t.Fatalf("expected update results before preflight and preflight before updates queue, results=%d preflight=%d updates=%d", updateResultsIndex, updatePreflightIndex, updatesSectionIndex)
 	}
 	installProgressIndex := strings.Index(rendered, `id="install-progress"`)
 	searchResultsIndex := strings.Index(rendered, `id="search-results-panel"`)

@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -142,5 +143,64 @@ func TestStatusSnapshotIncludesApplicationLicenseAndRepository(t *testing.T) {
 	}
 	if status.Application.Repository != appRepositoryURL {
 		t.Fatalf("expected application repository %q, got %#v", appRepositoryURL, status.Application)
+	}
+}
+
+type countingAppUpdateChecker struct {
+	calls    int
+	statuses []AppUpdateStatus
+}
+
+func (checker *countingAppUpdateChecker) Check(context.Context, string) (AppUpdateStatus, error) {
+	checker.calls++
+	if len(checker.statuses) >= checker.calls {
+		return checker.statuses[checker.calls-1], nil
+	}
+	return AppUpdateStatus{LatestVersion: "0.0.1"}, nil
+}
+
+func TestAppUpdateStatusIsNotCached(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	checker := &countingAppUpdateChecker{statuses: []AppUpdateStatus{
+		{LatestVersion: "0.0.1"},
+		{LatestVersion: "0.0.2"},
+	}}
+	app := &App{appUpdateChecker: checker}
+
+	first := app.appUpdateStatusContext(context.Background(), false)
+	second := app.appUpdateStatusContext(context.Background(), false)
+
+	if checker.calls != 2 {
+		t.Fatalf("expected every app update status call to reach checker, got %d", checker.calls)
+	}
+	if first.LatestVersion != "0.0.1" || second.LatestVersion != "0.0.2" {
+		t.Fatalf("expected uncached app update statuses, first=%#v second=%#v", first, second)
+	}
+}
+
+func TestStatusSnapshotDoesNotReuseCachedAppUpdatePayload(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	checker := &countingAppUpdateChecker{statuses: []AppUpdateStatus{
+		{LatestVersion: "0.0.1"},
+		{LatestVersion: "0.0.2"},
+	}}
+	app := &App{
+		appUpdateChecker: checker,
+		status: StatusResponse{
+			AppUpdate: AppUpdateStatus{CurrentVersion: "cached", LatestVersion: "cached"},
+		},
+		statusFetchedAt: time.Now(),
+	}
+
+	first := app.statusSnapshot()
+	second := app.statusSnapshot()
+
+	if checker.calls != 2 {
+		t.Fatalf("expected every status snapshot to refresh app update status, got %d", checker.calls)
+	}
+	if first.AppUpdate.LatestVersion != "0.0.1" || second.AppUpdate.LatestVersion != "0.0.2" {
+		t.Fatalf("expected status snapshots to bypass cached app update payload, first=%#v second=%#v", first.AppUpdate, second.AppUpdate)
 	}
 }

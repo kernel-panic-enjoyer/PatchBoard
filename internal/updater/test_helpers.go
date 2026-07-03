@@ -16,15 +16,18 @@ func replaceUpdateJobHooks(runner func(context.Context, string, string) CommandR
 
 func replaceUpdateJobHooksWithRefresh(runner func(context.Context, string, string) CommandResult, refresh func(context.Context, *App, []Package) error) func() {
 	oldRunner := updatePackageRunner
+	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
 	oldRefresh := refreshInventoryAfterUpdateJob
 	oldEligible := elevatedPackageUpdateBatchEligible
 	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
 		return runner(ctx, pkg.Manager, pkg.ID)
 	}
+	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	refreshInventoryAfterUpdateJob = refresh
 	elevatedPackageUpdateBatchEligible = func(Package) bool { return false }
 	return func() {
 		updatePackageRunner = oldRunner
+		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
 		refreshInventoryAfterUpdateJob = oldRefresh
 		elevatedPackageUpdateBatchEligible = oldEligible
 	}
@@ -38,17 +41,20 @@ func replaceBulkUpdateBatchHooks(
 	oldEligible := elevatedPackageUpdateBatchEligible
 	oldBatchRunner := elevatedPackageUpdateBatchRunner
 	oldSingleRunner := updatePackageRunner
+	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
 	oldRefresh := refreshInventoryAfterUpdateJob
 	elevatedPackageUpdateBatchEligible = eligible
 	elevatedPackageUpdateBatchRunner = batchRunner
 	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
 		return singleRunner(ctx, pkg.Manager, pkg.ID)
 	}
+	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	return func() {
 		elevatedPackageUpdateBatchEligible = oldEligible
 		elevatedPackageUpdateBatchRunner = oldBatchRunner
 		updatePackageRunner = oldSingleRunner
+		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
 		refreshInventoryAfterUpdateJob = oldRefresh
 	}
 }

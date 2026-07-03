@@ -384,7 +384,9 @@ func summarizeUpdateResult(updateResult UpdateResult, finishedAt string) UpdateR
 		manager = managerFromCommand(updateResult.Result.Command)
 	}
 	summaryMessage := ""
-	if updateResult.Result.OK {
+	if commandResultSkipped(updateResult.Result) {
+		summaryMessage = firstNonEmpty(firstNoticeOutputLine(updateResult.Result.Stdout), "Update skipped.")
+	} else if updateResult.Result.OK {
 		summaryMessage = "Command succeeded."
 	} else {
 		summaryMessage = fmt.Sprintf("Command failed with code %d. See Session Log for full output.", updateResult.Result.Code)

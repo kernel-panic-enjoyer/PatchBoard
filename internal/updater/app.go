@@ -90,8 +90,6 @@ type App struct {
 	statusFetchedAt            time.Time
 	statusErr                  string
 	appUpdateChecker           appUpdateChecker
-	appUpdateStatus            AppUpdateStatus
-	appUpdateFetchedAt         time.Time
 	jobsMu                     sync.Mutex
 	jobs                       map[string]*OperationJob
 	jobsRevision               int64

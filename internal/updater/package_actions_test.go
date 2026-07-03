@@ -437,6 +437,77 @@ func TestWingetNoApplicableUpgradeRetriesForcedInstallAfterForcedUpgrade(t *test
 	}
 }
 
+func TestWingetInstallerTechnologyMismatchRetriesForcedInstallAfterForcedUpgrade(t *testing.T) {
+	var commands []string
+	restore := replacePackageActionHooks(
+		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+			command := strings.Join(args, " ")
+			commands = append(commands, command)
+			if strings.Contains(command, " install ") && strings.Contains(command, "--force") {
+				return CommandResult{OK: true, Command: command, Stdout: "Forced install succeeded"}
+			}
+			return CommandResult{
+				Code:    2316632206,
+				Command: command,
+				Stdout:  "A newer version was found, but the installation technology is different from the currently installed version. Uninstall the package, and install the newer version.",
+			}
+		},
+		func(manager string) bool { return manager == managerWinget },
+	)
+	defer restore()
+
+	pkg := Package{Manager: managerWinget, ID: "Microsoft.Edge", Name: "Microsoft Edge"}
+	result := runWingetUpgradePackageWithInstallFallbackContext(context.Background(), managerWinget, pkg)
+
+	if !result.OK {
+		t.Fatalf("expected forced install fallback to resolve installer technology mismatch, got %#v", result)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("expected ID upgrade, forced ID upgrade, and forced ID install, got commands=%#v result=%#v", commands, result)
+	}
+	if !strings.Contains(commands[1], " upgrade ") || !strings.Contains(commands[1], "--force") {
+		t.Fatalf("expected second command to be forced upgrade, commands=%#v result=%#v", commands, result)
+	}
+	if !strings.Contains(commands[2], " install ") || !strings.Contains(commands[2], "--force") {
+		t.Fatalf("expected third command to be forced install fallback, commands=%#v result=%#v", commands, result)
+	}
+}
+
+func TestWingetInstallerTechnologyMismatchDoesNotAutoUninstall(t *testing.T) {
+	var commands []string
+	restore := replacePackageActionHooks(
+		func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+			command := strings.Join(args, " ")
+			commands = append(commands, command)
+			return CommandResult{
+				Code:    2316632206,
+				Command: command,
+				Stdout:  "Es wurde eine neuere Version gefunden, die Installationstechnologie unterscheidet sich jedoch von der aktuellen installierten Version. Deinstallieren Sie das Paket, und installieren Sie die neuere Version.",
+			}
+		},
+		func(manager string) bool { return manager == managerWinget },
+	)
+	defer restore()
+
+	pkg := Package{Manager: managerWinget, ID: "Microsoft.Edge", Name: "Microsoft Edge"}
+	result := runWingetUpgradePackageWithInstallFallbackContext(context.Background(), managerWinget, pkg)
+
+	if result.OK {
+		t.Fatalf("expected unresolved installer technology mismatch to remain failed, got %#v", result)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("expected upgrade, forced upgrade, and forced install attempts only, got commands=%#v result=%#v", commands, result)
+	}
+	for _, command := range commands {
+		if strings.Contains(command, " uninstall ") {
+			t.Fatalf("installer technology mismatch must not trigger uninstall automatically: %#v", commands)
+		}
+	}
+	if !strings.Contains(result.Stderr, "Automatic uninstall/reinstall is not performed") {
+		t.Fatalf("expected manual repair diagnostic, got stderr=%q result=%#v", result.Stderr, result)
+	}
+}
+
 func TestPackageActionCommandRepairsWingetSourceBeforeRetry(t *testing.T) {
 	var commands []string
 	restore := replacePackageActionHooks(

@@ -164,19 +164,19 @@ func runWingetUpgradePlanWithFallbacks(ctx context.Context, plan wingetUpgradePl
 		}
 	}
 
-	if shouldRetryWingetForceUpgrade(result) {
+	if forceRepairReason := wingetForceRepairReason(result); forceRepairReason != "" {
 		if ctx.Err() != nil {
 			return result
 		}
-		appLog("Winget upgrade for %s reported no applicable upgrade; retrying with --force.", plan.TargetDescription)
+		appLog("Winget upgrade for %s reported %s; retrying with --force.", plan.TargetDescription, forceRepairReason)
 		forceArgs := append(append([]string{}, activeRetryFlags...), "--force")
 		forceUpgradeResult := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, plan.BuildUpgradeCommand(forceArgs...)...)
 		result = mergeCommandAttemptsWithFinalResult(result, forceUpgradeResult, "winget force upgrade retry")
 		if forceUpgradeResult.OK || ctx.Err() != nil {
 			return result
 		}
-		if shouldRetryWingetForceUpgrade(forceUpgradeResult) && plan.BuildForcedInstallCommand != nil {
-			appLog("Winget forced upgrade for %s still reported no applicable upgrade; retrying with exact forced install.", plan.TargetDescription)
+		if forceRepairReason := wingetForceRepairReason(forceUpgradeResult); forceRepairReason != "" && plan.BuildForcedInstallCommand != nil {
+			appLog("Winget forced upgrade for %s still reported %s; retrying with exact forced install.", plan.TargetDescription, forceRepairReason)
 			forcedInstallResult := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, plan.BuildForcedInstallCommand()...)
 			result = mergeCommandAttemptsWithFinalResult(result, forcedInstallResult, "winget forced install fallback")
 			if forcedInstallResult.OK || ctx.Err() != nil {
@@ -186,6 +186,20 @@ func runWingetUpgradePlanWithFallbacks(ctx context.Context, plan wingetUpgradePl
 		return requireExplicitWingetRepair(result)
 	}
 	return result
+}
+
+func wingetForceRepairReason(result CommandResult) string {
+	if result.OK {
+		return ""
+	}
+	normalizedOutput := normalizedCommandOutput(result)
+	if wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput) {
+		return "an installer technology mismatch"
+	}
+	if wingetOutputReportsNoApplicableUpgrade(normalizedOutput) {
+		return "no applicable upgrade"
+	}
+	return ""
 }
 
 func runWingetUpgradeRetryIfNeeded(ctx context.Context, plan wingetUpgradePlan, currentResult CommandResult, retryPlan wingetUpgradeRetryPlan, activeRetryFlags []string) (CommandResult, []string, bool) {

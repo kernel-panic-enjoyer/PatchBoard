@@ -200,10 +200,12 @@ func TestShutdownCancelsStoreScanInProgress(t *testing.T) {
 func TestShutdownCancelsUpdateJobRefreshWait(t *testing.T) {
 	app := testUpdateJobApp(t)
 	oldRunner := updatePackageRunner
+	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
 	oldRefresh := refreshInventoryAfterUpdateJob
 	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
 		return CommandResult{OK: true, Command: "update " + pkg.ID}
 	}
+	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	refreshStarted := make(chan struct{})
 	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error {
 		close(refreshStarted)
@@ -212,6 +214,7 @@ func TestShutdownCancelsUpdateJobRefreshWait(t *testing.T) {
 	}
 	defer func() {
 		updatePackageRunner = oldRunner
+		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
 		refreshInventoryAfterUpdateJob = oldRefresh
 	}()
 

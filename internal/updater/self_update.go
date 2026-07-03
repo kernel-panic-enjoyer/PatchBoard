@@ -30,7 +30,6 @@ const (
 	maxSelfUpdateExecutableBytes  = 100 * 1024 * 1024
 	maxSelfUpdateChecksumBytes    = 4 * 1024
 	appUpdateCheckTimeout         = 8 * time.Second
-	appUpdateCacheTTL             = 30 * time.Minute
 	selfUpdateApplyTimeout        = 2 * time.Minute
 )
 

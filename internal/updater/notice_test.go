@@ -67,3 +67,12 @@ Das Portable-Paket kann nicht entfernt werden, da es geändert wurde. Um dies au
 		t.Fatalf("notice should not stop at generic winget progress output: %q", notice)
 	}
 }
+
+func TestUpdateResultsFailureNoticeIgnoresSkippedResults(t *testing.T) {
+	notice := updateResultsFailureNotice([]UpdateResult{
+		{Key: "winget:Current.App", Result: CommandResult{Code: commandSkippedCode, Command: "update Current App", Stdout: "Skipped: No longer actionable after refresh."}},
+	})
+	if notice != "" {
+		t.Fatalf("skipped update should not produce a failure notice: %q", notice)
+	}
+}

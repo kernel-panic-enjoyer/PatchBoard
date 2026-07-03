@@ -593,8 +593,16 @@ func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 	navigateAuthenticated(t, ctx, server.URL)
 	waitForText(t, ctx, `#updates-body`, "Browser Test App")
 	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const button = document.querySelector("#update-all-button");
+		  return !!button && !button.disabled;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(8*time.Second)),
 		chromedp.WaitVisible(`#update-all-button`, chromedp.ByQuery),
 		chromedp.Click(`#update-all-button`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+		  const button = document.querySelector("#confirm-update-job");
+		  return !!button && !button.disabled;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(8*time.Second)),
 		chromedp.WaitVisible(`#confirm-update-job`, chromedp.ByQuery),
 		chromedp.Click(`#confirm-update-job`, chromedp.ByQuery),
 	); err != nil {
@@ -655,6 +663,71 @@ func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("cancel button did not request cancellation")
+}
+
+func TestBrowserUpdateProgressNoticeShowsPackageCounter(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	updateStatus := updater.OperationJobStatus{
+		JobID:          "store-update-job",
+		Type:           "update-all",
+		Mode:           "all",
+		State:          "starting",
+		Running:        true,
+		CurrentPackage: "Codex",
+		CurrentKey:     "store:OpenAI.Codex_2p2nqsd0c76g0",
+		PackageKeys: []string{
+			"store:OpenAI.Codex_2p2nqsd0c76g0",
+			"store:DolbyLaboratories.DolbyAccess_rz1tebttyb220",
+			"store:Microsoft.Windows.Photos_8wekyb3d8bbwe",
+		},
+		CurrentIndex: 1,
+		Total:        3,
+		Notice:       "Starting exact Store update for Codex...",
+	}
+	var jobStarted atomic.Bool
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/update-all": func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			jobStarted.Store(true)
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusAccepted, updateStatus)
+		},
+		"/api/jobs": func(w http.ResponseWriter, r *http.Request) {
+			jobs := []updater.OperationJobStatus{}
+			if jobStarted.Load() {
+				jobs = append(jobs, updateStatus)
+			}
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, map[string]any{
+				"jobs":     jobs,
+				"revision": 1,
+			})
+		},
+	})
+
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#updates-body`, "Browser Test App")
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const button = document.querySelector("#update-all-button");
+		  return !!button && !button.disabled;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(8*time.Second)),
+		chromedp.WaitVisible(`#update-all-button`, chromedp.ByQuery),
+		chromedp.Click(`#update-all-button`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+		  const button = document.querySelector("#confirm-update-job");
+		  return !!button && !button.disabled;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(8*time.Second)),
+		chromedp.WaitVisible(`#confirm-update-job`, chromedp.ByQuery),
+		chromedp.Click(`#confirm-update-job`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatal(err)
+	}
+	waitForText(t, ctx, `#update-progress-status`, "Starting exact Store update for Codex (1/3)...")
 }
 
 func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
@@ -993,6 +1066,62 @@ func TestBrowserUnhealthyStoreEmptyQueueUsesActionableCopy(t *testing.T) {
 	}
 	if strings.Contains(updatesBody, "Store Diagnostic App") {
 		t.Fatalf("diagnostic-only Store package should stay out of Updates Available:\n%s", updatesBody)
+	}
+}
+
+func TestBrowserStoreLoadingEmptyQueueKeepsCheckingCopy(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/packages": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, updater.InventoryResponse{
+				Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{
+					Managers: map[string]updater.ManagerStatus{
+						updater.ManagerStore: {Available: true, InventoryAvailable: true, InventoryBackend: updater.InventoryBackendAppX, ActionBackend: updater.ActionBackendStoreCLI},
+					},
+					Packages: []updater.Package{{
+						Key:             "store:Loading.Store_abc123",
+						Manager:         updater.ManagerStore,
+						ID:              "Loading.Store_abc123",
+						Name:            "Loading Store Diagnostic App",
+						Version:         "1.0.0",
+						Installed:       true,
+						UpdateSupported: false,
+						UpdateState:     "unknown",
+						UpdateReason:    "Store scan is still running.",
+					}},
+				}, StoreScanHealth: updater.StoreScanHealthSummary{
+					Active:        true,
+					Healthy:       false,
+					Authoritative: false,
+					Status:        "running",
+					Reason:        "Microsoft Store is still checking for updates.",
+					Counts:        map[string]int{"unknown": 1},
+				}},
+				StoreLoading: true,
+			})
+		},
+	})
+
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#updates-body`, "Microsoft Store is still checking for updates")
+	var updatesBody string
+	var pagerText string
+	var updatesStoreLoadingClass string
+	if err := chromedp.Run(ctx,
+		chromedp.Text(`#updates-body`, &updatesBody, chromedp.ByQuery),
+		chromedp.Text(`#updates-page-status`, &pagerText, chromedp.ByQuery),
+		chromedp.AttributeValue(`#updates-store-loading`, "class", &updatesStoreLoadingClass, nil, chromedp.ByQuery),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(updatesBody, "Checking for updates...") || !strings.Contains(updatesStoreLoadingClass, "hidden") {
+		t.Fatalf("Store loading state should not duplicate generic and Store-specific checking rows; body=%q storeNoteClass=%q", updatesBody, updatesStoreLoadingClass)
+	}
+	if strings.Contains(updatesBody, "Review Store scan health") || strings.Contains(pagerText, "No actionable updates") {
+		t.Fatalf("Store loading state should not render final diagnostics copy; body=%q pager=%q", updatesBody, pagerText)
 	}
 }
 

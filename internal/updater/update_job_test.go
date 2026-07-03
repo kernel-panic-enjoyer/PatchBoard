@@ -637,14 +637,17 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 	var got Package
 	oldRunner := updatePackageRunner
+	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
 	oldRefresh := refreshInventoryAfterUpdateJob
 	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
 		got = pkg
 		return CommandResult{OK: true, Command: pkg.ID}
 	}
+	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	defer func() {
 		updatePackageRunner = oldRunner
+		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
 		refreshInventoryAfterUpdateJob = oldRefresh
 	}()
 
@@ -665,6 +668,72 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 
 	if got.Manager != managerWinget || got.ID != "Vendor.App" || got.Match != "Vendor.App" || got.ActionBackend != "winget" {
 		t.Fatalf("expected full package metadata in update runner, got %#v", got)
+	}
+}
+
+func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testing.T) {
+	var calls []string
+	oldRunner := updatePackageRunner
+	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
+	oldPostRefresh := refreshInventoryAfterUpdateJob
+	oldEligible := elevatedPackageUpdateBatchEligible
+	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+		calls = append(calls, pkg.Key)
+		return CommandResult{OK: true, Command: "update " + pkg.ID}
+	}
+	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error {
+		app.mu.Lock()
+		app.inventory = Inventory{PackageLookup: PackageLookup{Packages: []Package{
+			{
+				Key:              "winget:Current.App",
+				Manager:          managerWinget,
+				ID:               "Current.App",
+				Name:             "Current App",
+				Version:          "2.0.0",
+				AvailableVersion: "",
+				UpdateAvailable:  false,
+				UpdateSupported:  true,
+			},
+			updatableTestPackage(managerWinget, "Fresh.App", "Fresh App"),
+		}}}
+		app.mu.Unlock()
+		return nil
+	}
+	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
+	elevatedPackageUpdateBatchEligible = func(Package) bool { return false }
+	defer func() {
+		updatePackageRunner = oldRunner
+		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
+		refreshInventoryAfterUpdateJob = oldPostRefresh
+		elevatedPackageUpdateBatchEligible = oldEligible
+	}()
+
+	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+		updatableTestPackage(managerWinget, "Current.App", "Current App"),
+		updatableTestPackage(managerWinget, "Fresh.App", "Fresh App"),
+	}}}}
+	if _, err := app.startUpdateJob(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	status := waitForUpdateJobStopped(t, app)
+	if status.State != jobStateSucceeded {
+		t.Fatalf("skipped stale package should not fail the job: %#v", status)
+	}
+	if len(calls) != 1 || calls[0] != "winget:Fresh.App" {
+		t.Fatalf("expected command only for still-actionable package, calls=%#v", calls)
+	}
+	if len(status.Results) != 2 {
+		t.Fatalf("expected skipped and successful results, got %#v", status.Results)
+	}
+	if status.Results[0].Key != "winget:Current.App" || status.Results[0].Result.Code != commandSkippedCode {
+		t.Fatalf("expected first package skipped after refresh, got %#v", status.Results)
+	}
+	if !strings.Contains(status.Results[0].Result.Stdout, "No longer actionable after refresh") {
+		t.Fatalf("skipped result should explain stale actionability, got %#v", status.Results[0].Result)
+	}
+	if status.Results[1].Key != "winget:Fresh.App" || !status.Results[1].Result.OK {
+		t.Fatalf("expected second package to update, got %#v", status.Results[1])
 	}
 }
 

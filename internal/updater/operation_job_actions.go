@@ -150,8 +150,33 @@ func (app *App) startBulkUpdateJob(packageKeys []string, options UpdateOptions) 
 func (app *App) startUpdatePackagesOperation(operationType, updateMode string, updatePackages []Package) OperationJobStatus {
 	packageKeys := updateJobPackageKeys(updatePackages)
 	return app.startOperationJobWithPackageSnapshot(operationType, updateMode, len(updatePackages), packageKeys, updatePackages, func(ctx context.Context, job *OperationJob) {
+		if ctx.Err() == nil && !updateJobIncludesStorePackage(updatePackages) {
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateStarting
+				status.Notice = "Refreshing package status before update..."
+			})
+			refreshErr := refreshInventoryBeforeUpdateJob(ctx, app, updatePackages)
+			if ctx.Err() == nil {
+				revalidatedPackages, skippedResults := app.revalidateUpdatePackagesForJob(ctx, updatePackages)
+				updatePackages = revalidatedPackages
+				app.mutateOperationJob(job, func(status *OperationJobStatus) {
+					status.Results = append(status.Results, skippedResults...)
+					if len(skippedResults) > 0 {
+						lastResult := skippedResults[len(skippedResults)-1]
+						status.Result = &lastResult.Result
+						status.CurrentIndex = len(status.Results)
+						status.CurrentKey = lastResult.Key
+						status.CurrentPackage = updateJobPackageName(packageForUpdateResultKey(status.Packages, lastResult.Key))
+						status.Notice = "Skipped package(s) that are no longer actionable after refresh."
+					}
+				})
+			}
+			if refreshErr != nil && ctx.Err() == nil {
+				appLogContext(ctx, "Update preflight refresh finished with error: %s.", refreshErr)
+			}
+		}
 		batchedPackages, remainingPackages := planElevatedPackageUpdateBatch(updatePackages, elevatedPackageUpdateBatchEligible)
-		if len(batchedPackages) > 0 {
+		if ctx.Err() == nil && len(batchedPackages) > 0 {
 			result := app.runElevatedPackageUpdateBatchForJob(ctx, job, batchedPackages)
 			if ctx.Err() != nil || result.Code == commandCancelledCode {
 				app.mutateOperationJob(job, func(status *OperationJobStatus) {
@@ -169,6 +194,8 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 					status.CurrentIndex = nextIndex
 					status.CurrentKey = updatePackage.Key
 					status.CurrentPackage = updateJobPackageName(updatePackage)
+					status.State = jobStateStarting
+					status.Notice = "Starting update: " + updateJobPackageName(updatePackage) + "..."
 				})
 				if packageCtx.Err() != nil {
 					app.mutateOperationJob(job, func(status *OperationJobStatus) {

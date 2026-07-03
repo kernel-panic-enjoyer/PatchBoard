@@ -12,7 +12,7 @@ const (
 )
 
 func updateFailureNotice(result CommandResult) string {
-	if result.OK {
+	if result.OK || commandResultSkipped(result) {
 		return ""
 	}
 	return commandFailureNotice("Update finished with errors", result)
@@ -21,7 +21,7 @@ func updateFailureNotice(result CommandResult) string {
 func updateResultsFailureNotice(results []UpdateResult) string {
 	var failed []UpdateResult
 	for _, item := range results {
-		if !item.Result.OK {
+		if !item.Result.OK && !commandResultSkipped(item.Result) {
 			failed = append(failed, item)
 		}
 	}
@@ -42,10 +42,14 @@ func updateResultsAcceptedNotVerified(results []UpdateResult) bool {
 }
 
 func commandFailureNotice(prefix string, result CommandResult) string {
-	if result.OK {
+	if result.OK || commandResultSkipped(result) {
 		return ""
 	}
 	return limitNoticeText(prefix+". "+commandFailureText(result)) + " See Session Log for full output."
+}
+
+func commandResultSkipped(result CommandResult) bool {
+	return result.Code == commandSkippedCode
 }
 
 func commandFailureText(result CommandResult) string {
