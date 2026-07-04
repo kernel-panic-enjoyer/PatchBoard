@@ -1336,15 +1336,29 @@
     }
     var auto = $("auto-global-toggle");
     var globalEnabled = !!(data.settings && data.settings.auto_update_global);
+    var autoTaskHealthy = !!data.auto_task_enabled;
+    var autoEffectiveEnabled = globalEnabled && autoTaskHealthy;
+    var autoNeedsRepair = globalEnabled && !autoTaskHealthy && !data.loading;
+    var autoTaskRegisteredButDisabled = !globalEnabled && autoTaskHealthy && !data.loading;
+    var autoTaskSupported = data.auto_task_supported !== false;
+    var autoUnsupportedReason = String(data.auto_task_unsupported_reason || "Daily auto-update requires the app to be installed under Program Files or Windows.");
+    var autoUnsupported = !autoTaskSupported && !data.loading;
+    var autoBlockedByInstallLocation = autoUnsupported && !autoEffectiveEnabled && !autoTaskRegisteredButDisabled;
     if(auto){
-      auto.disabled = !!data.loading;
-      auto.dataset.enabled = globalEnabled ? "true" : "false";
-      auto.setAttribute("aria-pressed", globalEnabled ? "true" : "false");
-      auto.innerHTML = data.loading ? loadingText("Checking auto-update...") : icon("update") + '<span>' + (globalEnabled ? "Disable Daily Auto-Update" : "Enable Daily Auto-Update") + '</span>';
+      auto.disabled = !!data.loading || autoBlockedByInstallLocation;
+      auto.dataset.enabled = (autoEffectiveEnabled || autoTaskRegisteredButDisabled) ? "true" : "false";
+      auto.setAttribute("aria-pressed", autoEffectiveEnabled ? "true" : "false");
+      var autoLabel = autoBlockedByInstallLocation ? "Daily Auto-Update unavailable" : (autoNeedsRepair ? "Repair Daily Auto-Update" : (autoTaskRegisteredButDisabled ? "Remove Daily Auto-Update Task" : (autoEffectiveEnabled ? "Disable Daily Auto-Update" : "Enable Daily Auto-Update")));
+      auto.title = autoBlockedByInstallLocation ? autoUnsupportedReason : "";
+      auto.innerHTML = data.loading ? loadingText("Checking auto-update...") : icon("update") + '<span>' + autoLabel + '</span>';
     }
     var status = $("automation-status");
     if(status){
-      status.innerHTML = data.loading ? loadingText("Loading task status...") : html("Startup task: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + (data.auto_task_enabled ? "enabled" : "disabled"));
+      var autoStatus = autoEffectiveEnabled ? "enabled" : "disabled";
+      if(autoNeedsRepair){ autoStatus = "needs repair"; }
+      else if(autoTaskRegisteredButDisabled){ autoStatus = "disabled (task registered)"; }
+      else if(autoBlockedByInstallLocation){ autoStatus = autoUnsupportedReason; }
+      status.innerHTML = data.loading ? loadingText("Loading startup status...") : html("Start with Windows: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + autoStatus);
     }
     renderDashboardSummary();
     applyBackendAvailabilityState();

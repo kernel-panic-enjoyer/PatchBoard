@@ -90,15 +90,21 @@ func buildStatusResponseContextWithUpdate(ctx context.Context, forceRefresh bool
 	stateDirectory, _ := stateDir()
 	var startupTaskEnabled bool
 	var autoTaskEnabled bool
+	var autoTaskSupported bool
+	var autoTaskUnsupportedReason string
 	var taskChecks sync.WaitGroup
-	taskChecks.Add(2)
+	taskChecks.Add(3)
 	go func() {
 		defer taskChecks.Done()
-		startupTaskEnabled = taskExistsContext(ctx, taskStartup)
+		startupTaskEnabled = startupTaskEnabledContext(ctx)
 	}()
 	go func() {
 		defer taskChecks.Done()
-		autoTaskEnabled = taskExistsContext(ctx, taskAutoUpdate)
+		autoTaskEnabled = autoUpdateTaskEnabledContext(ctx)
+	}()
+	go func() {
+		defer taskChecks.Done()
+		autoTaskSupported, autoTaskUnsupportedReason = autoUpdateTaskSupportStatus()
 	}()
 	var managerStatuses map[string]ManagerStatus
 	if forceRefresh {
@@ -109,14 +115,16 @@ func buildStatusResponseContextWithUpdate(ctx context.Context, forceRefresh bool
 	taskChecks.Wait()
 
 	return StatusResponse{
-		Admin:           isAdmin(),
-		StateDir:        stateDirectory,
-		Managers:        managerStatuses,
-		StartupEnabled:  startupTaskEnabled,
-		AutoTaskEnabled: autoTaskEnabled,
-		Settings:        statusSettingsFromState(persistedState),
-		AppUpdate:       appUpdateStatus,
-		Application:     currentApplicationInfo(),
+		Admin:                     isAdmin(),
+		StateDir:                  stateDirectory,
+		Managers:                  managerStatuses,
+		StartupEnabled:            startupTaskEnabled,
+		AutoTaskEnabled:           autoTaskEnabled,
+		AutoTaskSupported:         autoTaskSupported,
+		AutoTaskUnsupportedReason: autoTaskUnsupportedReason,
+		Settings:                  statusSettingsFromState(persistedState),
+		AppUpdate:                 appUpdateStatus,
+		Application:               currentApplicationInfo(),
 	}
 }
 
@@ -179,6 +187,9 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 		snapshot.Managers = map[string]ManagerStatus{}
 	} else {
 		snapshot.Managers = cloneManagerStatuses(snapshot.Managers)
+	}
+	if fetchedAt.IsZero() && snapshot.AutoTaskUnsupportedReason == "" {
+		snapshot.AutoTaskSupported, snapshot.AutoTaskUnsupportedReason = autoUpdateTaskSupportStatus()
 	}
 	snapshot.AppUpdate = app.appUpdateStatusContext(ctx, false)
 	if snapshot.Application.License == "" || snapshot.Application.Repository == "" {

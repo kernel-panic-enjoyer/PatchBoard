@@ -20,14 +20,16 @@ type InventoryResponse struct {
 }
 
 type StatusResponse struct {
-	Admin           bool                     `json:"admin"`
-	StateDir        string                   `json:"state_dir"`
-	Managers        map[string]ManagerStatus `json:"managers"`
-	StartupEnabled  bool                     `json:"startup_enabled"`
-	AutoTaskEnabled bool                     `json:"auto_task_enabled"`
-	Settings        StatusSettings           `json:"settings"`
-	AppUpdate       AppUpdateStatus          `json:"app_update"`
-	Application     ApplicationInfo          `json:"application"`
+	Admin                     bool                     `json:"admin"`
+	StateDir                  string                   `json:"state_dir"`
+	Managers                  map[string]ManagerStatus `json:"managers"`
+	StartupEnabled            bool                     `json:"startup_enabled"`
+	AutoTaskEnabled           bool                     `json:"auto_task_enabled"`
+	AutoTaskSupported         bool                     `json:"auto_task_supported"`
+	AutoTaskUnsupportedReason string                   `json:"auto_task_unsupported_reason,omitempty"`
+	Settings                  StatusSettings           `json:"settings"`
+	AppUpdate                 AppUpdateStatus          `json:"app_update"`
+	Application               ApplicationInfo          `json:"application"`
 	AsyncSnapshot
 }
 
