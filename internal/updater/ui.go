@@ -111,7 +111,7 @@ const pageTemplateHTML = `<!doctype html>
         <button id="startup-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking startup...</span></span></button>
         <button id="auto-global-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking auto-update...</span></span></button>
         <div class="button-row"><button id="auto-all" type="button" disabled>Auto All</button><button id="auto-none" type="button" disabled>Auto None</button></div>
-        <p id="automation-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading task status...</span></span></p>
+        <p id="automation-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading startup status...</span></span></p>
         <div class="app-update-control">
           <div><strong>Application update</strong><p id="app-update-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking application version...</span></span></p></div>
           <div class="button-row"><button id="app-update-check" class="ghost" type="button">Check App</button><button id="app-update-apply" type="button" class="hidden">Install and Restart</button></div>

@@ -146,6 +146,16 @@ func TestStatusSnapshotIncludesApplicationLicenseAndRepository(t *testing.T) {
 	}
 }
 
+func TestStatusSnapshotExplainsUnsupportedDailyAutoUpdateLocation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+
+	status := (&App{}).statusSnapshot()
+	if !status.AutoTaskSupported && status.AutoTaskUnsupportedReason == "" {
+		t.Fatalf("unsupported daily auto-update status should include a reason: %#v", status)
+	}
+}
+
 type countingAppUpdateChecker struct {
 	calls    int
 	statuses []AppUpdateStatus

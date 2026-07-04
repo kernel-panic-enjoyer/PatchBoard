@@ -37,25 +37,11 @@ func setAutoUpdate(globalEnabled *bool, packageKeys []string, packageAutoUpdateE
 }
 
 func setAutoUpdateWithStore(ctx context.Context, store StateStore, globalEnabled *bool, packageKeys []string, packageAutoUpdateEnabled *bool) (State, CommandResult) {
+	if globalEnabled != nil {
+		return setGlobalAutoUpdateWithStore(ctx, store, *globalEnabled, packageKeys, packageAutoUpdateEnabled)
+	}
 	state, err := store.Update(ctx, func(state *State) error {
-		if state.AutoUpdatePackages == nil {
-			state.AutoUpdatePackages = map[string]bool{}
-		}
-		if globalEnabled != nil {
-			state.AutoUpdateGlobal = *globalEnabled
-		}
-		if packageAutoUpdateEnabled != nil {
-			for _, rawPackageKey := range packageKeys {
-				if _, _, err := splitPackageKey(rawPackageKey); err == nil {
-					normalizedKey := normalizeAutoUpdatePackageKey(rawPackageKey)
-					if normalizedKey == "" {
-						appLog("Auto-update package key ignored because it is not an exact canonical target: %s.", rawPackageKey)
-						continue
-					}
-					state.AutoUpdatePackages[normalizedKey] = *packageAutoUpdateEnabled
-				}
-			}
-		}
+		applyAutoUpdatePackageSettings(state, packageKeys, packageAutoUpdateEnabled)
 		return nil
 	})
 	if err != nil {
@@ -67,14 +53,68 @@ func setAutoUpdateWithStore(ctx context.Context, store StateStore, globalEnabled
 		}
 		return loaded, result
 	}
-	var result CommandResult
-	if state.AutoUpdateGlobal {
-		result = createAutoUpdateTaskRunner()
-	} else {
-		result = deleteTaskRunner(taskAutoUpdate)
-	}
+	result := CommandResult{OK: true, Command: "auto-update settings", Stdout: "Auto-update settings updated."}
 	appLog("Auto-update settings update finished with code %d.", result.Code)
 	return state, result
+}
+
+func setGlobalAutoUpdateWithStore(ctx context.Context, store StateStore, globalEnabled bool, packageKeys []string, packageAutoUpdateEnabled *bool) (State, CommandResult) {
+	currentState, err := store.Load(ctx)
+	if err != nil {
+		result := validationCommandResult("auto-update settings", err)
+		appLog("Auto-update settings update failed before task change: %s.", err)
+		return defaultState(), result
+	}
+
+	taskResult := applyAutoUpdateScheduledTask(globalEnabled)
+	if !taskResult.OK {
+		appLog("Auto-update settings update stopped because scheduled task update failed with code %d.", taskResult.Code)
+		return currentState, taskResult
+	}
+
+	updatedState, err := store.Update(ctx, func(state *State) error {
+		state.AutoUpdateGlobal = globalEnabled
+		applyAutoUpdatePackageSettings(state, packageKeys, packageAutoUpdateEnabled)
+		return nil
+	})
+	if err != nil {
+		rollbackResult := applyAutoUpdateScheduledTask(currentState.AutoUpdateGlobal)
+		if !rollbackResult.OK {
+			appLog("Auto-update scheduled task rollback failed with code %d after state save failure: %s.", rollbackResult.Code, rollbackResult.Stderr)
+		}
+		result := validationCommandResult("auto-update settings", err)
+		appLog("Auto-update settings update failed after task change: %s.", err)
+		return currentState, result
+	}
+
+	appLog("Auto-update settings update finished with code %d.", taskResult.Code)
+	return updatedState, taskResult
+}
+
+func applyAutoUpdateScheduledTask(enabled bool) CommandResult {
+	if enabled {
+		return createAutoUpdateTaskRunner()
+	}
+	return deleteTaskRunner(taskAutoUpdate)
+}
+
+func applyAutoUpdatePackageSettings(state *State, packageKeys []string, packageAutoUpdateEnabled *bool) {
+	if state.AutoUpdatePackages == nil {
+		state.AutoUpdatePackages = map[string]bool{}
+	}
+	if packageAutoUpdateEnabled == nil {
+		return
+	}
+	for _, rawPackageKey := range packageKeys {
+		if _, _, err := splitPackageKey(rawPackageKey); err == nil {
+			normalizedKey := normalizeAutoUpdatePackageKey(rawPackageKey)
+			if normalizedKey == "" {
+				appLog("Auto-update package key ignored because it is not an exact canonical target: %s.", rawPackageKey)
+				continue
+			}
+			state.AutoUpdatePackages[normalizedKey] = *packageAutoUpdateEnabled
+		}
+	}
 }
 
 func runAutoUpdate() []UpdateResult {

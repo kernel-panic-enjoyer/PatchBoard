@@ -265,6 +265,64 @@ func TestSetAutoUpdateRejectsAmbiguousStorePackageKeys(t *testing.T) {
 	}
 }
 
+func TestSetAutoUpdateDoesNotPersistGlobalWhenTaskCreationFails(t *testing.T) {
+	oldCreate := createAutoUpdateTaskRunner
+	createAutoUpdateTaskRunner = func() CommandResult {
+		return CommandResult{Code: 1, Command: "create auto-update task", Stderr: "scheduler unavailable"}
+	}
+	defer func() { createAutoUpdateTaskRunner = oldCreate }()
+
+	store := newMemoryStateStore(defaultState())
+	global := true
+	state, result := setAutoUpdateWithStore(context.Background(), store, &global, nil, nil)
+
+	if result.OK || !strings.Contains(result.Stderr, "scheduler unavailable") {
+		t.Fatalf("expected task creation failure, got result=%#v state=%#v", result, state)
+	}
+	if state.AutoUpdateGlobal {
+		t.Fatalf("failed task creation should not report global auto-update enabled: %#v", state)
+	}
+	loaded, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AutoUpdateGlobal {
+		t.Fatalf("failed task creation should not persist global auto-update enabled: %#v", loaded)
+	}
+}
+
+func TestSetAutoUpdatePackagePreferenceDoesNotTouchScheduledTask(t *testing.T) {
+	oldCreate := createAutoUpdateTaskRunner
+	oldDelete := deleteTaskRunner
+	taskCalls := 0
+	createAutoUpdateTaskRunner = func() CommandResult {
+		taskCalls++
+		return CommandResult{OK: true, Command: "create auto-update task"}
+	}
+	deleteTaskRunner = func(name string) CommandResult {
+		taskCalls++
+		return CommandResult{OK: true, Command: "delete " + name}
+	}
+	defer func() {
+		createAutoUpdateTaskRunner = oldCreate
+		deleteTaskRunner = oldDelete
+	}()
+
+	store := newMemoryStateStore(defaultState())
+	enabled := true
+	state, result := setAutoUpdateWithStore(context.Background(), store, nil, []string{"winget:Git.Git"}, &enabled)
+
+	if !result.OK {
+		t.Fatalf("expected package preference update to succeed, got result=%#v state=%#v", result, state)
+	}
+	if taskCalls != 0 {
+		t.Fatalf("package-only preference updates should not touch scheduled tasks, calls=%d", taskCalls)
+	}
+	if !state.AutoUpdatePackages["winget:Git.Git"] {
+		t.Fatalf("package preference was not saved: %#v", state.AutoUpdatePackages)
+	}
+}
+
 func TestNormalizeStatePreservesBoundedAppUpdatePromptDismissal(t *testing.T) {
 	state := defaultState()
 	state.AppUpdatePromptDismissedVersion = strings.Repeat("v", maxStateStringBytes+64)
@@ -279,16 +337,16 @@ func TestNormalizeStatePreservesBoundedAppUpdatePromptDismissal(t *testing.T) {
 	}
 }
 
-func TestSetAutoUpdateSaveFailureDoesNotMutateScheduledTask(t *testing.T) {
+func TestSetAutoUpdateSaveFailureRollsBackScheduledTask(t *testing.T) {
 	oldCreate := createAutoUpdateTaskRunner
 	oldDelete := deleteTaskRunner
-	taskCalls := 0
+	var taskCalls []string
 	createAutoUpdateTaskRunner = func() CommandResult {
-		taskCalls++
+		taskCalls = append(taskCalls, "create")
 		return CommandResult{OK: true, Command: "create task"}
 	}
 	deleteTaskRunner = func(name string) CommandResult {
-		taskCalls++
+		taskCalls = append(taskCalls, "delete "+name)
 		return CommandResult{OK: true, Command: "delete " + name}
 	}
 	defer func() {
@@ -305,8 +363,9 @@ func TestSetAutoUpdateSaveFailureDoesNotMutateScheduledTask(t *testing.T) {
 	if result.OK || result.Code != 2 || !strings.Contains(result.Stderr, "state save failed") {
 		t.Fatalf("expected validation-style save failure result, got %#v", result)
 	}
-	if taskCalls != 0 {
-		t.Fatalf("scheduled task should not be changed when settings fail to save, calls=%d", taskCalls)
+	wantTaskCalls := []string{"create", "delete " + taskAutoUpdate}
+	if strings.Join(taskCalls, "|") != strings.Join(wantTaskCalls, "|") {
+		t.Fatalf("scheduled task should be rolled back after settings save failure, got %#v", taskCalls)
 	}
 	if state.AutoUpdateGlobal || state.AutoUpdatePackages["winget:Git.Git"] {
 		t.Fatalf("response should contain persisted settings, not unsaved request: %#v", state)
