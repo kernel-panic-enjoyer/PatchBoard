@@ -27,6 +27,13 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`id="store-status-modal"`,
 		`role="dialog"`,
 		`aria-modal="true"`,
+		`id="settings-button"`,
+		`id="settings-modal"`,
+		`id="settings-modal-title"`,
+		`data-settings-open`,
+		`data-settings-close`,
+		`openSettingsModal`,
+		`closeSettingsModal`,
 		`id="store-status-close"`,
 		`data-store-status-open`,
 		`data-store-status-close`,
@@ -126,6 +133,18 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Application scan completed with errors`,
 		`Could not update startup setting`,
 		`Could not update auto-update settings`,
+		`id="automation-settings-open"`,
+		`id="automation-summary-status"`,
+		`Open Settings`,
+		`id="app-update-checking-toggle"`,
+		`id="app-update-auto-install-toggle"`,
+		`id="desktop-shortcut-cleanup-toggle"`,
+		`/api/settings/preferences`,
+		`app_update_auto_install_enabled`,
+		`app_update_checking_enabled`,
+		`remove_new_desktop_shortcuts`,
+		`Automatic application self update`,
+		`Remove new Desktop shortcuts`,
 		`autoEffectiveEnabled`,
 		`Repair Daily Auto-Update`,
 		`Remove Daily Auto-Update Task`,
@@ -146,6 +165,11 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`startAppSelfUpdate`,
 		`renderAppUpdateStatus`,
 		`maybeShowAppUpdatePrompt`,
+		`maybeStartAutomaticSelfUpdate`,
+		`pendingAutomaticAppUpdate`,
+		`autoSelfUpdateStartedVersions`,
+		`appUpdateCheckingEnabled`,
+		`appUpdateAutoInstallEnabled`,
 		`appUpdatePromptDismissedVersion`,
 		`/api/app-update/check`,
 		`/api/app-update/apply`,
@@ -493,9 +517,10 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 	}
 	scanIndex := strings.Index(rendered, `id="scan-button"`)
 	connectionIndex := strings.Index(rendered, `id="log-connection-status"`)
+	settingsIndex := strings.Index(rendered, `id="settings-button"`)
 	shutdownIndex := strings.Index(rendered, `id="shutdown-form"`)
-	if connectionIndex < 0 || shutdownIndex < 0 || !(connectionIndex < shutdownIndex) {
-		t.Fatalf("expected connection status in header actions before stop control, connection=%d shutdown=%d", connectionIndex, shutdownIndex)
+	if connectionIndex < 0 || settingsIndex < 0 || shutdownIndex < 0 || !(connectionIndex < settingsIndex && settingsIndex < shutdownIndex) {
+		t.Fatalf("expected connection status, settings, then stop in header actions, connection=%d settings=%d shutdown=%d", connectionIndex, settingsIndex, shutdownIndex)
 	}
 	mainIndex := strings.Index(rendered, `<main>`)
 	installedIndex := strings.Index(rendered, `id="installed-section"`)

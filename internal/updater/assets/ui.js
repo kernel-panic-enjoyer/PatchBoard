@@ -56,6 +56,9 @@
     "#auto-global-toggle",
     "#auto-all",
     "#auto-none",
+    "#app-update-checking-toggle",
+    "#app-update-auto-install-toggle",
+    "#desktop-shortcut-cleanup-toggle",
     "#app-update-check",
     "#app-update-apply",
     "#app-update-modal-apply",
@@ -82,6 +85,8 @@
   var lastUpdateResultJob = null;
   var latestStatus = null;
   var promptedAppUpdateVersions = {};
+  var autoSelfUpdateStartedVersions = {};
+  var pendingAutomaticAppUpdate = null;
   var activeAppUpdatePrompt = null;
   var latestStoreScanHealth = null;
   var latestPackagesLoading = true;
@@ -1129,6 +1134,20 @@
     var openModal = document.querySelector(".modal:not(.hidden)");
     document.body.classList.toggle("modal-open", !!openModal);
   }
+  function openSettingsModal(){
+    var modal = $("settings-modal");
+    if(!modal){ return; }
+    modal.classList.remove("hidden");
+    updateModalOpenState();
+    var closeButton = $("settings-close");
+    if(closeButton){ closeButton.focus(); }
+  }
+  function closeSettingsModal(){
+    var modal = $("settings-modal");
+    if(!modal){ return; }
+    modal.classList.add("hidden");
+    updateModalOpenState();
+  }
   function openStoreStatusModal(){
     var modal = $("store-status-modal");
     if(!modal){ return; }
@@ -1322,9 +1341,33 @@
     if(target.innerHTML !== markup){ target.innerHTML = markup; }
     applyBackendAvailabilityState();
   }
+  function statusSettings(){
+    return (latestStatus && latestStatus.settings) || {};
+  }
+  function appUpdateCheckingEnabled(){
+    return statusSettings().app_update_checking_enabled !== false;
+  }
+  function appUpdateAutoInstallEnabled(){
+    return !!statusSettings().app_update_auto_install_enabled;
+  }
+  function renderPreferenceToggle(id, enabled, label, loading){
+    var button = $(id);
+    if(!button){ return; }
+    button.disabled = !!loading;
+    button.dataset.enabled = enabled ? "true" : "false";
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.innerHTML = '<span>' + html(label) + ': ' + (enabled ? 'On' : 'Off') + '</span>';
+  }
+  function renderPreferenceToggles(settings, loading){
+    settings = settings || {};
+    renderPreferenceToggle("app-update-checking-toggle", settings.app_update_checking_enabled !== false, "Checking application updates", loading);
+    renderPreferenceToggle("app-update-auto-install-toggle", !!settings.app_update_auto_install_enabled, "Automatic application self update", loading);
+    renderPreferenceToggle("desktop-shortcut-cleanup-toggle", !!settings.remove_new_desktop_shortcuts, "Remove new Desktop shortcuts", loading);
+  }
   function renderStatus(data){
     latestStatus = data || {};
     renderManagers(data);
+    renderPreferenceToggles(data.settings || {}, data.loading);
     renderAppUpdateStatus(data.app_update || {});
     renderApplicationInfo(data.application || {});
     var startup = $("startup-toggle");
@@ -1352,13 +1395,18 @@
       auto.title = autoBlockedByInstallLocation ? autoUnsupportedReason : "";
       auto.innerHTML = data.loading ? loadingText("Checking auto-update...") : icon("update") + '<span>' + autoLabel + '</span>';
     }
-    var status = $("automation-status");
-    if(status){
-      var autoStatus = autoEffectiveEnabled ? "enabled" : "disabled";
-      if(autoNeedsRepair){ autoStatus = "needs repair"; }
-      else if(autoTaskRegisteredButDisabled){ autoStatus = "disabled (task registered)"; }
-      else if(autoBlockedByInstallLocation){ autoStatus = autoUnsupportedReason; }
-      status.innerHTML = data.loading ? loadingText("Loading startup status...") : html("Start with Windows: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + autoStatus);
+    var autoStatus = autoEffectiveEnabled ? "enabled" : "disabled";
+    if(autoNeedsRepair){ autoStatus = "needs repair"; }
+    else if(autoTaskRegisteredButDisabled){ autoStatus = "disabled (task registered)"; }
+    else if(autoBlockedByInstallLocation){ autoStatus = autoUnsupportedReason; }
+    var automationStatusMarkup = data.loading ? loadingText("Loading startup status...") : html("Start with Windows: " + (data.startup_enabled ? "enabled" : "disabled") + " - Daily update task: " + autoStatus);
+    var modalAutomationStatus = $("automation-status");
+    if(modalAutomationStatus){
+      modalAutomationStatus.innerHTML = automationStatusMarkup;
+    }
+    var dashboardAutomationStatus = $("automation-summary-status");
+    if(dashboardAutomationStatus){
+      dashboardAutomationStatus.innerHTML = automationStatusMarkup;
     }
     renderDashboardSummary();
     applyBackendAvailabilityState();
@@ -1391,6 +1439,8 @@
   function maybeShowAppUpdatePrompt(update){
     update = update || {};
     if(!update.available){ return; }
+    if(!appUpdateCheckingEnabled()){ return; }
+    if(appUpdateAutoInstallEnabled()){ return; }
     var version = appUpdatePromptVersion(update);
     if(!version){ return; }
     if(promptedAppUpdateVersions[version]){ return; }
@@ -1421,6 +1471,26 @@
     updateModalOpenState();
     var apply = $("app-update-modal-apply");
     if(apply){ apply.focus(); }
+  }
+  function maybeStartAutomaticSelfUpdate(update){
+    update = update || {};
+    if(!appUpdateAutoInstallEnabled() || !update.available){ return; }
+    var version = appUpdatePromptVersion(update);
+    if(!version || autoSelfUpdateStartedVersions[version]){ return; }
+    if(!jobsInitialized || activeServerJobs().length > 0){
+      pendingAutomaticAppUpdate = update;
+      return;
+    }
+    pendingAutomaticAppUpdate = null;
+    autoSelfUpdateStartedVersions[version] = true;
+    showToast("Application update " + version + " will install and restart.", "info");
+    startAppSelfUpdate();
+  }
+  function maybeResumeAutomaticSelfUpdate(){
+    if(!pendingAutomaticAppUpdate){ return; }
+    var update = pendingAutomaticAppUpdate;
+    pendingAutomaticAppUpdate = null;
+    maybeStartAutomaticSelfUpdate(update);
   }
   async function persistAppUpdatePromptDismissal(version){
     version = String(version || "").trim();
@@ -1456,7 +1526,9 @@
     var apply = $("app-update-apply");
     var current = update.current_version || "0.0.0-dev";
     if(status){
-      if(update.error){
+      if(!appUpdateCheckingEnabled() && !update.checked_at && !update.available && !update.error){
+        status.textContent = "Current " + current + " - application update checks disabled.";
+      }else if(update.error){
         status.textContent = "Current " + current + " - update check failed: " + update.error;
       }else if(update.available){
         status.textContent = "Current " + current + " - version " + (update.latest_version || update.latest_tag || "newer") + " is available.";
@@ -1474,6 +1546,7 @@
         apply.textContent = "Install " + (update.latest_version || "Update") + " and Restart";
       }
     }
+    maybeStartAutomaticSelfUpdate(update);
     maybeShowAppUpdatePrompt(update);
     applyBackendAvailabilityState();
   }
@@ -2195,6 +2268,7 @@
     renderLatestUpdateResult(serverJobs);
     reconcileCompletedJobs(serverJobs);
     jobsInitialized = true;
+    maybeResumeAutomaticSelfUpdate();
   }
   function reconcileAuxiliaryJobProgress(activeJobs){
     var installLike = null;
@@ -2856,6 +2930,16 @@
     blockBackendFormWhenDisconnected(event);
   }, true);
   document.addEventListener("click", function(event){
+    var openSettings = event.target.closest("[data-settings-open]");
+    if(openSettings){
+      openSettingsModal();
+      return;
+    }
+    var closeSettings = event.target.closest("[data-settings-close]");
+    if(closeSettings){
+      closeSettingsModal();
+      return;
+    }
     var openStoreStatus = event.target.closest("[data-store-status-open]");
     if(openStoreStatus){
       openStoreStatusModal();
@@ -2904,9 +2988,14 @@
     }
   });
   document.addEventListener("keydown", function(event){
+    var settingsModal = $("settings-modal");
     var storeModal = $("store-status-modal");
     var packageModal = $("package-diagnostics-modal");
     var appUpdateModal = $("app-update-modal");
+    if(event.key === "Escape" && settingsModal && !settingsModal.classList.contains("hidden")){
+      closeSettingsModal();
+      return;
+    }
     if(event.key === "Escape" && appUpdateModal && !appUpdateModal.classList.contains("hidden")){
       closeAppUpdateModal(true);
       return;
@@ -3142,11 +3231,42 @@
       loadStatus(true);
     }
   }
+  async function toggleApplicationPreference(button, field, successMessage, failurePrefix){
+    var enabled = button.dataset.enabled !== "true";
+    var params = {};
+    params[field] = enabled ? "true" : "false";
+    button.disabled = true;
+    try{
+      var payload = await postCommandPayload("/api/settings/preferences", params, failurePrefix);
+      latestStatus = latestStatus || {};
+      if(payload.settings){ latestStatus.settings = payload.settings; }
+      renderPreferenceToggles(statusSettings(), false);
+      renderAppUpdateStatus((latestStatus && latestStatus.app_update) || {});
+      showNotice(successMessage);
+      showToast(successMessage, "success");
+    }catch(e){
+      showNotice(failurePrefix + ": " + e.message);
+      showToast(failurePrefix + ": " + e.message, "error");
+    }finally{
+      button.disabled = false;
+      applyBackendAvailabilityState();
+      loadStatus(true);
+    }
+  }
   $("startup-toggle").addEventListener("click", function(){
     toggleBooleanSetting(this, "/api/settings/startup", "enabled", "Startup setting updated.", "Could not update startup setting");
   });
   $("auto-global-toggle").addEventListener("click", function(){
     toggleBooleanSetting(this, "/api/settings/auto-update", "global", "Auto-update setting updated.", "Could not update auto-update setting");
+  });
+  $("app-update-checking-toggle").addEventListener("click", function(){
+    toggleApplicationPreference(this, "app_update_checking_enabled", "Application update check preference updated.", "Could not update application update check preference");
+  });
+  $("app-update-auto-install-toggle").addEventListener("click", function(){
+    toggleApplicationPreference(this, "app_update_auto_install_enabled", "Automatic application self update preference updated.", "Could not update automatic application self update preference");
+  });
+  $("desktop-shortcut-cleanup-toggle").addEventListener("click", function(){
+    toggleApplicationPreference(this, "remove_new_desktop_shortcuts", "Desktop shortcut cleanup preference updated.", "Could not update Desktop shortcut cleanup preference");
   });
   $("app-update-check").addEventListener("click", function(){ checkAppUpdate(); });
   $("app-update-apply").addEventListener("click", function(){ startAppSelfUpdate(); });

@@ -58,18 +58,21 @@ type elevatedWorkerProgress struct {
 }
 
 type elevatedWorkerPackageInstallPayload struct {
-	Manager   string `json:"manager"`
-	PackageID string `json:"package_id"`
+	Manager                   string `json:"manager"`
+	PackageID                 string `json:"package_id"`
+	RemoveNewDesktopShortcuts bool   `json:"remove_new_desktop_shortcuts,omitempty"`
 }
 
 type elevatedWorkerPackageUpdatePayload struct {
-	Package             Package `json:"package"`
-	AllowUnknownVersion bool    `json:"allow_unknown_version"`
-	AllowPinned         bool    `json:"allow_pinned"`
+	Package                   Package `json:"package"`
+	AllowUnknownVersion       bool    `json:"allow_unknown_version"`
+	AllowPinned               bool    `json:"allow_pinned"`
+	RemoveNewDesktopShortcuts bool    `json:"remove_new_desktop_shortcuts,omitempty"`
 }
 
 type elevatedWorkerPackageUpdateBatchPayload struct {
-	Packages []Package `json:"packages"`
+	Packages                  []Package `json:"packages"`
+	RemoveNewDesktopShortcuts bool      `json:"remove_new_desktop_shortcuts,omitempty"`
 }
 
 type elevatedWorkerManagerInstallPayload struct {

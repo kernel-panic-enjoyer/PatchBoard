@@ -2,10 +2,18 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
+
+type applicationPreferenceSettings struct {
+	AppUpdateAutoInstallEnabled *bool `json:"app_update_auto_install_enabled"`
+	AppUpdateCheckingEnabled    *bool `json:"app_update_checking_enabled"`
+	RemoveNewDesktopShortcuts   *bool `json:"remove_new_desktop_shortcuts"`
+}
 
 func setThemePreference(requestedTheme string) (State, error) {
 	stateStore, err := defaultStateStore()
@@ -42,6 +50,29 @@ func setAppUpdatePromptDismissedVersionWithStore(ctx context.Context, stateStore
 	})
 }
 
+func setApplicationPreferences(preferences applicationPreferenceSettings) (State, error) {
+	stateStore, err := defaultStateStore()
+	if err != nil {
+		return State{}, err
+	}
+	return setApplicationPreferencesWithStore(context.Background(), stateStore, preferences)
+}
+
+func setApplicationPreferencesWithStore(ctx context.Context, stateStore StateStore, preferences applicationPreferenceSettings) (State, error) {
+	return stateStore.Update(ctx, func(state *State) error {
+		if preferences.AppUpdateAutoInstallEnabled != nil {
+			state.AppUpdateAutoInstallEnabled = *preferences.AppUpdateAutoInstallEnabled
+		}
+		if preferences.AppUpdateCheckingEnabled != nil {
+			state.AppUpdateChecksDisabled = !*preferences.AppUpdateCheckingEnabled
+		}
+		if preferences.RemoveNewDesktopShortcuts != nil {
+			state.RemoveNewDesktopShortcuts = *preferences.RemoveNewDesktopShortcuts
+		}
+		return nil
+	})
+}
+
 func parseStartupRequest(r *http.Request) (bool, *CommandResult) {
 	if requestIsJSON(r) {
 		var startupSettings struct {
@@ -70,14 +101,7 @@ func requiredFormBool(request *http.Request, fieldName string) (bool, error) {
 	if !request.Form.Has(fieldName) {
 		return false, fmt.Errorf("missing %s setting", fieldName)
 	}
-	switch strings.ToLower(strings.TrimSpace(request.Form.Get(fieldName))) {
-	case "true", "1", "on", "yes":
-		return true, nil
-	case "false", "0", "off", "no":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid %s setting", fieldName)
-	}
+	return parseBoolSetting(request.Form.Get(fieldName), fieldName)
 }
 
 func parseAutoUpdateRequest(r *http.Request) (*bool, []string, *bool, *CommandResult) {
@@ -138,6 +162,94 @@ func parseAppUpdatePromptRequest(r *http.Request) (string, error) {
 	return strings.TrimSpace(dismissedVersion), nil
 }
 
+func parseApplicationPreferencesRequest(r *http.Request) (applicationPreferenceSettings, error) {
+	var preferences applicationPreferenceSettings
+	if requestIsJSON(r) {
+		decoder := json.NewDecoder(r.Body)
+		var rawPreferences map[string]json.RawMessage
+		if err := decoder.Decode(&rawPreferences); err != nil {
+			return preferences, fmt.Errorf("invalid JSON body: %w", err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			if err == nil {
+				return preferences, fmt.Errorf("invalid JSON body: trailing data")
+			}
+			return preferences, fmt.Errorf("invalid JSON body: %w", err)
+		}
+		for fieldName, rawValue := range rawPreferences {
+			value, err := parseRawJSONBool(rawValue, fieldName)
+			if err != nil {
+				return preferences, err
+			}
+			switch fieldName {
+			case "app_update_auto_install_enabled":
+				preferences.AppUpdateAutoInstallEnabled = &value
+			case "app_update_checking_enabled":
+				preferences.AppUpdateCheckingEnabled = &value
+			case "remove_new_desktop_shortcuts":
+				preferences.RemoveNewDesktopShortcuts = &value
+			default:
+				return preferences, fmt.Errorf("unknown field %s", fieldName)
+			}
+		}
+	} else {
+		_ = r.ParseForm()
+		if value, ok, err := optionalFormBool(r, "app_update_auto_install_enabled"); err != nil {
+			return preferences, err
+		} else if ok {
+			preferences.AppUpdateAutoInstallEnabled = &value
+		}
+		if value, ok, err := optionalFormBool(r, "app_update_checking_enabled"); err != nil {
+			return preferences, err
+		} else if ok {
+			preferences.AppUpdateCheckingEnabled = &value
+		}
+		if value, ok, err := optionalFormBool(r, "remove_new_desktop_shortcuts"); err != nil {
+			return preferences, err
+		} else if ok {
+			preferences.RemoveNewDesktopShortcuts = &value
+		}
+	}
+	if preferences.AppUpdateAutoInstallEnabled == nil && preferences.AppUpdateCheckingEnabled == nil && preferences.RemoveNewDesktopShortcuts == nil {
+		return preferences, fmt.Errorf("missing preference setting")
+	}
+	return preferences, nil
+}
+
+func parseRawJSONBool(rawValue json.RawMessage, fieldName string) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(string(rawValue)), "null") {
+		return false, fmt.Errorf("invalid %s setting", fieldName)
+	}
+	var value bool
+	if err := json.Unmarshal(rawValue, &value); err != nil {
+		return false, fmt.Errorf("invalid %s setting", fieldName)
+	}
+	return value, nil
+}
+
+func optionalFormBool(request *http.Request, fieldName string) (bool, bool, error) {
+	if !request.Form.Has(fieldName) {
+		return false, false, nil
+	}
+	value, err := parseBoolSetting(request.Form.Get(fieldName), fieldName)
+	if err != nil {
+		return false, true, err
+	}
+	return value, true, nil
+}
+
+func parseBoolSetting(rawValue, fieldName string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(rawValue)) {
+	case "true", "1", "on", "yes":
+		return true, nil
+	case "false", "0", "off", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s setting", fieldName)
+	}
+}
+
 func (app *App) handleStartupSettingsAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -176,6 +288,23 @@ func (app *App) handleThemeSettingsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, err := setThemePreference(theme)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsResponse(state))
+}
+
+func (app *App) handleApplicationPreferencesSettingsAPI(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	preferences, err := parseApplicationPreferencesRequest(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	state, err := setApplicationPreferences(preferences)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

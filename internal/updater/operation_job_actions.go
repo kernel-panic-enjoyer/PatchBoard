@@ -22,6 +22,7 @@ func commandResultJobNotice(actionName string, result CommandResult) string {
 func (app *App) startInstallJob(manager, packageID string) OperationJobStatus {
 	jobPackageKey := packageKey(manager, packageID)
 	return app.startOperationJob(jobTypeInstall, "", 1, []string{jobPackageKey}, func(ctx context.Context, job *OperationJob) {
+		ctx = withPackageMutationOptions(ctx, packageMutationOptionsFromState(loadStateContext(ctx)))
 		ctx = withLogMetadata(ctx, logMetadata{PackageKey: jobPackageKey, Manager: manager})
 		startedStatus := app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			status.CurrentIndex = 1
@@ -150,6 +151,7 @@ func (app *App) startBulkUpdateJob(packageKeys []string, options UpdateOptions) 
 func (app *App) startUpdatePackagesOperation(operationType, updateMode string, updatePackages []Package) OperationJobStatus {
 	packageKeys := updateJobPackageKeys(updatePackages)
 	return app.startOperationJobWithPackageSnapshot(operationType, updateMode, len(updatePackages), packageKeys, updatePackages, func(ctx context.Context, job *OperationJob) {
+		ctx = withPackageMutationOptions(ctx, packageMutationOptionsFromState(loadStateContext(ctx)))
 		if ctx.Err() == nil && !updateJobIncludesStorePackage(updatePackages) {
 			app.mutateOperationJob(job, func(status *OperationJobStatus) {
 				status.State = jobStateStarting

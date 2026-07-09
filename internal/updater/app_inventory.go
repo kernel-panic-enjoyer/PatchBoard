@@ -61,6 +61,7 @@ func (app *App) runInventoryRefresh(ctx context.Context, refreshGeneration int64
 		appLog("Discarded stale inventory refresh result.")
 		return
 	}
+	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventory, refreshedInventory)
 	app.inventory = refreshedInventory.DeepCopy()
 	app.inventoryFetchedAt = time.Now()
 	app.inventoryErr = ""
@@ -119,6 +120,7 @@ func (app *App) refreshInventorySyncContext(ctx context.Context, reason string) 
 		appLog("Discarded stale synchronous inventory refresh result for %s.", reason)
 		return refreshedInventory
 	}
+	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventory, refreshedInventory)
 	app.inventory = refreshedInventory.DeepCopy()
 	app.inventoryFetchedAt = time.Now()
 	app.inventoryErr = ""
@@ -140,6 +142,82 @@ func (app *App) refreshInventorySyncContext(ctx context.Context, reason string) 
 		app.startStoreScanBackground()
 	}
 	return refreshedInventory
+}
+
+func preserveExplicitUpdateCandidatesFromDegradedRefresh(previousInventory, refreshedInventory Inventory) Inventory {
+	degradedManagers := degradedInventoryManagers(refreshedInventory.CommandResults)
+	if len(degradedManagers) == 0 {
+		return refreshedInventory
+	}
+	previousByKey := map[string]Package{}
+	for _, previousPackage := range previousInventory.Packages {
+		if !isExplicitUpdateCandidate(previousPackage) {
+			continue
+		}
+		if key := normalizedJobPackageKey(previousPackage); key != "" {
+			previousByKey[key] = previousPackage
+		}
+	}
+	if len(previousByKey) == 0 {
+		return refreshedInventory
+	}
+	for packageIndex := range refreshedInventory.Packages {
+		refreshedPackage := &refreshedInventory.Packages[packageIndex]
+		if refreshedPackage.UpdateAvailable || !degradedManagers[refreshedPackage.Manager] {
+			continue
+		}
+		previousPackage, ok := previousByKey[normalizedJobPackageKey(*refreshedPackage)]
+		if !ok || !canPreserveExplicitUpdateCandidate(previousPackage, *refreshedPackage) {
+			continue
+		}
+		refreshedPackage.AvailableVersion = previousPackage.AvailableVersion
+		refreshedPackage.UpdateAvailable = true
+		refreshedPackage.UnknownVersion = refreshedPackage.UnknownVersion || previousPackage.UnknownVersion
+		refreshedPackage.Pinned = refreshedPackage.Pinned || previousPackage.Pinned
+		refreshedPackage.UpdateSupported = previousPackage.UpdateSupported
+		if refreshedPackage.Name == "" || refreshedPackage.Name == refreshedPackage.ID {
+			refreshedPackage.Name = firstNonEmpty(previousPackage.Name, refreshedPackage.Name)
+		}
+		if refreshedPackage.ActionBackend == "" {
+			refreshedPackage.ActionBackend = firstNonEmpty(previousPackage.ActionBackend, refreshedPackage.Manager)
+		}
+	}
+	return refreshedInventory
+}
+
+func degradedInventoryManagers(commandResults map[string]CommandResult) map[string]bool {
+	degradedManagers := map[string]bool{}
+	managerListResults := map[string]string{
+		managerWinget: "winget_list",
+		managerChoco:  "choco_list",
+	}
+	for manager, resultKey := range managerListResults {
+		result, ok := commandResults[resultKey]
+		if ok && result.Command != "" && !result.OK {
+			degradedManagers[manager] = true
+		}
+	}
+	return degradedManagers
+}
+
+func isExplicitUpdateCandidate(pkg Package) bool {
+	return pkg.Manager != managerStore &&
+		pkg.UpdateAvailable &&
+		pkg.UpdateSupported != false &&
+		(pkg.UnknownVersion || pkg.Pinned)
+}
+
+func canPreserveExplicitUpdateCandidate(previousPackage, refreshedPackage Package) bool {
+	if !isExplicitUpdateCandidate(previousPackage) || refreshedPackage.Manager != previousPackage.Manager || !refreshedPackage.Installed {
+		return false
+	}
+	if refreshedPackage.UpdateSupported == false || refreshedPackage.Manager == managerStore {
+		return false
+	}
+	if refreshedPackage.Version != "" && previousPackage.Version != "" && refreshedPackage.Version != previousPackage.Version {
+		return false
+	}
+	return previousPackage.AvailableVersion != ""
 }
 
 // prepareQueuedInventoryRefreshLocked starts the next refresh generation after

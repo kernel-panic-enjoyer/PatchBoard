@@ -594,6 +594,25 @@ func TestSettingsJSONRequestParsers(t *testing.T) {
 	if err != nil || version != "1.2.3" {
 		t.Fatalf("unexpected app update prompt JSON parse: version=%q err=%v", version, err)
 	}
+
+	preferencesRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_auto_install_enabled":true,"app_update_checking_enabled":false,"remove_new_desktop_shortcuts":true}`))
+	preferencesRequest.Header.Set("Content-Type", "application/json")
+	preferences, err := parseApplicationPreferencesRequest(preferencesRequest)
+	if err != nil || preferences.AppUpdateAutoInstallEnabled == nil || !*preferences.AppUpdateAutoInstallEnabled || preferences.AppUpdateCheckingEnabled == nil || *preferences.AppUpdateCheckingEnabled || preferences.RemoveNewDesktopShortcuts == nil || !*preferences.RemoveNewDesktopShortcuts {
+		t.Fatalf("unexpected preferences JSON parse: preferences=%#v err=%v", preferences, err)
+	}
+
+	unknownPreferenceRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":true,"unknown":true}`))
+	unknownPreferenceRequest.Header.Set("Content-Type", "application/json")
+	if _, err := parseApplicationPreferencesRequest(unknownPreferenceRequest); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected unknown preference field rejection, got %v", err)
+	}
+
+	nullPreferenceRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":null,"app_update_auto_install_enabled":true}`))
+	nullPreferenceRequest.Header.Set("Content-Type", "application/json")
+	if _, err := parseApplicationPreferencesRequest(nullPreferenceRequest); err == nil || !strings.Contains(err.Error(), "invalid app_update_checking_enabled setting") {
+		t.Fatalf("expected null preference rejection, got %v", err)
+	}
 }
 
 func TestJSONRequestParsersRejectTrailingData(t *testing.T) {
@@ -654,6 +673,7 @@ func TestSettingsAPIsRejectMalformedJSONBeforeSideEffects(t *testing.T) {
 		{"auto update", "/api/settings/auto-update", `{"package_keys":{}}`, true},
 		{"theme", "/api/settings/theme", `{"theme":`, false},
 		{"app update prompt", "/api/settings/app-update-prompt", `{"version":`, false},
+		{"preferences", "/api/settings/preferences", `{"app_update_auto_install_enabled":`, false},
 	}
 
 	for _, tc := range cases {
@@ -717,5 +737,37 @@ func TestAppUpdatePromptSettingsEndpointPersistsDismissedVersion(t *testing.T) {
 	loaded := loadState()
 	if loaded.AppUpdatePromptDismissedVersion != "1.2.3" || loaded.Theme != "light" || !loaded.AutoUpdatePackages["winget:Git.Git"] {
 		t.Fatalf("endpoint did not preserve unrelated state: %#v", loaded)
+	}
+}
+
+func TestApplicationPreferencesEndpointPersistsStatePreferences(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	original := defaultState()
+	original.Theme = "light"
+	original.AutoUpdatePackages["winget:Git.Git"] = true
+	if err := saveState(original); err != nil {
+		t.Fatal(err)
+	}
+
+	app := testSessionApp()
+	request := authenticatedRequest(app, http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_auto_install_enabled":true,"app_update_checking_enabled":false,"remove_new_desktop_shortcuts":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded commandAPIResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Settings == nil || !decoded.Settings.AppUpdateAutoInstallEnabled || decoded.Settings.AppUpdateCheckingEnabled || !decoded.Settings.RemoveNewDesktopShortcuts {
+		t.Fatalf("settings response did not include preferences: %#v", decoded.Settings)
+	}
+	loaded := loadState()
+	if !loaded.AppUpdateAutoInstallEnabled || !loaded.AppUpdateChecksDisabled || !loaded.RemoveNewDesktopShortcuts || loaded.Theme != "light" || !loaded.AutoUpdatePackages["winget:Git.Git"] {
+		t.Fatalf("endpoint did not preserve unrelated state or persist preferences: %#v", loaded)
 	}
 }

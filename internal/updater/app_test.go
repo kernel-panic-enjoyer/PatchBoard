@@ -214,3 +214,45 @@ func TestStatusSnapshotDoesNotReuseCachedAppUpdatePayload(t *testing.T) {
 		t.Fatalf("expected status snapshots to bypass cached app update payload, first=%#v second=%#v", first.AppUpdate, second.AppUpdate)
 	}
 }
+
+func TestStatusSnapshotSkipsAutomaticAppUpdateCheckWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	state := defaultState()
+	state.AppUpdateChecksDisabled = true
+	if err := saveState(state); err != nil {
+		t.Fatal(err)
+	}
+	checker := &countingAppUpdateChecker{statuses: []AppUpdateStatus{{LatestVersion: "9.9.9", Available: true}}}
+	app := &App{appUpdateChecker: checker}
+
+	status := app.statusSnapshot()
+
+	if checker.calls != 0 {
+		t.Fatalf("disabled automatic checks should not call app update checker, got %d call(s)", checker.calls)
+	}
+	if status.AppUpdate.LatestVersion != "" || status.AppUpdate.Available {
+		t.Fatalf("disabled automatic checks should expose only the current version, got %#v", status.AppUpdate)
+	}
+	if status.Settings.AppUpdateCheckingEnabled {
+		t.Fatalf("settings should expose disabled automatic checks as app_update_checking_enabled=false: %#v", status.Settings)
+	}
+
+	manual := app.appUpdateStatusContext(context.Background(), true)
+	if checker.calls != 1 || manual.LatestVersion != "9.9.9" {
+		t.Fatalf("manual check should still call checker once, calls=%d status=%#v", checker.calls, manual)
+	}
+}
+
+func TestStatusSettingsExposeApplicationPreferencesDefaults(t *testing.T) {
+	settings := statusSettingsFromState(defaultState())
+	if settings.AppUpdateAutoInstallEnabled {
+		t.Fatal("automatic application self update should default to disabled")
+	}
+	if !settings.AppUpdateCheckingEnabled {
+		t.Fatal("application update checks should default to enabled")
+	}
+	if settings.RemoveNewDesktopShortcuts {
+		t.Fatal("desktop shortcut cleanup should default to disabled")
+	}
+}
