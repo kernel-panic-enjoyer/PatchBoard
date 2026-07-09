@@ -28,12 +28,16 @@ type StoreAutomationDecision struct {
 }
 
 func setAutoUpdate(globalEnabled *bool, packageKeys []string, packageAutoUpdateEnabled *bool) (State, CommandResult) {
+	return setAutoUpdateContext(context.Background(), globalEnabled, packageKeys, packageAutoUpdateEnabled)
+}
+
+func setAutoUpdateContext(ctx context.Context, globalEnabled *bool, packageKeys []string, packageAutoUpdateEnabled *bool) (State, CommandResult) {
 	appLog("Auto-update settings update started.")
 	store, err := defaultStateStore()
 	if err != nil {
 		return defaultState(), validationCommandResult("auto-update settings", err)
 	}
-	return setAutoUpdateWithStore(context.Background(), store, globalEnabled, packageKeys, packageAutoUpdateEnabled)
+	return setAutoUpdateWithStore(ctx, store, globalEnabled, packageKeys, packageAutoUpdateEnabled)
 }
 
 func setAutoUpdateWithStore(ctx context.Context, store StateStore, globalEnabled *bool, packageKeys []string, packageAutoUpdateEnabled *bool) (State, CommandResult) {
@@ -66,7 +70,7 @@ func setGlobalAutoUpdateWithStore(ctx context.Context, store StateStore, globalE
 		return defaultState(), result
 	}
 
-	taskResult := applyAutoUpdateScheduledTask(globalEnabled)
+	taskResult := applyAutoUpdateScheduledTaskContext(ctx, globalEnabled)
 	if !taskResult.OK {
 		appLog("Auto-update settings update stopped because scheduled task update failed with code %d.", taskResult.Code)
 		return currentState, taskResult
@@ -78,7 +82,7 @@ func setGlobalAutoUpdateWithStore(ctx context.Context, store StateStore, globalE
 		return nil
 	})
 	if err != nil {
-		rollbackResult := applyAutoUpdateScheduledTask(currentState.AutoUpdateGlobal)
+		rollbackResult := applyAutoUpdateScheduledTaskContext(context.WithoutCancel(ctx), currentState.AutoUpdateGlobal)
 		if !rollbackResult.OK {
 			appLog("Auto-update scheduled task rollback failed with code %d after state save failure: %s.", rollbackResult.Code, rollbackResult.Stderr)
 		}
@@ -92,10 +96,14 @@ func setGlobalAutoUpdateWithStore(ctx context.Context, store StateStore, globalE
 }
 
 func applyAutoUpdateScheduledTask(enabled bool) CommandResult {
+	return applyAutoUpdateScheduledTaskContext(context.Background(), enabled)
+}
+
+func applyAutoUpdateScheduledTaskContext(ctx context.Context, enabled bool) CommandResult {
 	if enabled {
-		return createAutoUpdateTaskRunner()
+		return createAutoUpdateTaskRunner(ctx)
 	}
-	return deleteTaskRunner(taskAutoUpdate)
+	return deleteTaskRunner(ctx, taskAutoUpdate)
 }
 
 func applyAutoUpdatePackageSettings(state *State, packageKeys []string, packageAutoUpdateEnabled *bool) {

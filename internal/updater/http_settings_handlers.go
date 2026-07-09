@@ -16,11 +16,15 @@ type applicationPreferenceSettings struct {
 }
 
 func setThemePreference(requestedTheme string) (State, error) {
+	return setThemePreferenceContext(context.Background(), requestedTheme)
+}
+
+func setThemePreferenceContext(ctx context.Context, requestedTheme string) (State, error) {
 	stateStore, err := defaultStateStore()
 	if err != nil {
 		return State{}, err
 	}
-	return setThemePreferenceWithStore(context.Background(), stateStore, requestedTheme)
+	return setThemePreferenceWithStore(ctx, stateStore, requestedTheme)
 }
 
 func setThemePreferenceWithStore(ctx context.Context, stateStore StateStore, requestedTheme string) (State, error) {
@@ -35,11 +39,15 @@ func setThemePreferenceWithStore(ctx context.Context, stateStore StateStore, req
 }
 
 func setAppUpdatePromptDismissedVersion(dismissedVersion string) (State, error) {
+	return setAppUpdatePromptDismissedVersionContext(context.Background(), dismissedVersion)
+}
+
+func setAppUpdatePromptDismissedVersionContext(ctx context.Context, dismissedVersion string) (State, error) {
 	stateStore, err := defaultStateStore()
 	if err != nil {
 		return State{}, err
 	}
-	return setAppUpdatePromptDismissedVersionWithStore(context.Background(), stateStore, dismissedVersion)
+	return setAppUpdatePromptDismissedVersionWithStore(ctx, stateStore, dismissedVersion)
 }
 
 func setAppUpdatePromptDismissedVersionWithStore(ctx context.Context, stateStore StateStore, dismissedVersion string) (State, error) {
@@ -51,11 +59,15 @@ func setAppUpdatePromptDismissedVersionWithStore(ctx context.Context, stateStore
 }
 
 func setApplicationPreferences(preferences applicationPreferenceSettings) (State, error) {
+	return setApplicationPreferencesContext(context.Background(), preferences)
+}
+
+func setApplicationPreferencesContext(ctx context.Context, preferences applicationPreferenceSettings) (State, error) {
 	stateStore, err := defaultStateStore()
 	if err != nil {
 		return State{}, err
 	}
-	return setApplicationPreferencesWithStore(context.Background(), stateStore, preferences)
+	return setApplicationPreferencesWithStore(ctx, stateStore, preferences)
 }
 
 func setApplicationPreferencesWithStore(ctx context.Context, stateStore StateStore, preferences applicationPreferenceSettings) (State, error) {
@@ -259,7 +271,7 @@ func (app *App) handleStartupSettingsAPI(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, commandResponse(*validationFailure))
 		return
 	}
-	result := setStartup(startupEnabled)
+	result := setStartupContext(r.Context(), startupEnabled)
 	app.refreshStatus(true)
 	writeJSON(w, http.StatusOK, commandResponse(result))
 }
@@ -273,7 +285,7 @@ func (app *App) handleAutoUpdateSettingsAPI(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, commandResponse(*validationFailure))
 		return
 	}
-	state, result := setAutoUpdate(globalAutoUpdateEnabled, packageKeys, packageAutoUpdateEnabled)
+	state, result := setAutoUpdateContext(r.Context(), globalAutoUpdateEnabled, packageKeys, packageAutoUpdateEnabled)
 	app.refreshStatus(true)
 	writeJSON(w, http.StatusOK, settingsCommandResponse(state, result))
 }
@@ -287,7 +299,7 @@ func (app *App) handleThemeSettingsAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	state, err := setThemePreference(theme)
+	state, err := setThemePreferenceContext(r.Context(), theme)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -304,7 +316,7 @@ func (app *App) handleApplicationPreferencesSettingsAPI(w http.ResponseWriter, r
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	state, err := setApplicationPreferences(preferences)
+	state, err := setApplicationPreferencesContext(r.Context(), preferences)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -321,7 +333,7 @@ func (app *App) handleAppUpdatePromptSettingsAPI(w http.ResponseWriter, r *http.
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	state, err := setAppUpdatePromptDismissedVersion(dismissedVersion)
+	state, err := setAppUpdatePromptDismissedVersionContext(r.Context(), dismissedVersion)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

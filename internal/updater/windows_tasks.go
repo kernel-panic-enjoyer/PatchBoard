@@ -178,6 +178,15 @@ func startupRunEntryCommandLineForExecutable(exe string) string {
 }
 
 func setStartupRunEntryDirect(enabled bool) CommandResult {
+	return setStartupRunEntryDirectContext(context.Background(), enabled)
+}
+
+func setStartupRunEntryDirectContext(ctx context.Context, enabled bool) CommandResult {
+	select {
+	case <-ctx.Done():
+		return validationCommandResult(startupRunRegistryCommand, ctx.Err())
+	default:
+	}
 	if enabled {
 		return createStartupRunEntryDirect()
 	}
@@ -217,16 +226,27 @@ func deleteStartupRunEntryDirect() CommandResult {
 }
 
 func createAutoUpdateTask() CommandResult {
+	return createAutoUpdateTaskContext(context.Background())
+}
+
+func createAutoUpdateTaskContext(ctx context.Context) CommandResult {
 	if !isAdmin() {
-		return runElevatedWorkerOperation(context.Background(), elevatedWorkerInvocation{
+		return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
 			Operation: workerOperationAutoUpdateTask,
 			Payload:   elevatedWorkerTaskPayload{Enabled: true},
 		})
 	}
-	return createAutoUpdateTaskDirect()
+	return createAutoUpdateTaskDirectContext(ctx)
 }
 
 func createAutoUpdateTaskDirect() CommandResult {
+	return createAutoUpdateTaskDirectContext(context.Background())
+}
+
+func createAutoUpdateTaskDirectContext(ctx context.Context) CommandResult {
+	if err := ctx.Err(); err != nil {
+		return validationCommandResult("auto-update task", err)
+	}
 	exe, err := osExecutable()
 	if err != nil {
 		return validationCommandResult("auto-update task", err)
@@ -235,7 +255,7 @@ func createAutoUpdateTaskDirect() CommandResult {
 		return validationCommandResult("auto-update task", err)
 	}
 	action := windows.ComposeCommandLine([]string{exe, "--task", "auto-update"})
-	return runCommand(60*time.Second, "schtasks.exe", "/Create", "/TN", taskAutoUpdate, "/TR", action, "/SC", "DAILY", "/ST", defaultAutoUpdateTime, "/RL", "HIGHEST", "/F")
+	return runCommandContext(ctx, 60*time.Second, "schtasks.exe", "/Create", "/TN", taskAutoUpdate, "/TR", action, "/SC", "DAILY", "/ST", defaultAutoUpdateTime, "/RL", "HIGHEST", "/F")
 }
 
 func validateAutoUpdateTaskExecutable(exe string) error {
@@ -283,40 +303,55 @@ func pathWithinAnyRoot(path string, roots []string) bool {
 }
 
 func deleteTask(name string) CommandResult {
+	return deleteTaskContext(context.Background(), name)
+}
+
+func deleteTaskContext(ctx context.Context, name string) CommandResult {
 	if name == taskAutoUpdate && !isAdmin() {
-		return runElevatedWorkerOperation(context.Background(), elevatedWorkerInvocation{
+		return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
 			Operation: workerOperationAutoUpdateTask,
 			Payload:   elevatedWorkerTaskPayload{Enabled: false},
 		})
 	}
-	return deleteTaskDirect(name)
+	return deleteTaskDirectContext(ctx, name)
 }
 
 func deleteTaskDirect(name string) CommandResult {
-	if !taskExists(name) {
+	return deleteTaskDirectContext(context.Background(), name)
+}
+
+func deleteTaskDirectContext(ctx context.Context, name string) CommandResult {
+	if err := ctx.Err(); err != nil {
+		return validationCommandResult("delete "+name, err)
+	}
+	if !taskExistsContext(ctx, name) {
 		return CommandResult{OK: true, Command: "delete " + name, Stdout: "Task did not exist."}
 	}
-	return runCommand(60*time.Second, "schtasks.exe", "/Delete", "/TN", name, "/F")
+	return runCommandContext(ctx, 60*time.Second, "schtasks.exe", "/Delete", "/TN", name, "/F")
 }
 
 func setStartupTaskDirect(enabled bool) CommandResult {
-	return setStartupRunEntryDirect(enabled)
+	return setStartupRunEntryDirectContext(context.Background(), enabled)
 }
 
 func setAutoUpdateTaskDirect(enabled bool) CommandResult {
 	if enabled {
-		return createAutoUpdateTaskDirect()
+		return createAutoUpdateTaskDirectContext(context.Background())
 	}
-	return deleteTaskDirect(taskAutoUpdate)
+	return deleteTaskDirectContext(context.Background(), taskAutoUpdate)
 }
 
-var startupRunEntryRunner = setStartupRunEntryDirect
-var createAutoUpdateTaskRunner = createAutoUpdateTask
-var deleteTaskRunner = deleteTask
+var startupRunEntryRunner = setStartupRunEntryDirectContext
+var createAutoUpdateTaskRunner = createAutoUpdateTaskContext
+var deleteTaskRunner = deleteTaskContext
 
 func setStartup(enabled bool) CommandResult {
+	return setStartupContext(context.Background(), enabled)
+}
+
+func setStartupContext(ctx context.Context, enabled bool) CommandResult {
 	appLog("Startup setting update started: enabled=%t.", enabled)
-	result := startupRunEntryRunner(enabled)
+	result := startupRunEntryRunner(ctx, enabled)
 	appLog("Startup setting update finished with code %d.", result.Code)
 	return result
 }

@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -62,6 +63,10 @@ func asyncSnapshot(loading bool, updatedAt time.Time, errorText string) AsyncSna
 	return snapshot
 }
 
+// App lock order:
+// Prefer releasing one App lock before taking another. If a future change must
+// hold multiple locks at once, acquire them in this order to avoid deadlocks:
+// lifecycleMu -> mu -> jobsMu -> shutdownCleanupMu.
 type App struct {
 	token         string
 	sessionToken  string
@@ -193,7 +198,7 @@ func (app *App) runShutdownCleanups() {
 	runCleanup := func(cleanup func()) {
 		defer func() {
 			if panicValue := recover(); panicValue != nil {
-				appLog("Shutdown cleanup failed: %v", panicValue)
+				appLog("Shutdown cleanup failed: %v\n%s", panicValue, debug.Stack())
 			}
 		}()
 		cleanup()

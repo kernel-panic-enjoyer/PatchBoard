@@ -126,7 +126,7 @@ func TestStartupRunEntryUsesCurrentUserRegistryInsteadOfScheduledTask(t *testing
 func TestSetStartupUsesRunEntryForEnableAndDisable(t *testing.T) {
 	oldRunner := startupRunEntryRunner
 	var calls []bool
-	startupRunEntryRunner = func(enabled bool) CommandResult {
+	startupRunEntryRunner = func(ctx context.Context, enabled bool) CommandResult {
 		calls = append(calls, enabled)
 		return CommandResult{OK: true, Command: startupRunRegistryCommand}
 	}
@@ -140,6 +140,23 @@ func TestSetStartupUsesRunEntryForEnableAndDisable(t *testing.T) {
 	}
 	if strings.Join(boolCalls(calls), "|") != "true|false" {
 		t.Fatalf("expected startup Run entry runner for enable and disable, got %#v", calls)
+	}
+}
+
+func TestSetStartupContextPassesCallerContextToRunner(t *testing.T) {
+	oldRunner := startupRunEntryRunner
+	contextKey := struct{}{}
+	startupRunEntryRunner = func(ctx context.Context, enabled bool) CommandResult {
+		if got := ctx.Value(contextKey); got != "request-context" {
+			t.Fatalf("startup runner received context value %v, want request-context", got)
+		}
+		return CommandResult{OK: true, Command: startupRunRegistryCommand}
+	}
+	t.Cleanup(func() { startupRunEntryRunner = oldRunner })
+
+	ctx := context.WithValue(context.Background(), contextKey, "request-context")
+	if result := setStartupContext(ctx, true); !result.OK {
+		t.Fatalf("startup result=%#v", result)
 	}
 }
 

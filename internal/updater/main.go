@@ -19,11 +19,10 @@ import (
 )
 
 const (
-	appName         = "PatchBoard"
-	appDirName      = "PatchBoard"
-	defaultHost     = "127.0.0.1"
-	defaultPort     = 4183
-	portSearchLimit = 50
+	appName     = "PatchBoard"
+	appDirName  = "PatchBoard"
+	defaultHost = "127.0.0.1"
+	defaultPort = 4183
 
 	flagHelp            = "--help"
 	flagNoBrowser       = "--no-browser"
@@ -134,68 +133,116 @@ func parseCLI(args []string) (cliOptions, error) {
 		strings.TrimSpace(*workerCapability) != "" ||
 		strings.TrimSpace(*workerUserSID) != "" ||
 		strings.TrimSpace(*workerSessionID) != ""
-	if workerProtocolFlagSet && !*elevatedWorker {
-		return options, errors.New("worker protocol flags require --elevated-worker")
+	if err := validateWorkerProtocolFlags(
+		workerProtocolFlagSet,
+		*elevatedWorker,
+	); err != nil {
+		return options, err
 	}
-	if *storeInventoryWorker {
-		options.Mode = cliModeStoreInventory
-		return options, nil
-	}
-	if *storeUpdateDiscoveryWorker {
-		options.Mode = cliModeStoreDiscovery
+	if setWorkerMode(&options, *storeInventoryWorker, *storeUpdateDiscoveryWorker, *elevatedWorker) {
 		return options, nil
 	}
 	if *selfUpdateApply {
-		parentPID, err := parseSelfUpdateParentPID(*selfUpdateParentPID)
-		if err != nil {
+		if err := applySelfUpdateCLIOptions(
+			&options,
+			*selfUpdateTarget,
+			*selfUpdateParentPID,
+			*selfUpdateSHA256,
+			*selfUpdateRestart,
+			*selfUpdateElevated,
+		); err != nil {
 			return options, err
 		}
-		options.Mode = cliModeSelfUpdateApply
-		options.SelfUpdateTarget = strings.TrimSpace(*selfUpdateTarget)
-		options.SelfUpdateParentPID = parentPID
-		options.SelfUpdateSHA256 = strings.TrimSpace(*selfUpdateSHA256)
-		options.SelfUpdateRestart = *selfUpdateRestart
-		options.SelfUpdateElevated = *selfUpdateElevated
 		return options, nil
 	}
 	if *uninstall && *uninstallApply {
 		return options, errors.New("--uninstall and --uninstall-apply cannot be combined")
 	}
 	if *uninstallApply {
-		parentPID, err := parseSelfUpdateParentPID(*uninstallParentPID)
-		if err != nil {
+		if err := applyUninstallCLIOptions(&options, *uninstallTarget, *uninstallParentPID); err != nil {
 			return options, err
 		}
-		options.Mode = cliModeUninstallApply
-		options.UninstallTarget = strings.TrimSpace(*uninstallTarget)
-		options.UninstallParentPID = parentPID
 		return options, nil
 	}
 	if *uninstall {
 		options.Mode = cliModeUninstall
 		return options, nil
 	}
-	if *elevatedWorker {
-		options.Mode = cliModeElevatedWorker
-		return options, nil
-	}
-	if strings.EqualFold(strings.TrimSpace(*task), "auto-update") {
-		options.Mode = cliModeAutoUpdate
+	if applyTaskCLIOptions(&options, *task) {
 		return options, nil
 	}
 	if strings.TrimSpace(*task) != "" {
 		return options, fmt.Errorf("unsupported task %q", *task)
 	}
-	options.NoBrowser = *noBrowser
-	options.Token = strings.TrimSpace(*token)
-	if *port != 0 {
-		if *port < 1 || *port > 65535 {
-			return options, fmt.Errorf("port must be between 1 and 65535")
-		}
-		options.Port = *port
-		options.PortSet = true
+	return applyServerCLIOptions(&options, *noBrowser, *token, *port)
+}
+
+func validateWorkerProtocolFlags(protocolFlagsSet, elevatedWorker bool) error {
+	if protocolFlagsSet && !elevatedWorker {
+		return errors.New("worker protocol flags require --elevated-worker")
 	}
-	return options, nil
+	return nil
+}
+
+func setWorkerMode(options *cliOptions, storeInventoryWorker, storeUpdateDiscoveryWorker, elevatedWorker bool) bool {
+	switch {
+	case storeInventoryWorker:
+		options.Mode = cliModeStoreInventory
+	case storeUpdateDiscoveryWorker:
+		options.Mode = cliModeStoreDiscovery
+	case elevatedWorker:
+		options.Mode = cliModeElevatedWorker
+	default:
+		return false
+	}
+	return true
+}
+
+func applySelfUpdateCLIOptions(options *cliOptions, target, parentPIDText, sha256Text string, restart, elevated bool) error {
+	parentPID, err := parseSelfUpdateParentPID(parentPIDText)
+	if err != nil {
+		return err
+	}
+	options.Mode = cliModeSelfUpdateApply
+	options.SelfUpdateTarget = strings.TrimSpace(target)
+	options.SelfUpdateParentPID = parentPID
+	options.SelfUpdateSHA256 = strings.TrimSpace(sha256Text)
+	options.SelfUpdateRestart = restart
+	options.SelfUpdateElevated = elevated
+	return nil
+}
+
+func applyUninstallCLIOptions(options *cliOptions, target, parentPIDText string) error {
+	parentPID, err := parseSelfUpdateParentPID(parentPIDText)
+	if err != nil {
+		return err
+	}
+	options.Mode = cliModeUninstallApply
+	options.UninstallTarget = strings.TrimSpace(target)
+	options.UninstallParentPID = parentPID
+	return nil
+}
+
+func applyTaskCLIOptions(options *cliOptions, task string) bool {
+	if !strings.EqualFold(strings.TrimSpace(task), "auto-update") {
+		return false
+	}
+	options.Mode = cliModeAutoUpdate
+	return true
+}
+
+func applyServerCLIOptions(options *cliOptions, noBrowser bool, token string, port int) (cliOptions, error) {
+	options.NoBrowser = noBrowser
+	options.Token = strings.TrimSpace(token)
+	if port == 0 {
+		return *options, nil
+	}
+	if port < 1 || port > 65535 {
+		return *options, fmt.Errorf("port must be between 1 and 65535")
+	}
+	options.Port = port
+	options.PortSet = true
+	return *options, nil
 }
 
 func helpText() string {
@@ -242,13 +289,15 @@ func listenForServer(host string, requestedPort int, explicit bool) (net.Listene
 		}
 		return listener, nil
 	}
-	for port := requestedPort; port < requestedPort+portSearchLimit; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-		if err == nil {
-			return listener, nil
-		}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(requestedPort)))
+	if err == nil {
+		return listener, nil
 	}
-	return nil, fmt.Errorf("no available local port in %d-%d", requestedPort, requestedPort+portSearchLimit-1)
+	listener, fallbackErr := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("bind %s:%d failed (%v), and OS-chosen fallback failed: %w", host, requestedPort, err, fallbackErr)
+	}
+	return listener, nil
 }
 
 func serverURL(host string, port int, token string) string {

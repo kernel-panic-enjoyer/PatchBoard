@@ -273,7 +273,7 @@ func TestSetAutoUpdateRejectsAmbiguousStorePackageKeys(t *testing.T) {
 	}
 
 	oldDelete := deleteTaskRunner
-	deleteTaskRunner = func(name string) CommandResult {
+	deleteTaskRunner = func(ctx context.Context, name string) CommandResult {
 		return CommandResult{OK: true, Command: "delete " + name}
 	}
 	defer func() { deleteTaskRunner = oldDelete }()
@@ -300,7 +300,7 @@ func TestSetAutoUpdateRejectsAmbiguousStorePackageKeys(t *testing.T) {
 
 func TestSetAutoUpdateDoesNotPersistGlobalWhenTaskCreationFails(t *testing.T) {
 	oldCreate := createAutoUpdateTaskRunner
-	createAutoUpdateTaskRunner = func() CommandResult {
+	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
 		return CommandResult{Code: 1, Command: "create auto-update task", Stderr: "scheduler unavailable"}
 	}
 	defer func() { createAutoUpdateTaskRunner = oldCreate }()
@@ -324,15 +324,34 @@ func TestSetAutoUpdateDoesNotPersistGlobalWhenTaskCreationFails(t *testing.T) {
 	}
 }
 
+func TestSetAutoUpdatePassesCallerContextToScheduledTaskRunner(t *testing.T) {
+	oldCreate := createAutoUpdateTaskRunner
+	contextKey := struct{}{}
+	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
+		if got := ctx.Value(contextKey); got != "request-context" {
+			t.Fatalf("scheduled task runner received context value %v, want request-context", got)
+		}
+		return CommandResult{OK: true, Command: "create auto-update task"}
+	}
+	defer func() { createAutoUpdateTaskRunner = oldCreate }()
+
+	store := newMemoryStateStore(defaultState())
+	global := true
+	ctx := context.WithValue(context.Background(), contextKey, "request-context")
+	if _, result := setAutoUpdateWithStore(ctx, store, &global, nil, nil); !result.OK {
+		t.Fatalf("expected auto-update setting to succeed, got %#v", result)
+	}
+}
+
 func TestSetAutoUpdatePackagePreferenceDoesNotTouchScheduledTask(t *testing.T) {
 	oldCreate := createAutoUpdateTaskRunner
 	oldDelete := deleteTaskRunner
 	taskCalls := 0
-	createAutoUpdateTaskRunner = func() CommandResult {
+	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
 		taskCalls++
 		return CommandResult{OK: true, Command: "create auto-update task"}
 	}
-	deleteTaskRunner = func(name string) CommandResult {
+	deleteTaskRunner = func(ctx context.Context, name string) CommandResult {
 		taskCalls++
 		return CommandResult{OK: true, Command: "delete " + name}
 	}
@@ -374,11 +393,11 @@ func TestSetAutoUpdateSaveFailureRollsBackScheduledTask(t *testing.T) {
 	oldCreate := createAutoUpdateTaskRunner
 	oldDelete := deleteTaskRunner
 	var taskCalls []string
-	createAutoUpdateTaskRunner = func() CommandResult {
+	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
 		taskCalls = append(taskCalls, "create")
 		return CommandResult{OK: true, Command: "create task"}
 	}
-	deleteTaskRunner = func(name string) CommandResult {
+	deleteTaskRunner = func(ctx context.Context, name string) CommandResult {
 		taskCalls = append(taskCalls, "delete "+name)
 		return CommandResult{OK: true, Command: "delete " + name}
 	}

@@ -250,10 +250,10 @@ func TestStateStoreUpdateKeepsCanonicalAutoUpdatePackageKeys(t *testing.T) {
 func stubAutoUpdateTaskRunners() func() {
 	oldCreate := createAutoUpdateTaskRunner
 	oldDelete := deleteTaskRunner
-	createAutoUpdateTaskRunner = func() CommandResult {
+	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
 		return CommandResult{OK: true, Command: "create auto-update task"}
 	}
-	deleteTaskRunner = func(name string) CommandResult {
+	deleteTaskRunner = func(ctx context.Context, name string) CommandResult {
 		return CommandResult{OK: true, Command: "delete " + name}
 	}
 	return func() {
