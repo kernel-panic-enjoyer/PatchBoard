@@ -62,6 +62,8 @@
     "#app-update-check",
     "#app-update-apply",
     "#app-update-modal-apply",
+    "#application-install-button",
+    "#application-restart-installed",
     "#update-all-button",
     "#update-selected-button",
     "#confirm-update-job",
@@ -1370,6 +1372,7 @@
     renderPreferenceToggles(data.settings || {}, data.loading);
     renderAppUpdateStatus(data.app_update || {});
     renderApplicationInfo(data.application || {});
+    renderApplicationInstallStatus(data.application_install || {});
     var startup = $("startup-toggle");
     if(startup){
       startup.disabled = !!data.loading;
@@ -1530,6 +1533,8 @@
         status.textContent = "Current " + current + " - application update checks disabled.";
       }else if(update.error){
         status.textContent = "Current " + current + " - update check failed: " + update.error;
+      }else if(update.incompatible_reason){
+        status.textContent = "Current " + current + " - latest release " + (update.latest_version || update.latest_tag || "newer") + " is not compatible with this build: " + update.incompatible_reason;
       }else if(update.available){
         status.textContent = "Current " + current + " - version " + (update.latest_version || update.latest_tag || "newer") + " is available.";
       }else if(update.latest_version){
@@ -1548,6 +1553,36 @@
     }
     maybeStartAutomaticSelfUpdate(update);
     maybeShowAppUpdatePrompt(update);
+    applyBackendAvailabilityState();
+  }
+
+  function renderApplicationInstallStatus(install){
+    install = install || {};
+    var status = $("application-install-status");
+    var installButton = $("application-install-button");
+    var restartButton = $("application-restart-installed");
+    var targetPath = String(install.target_path || "").trim();
+    var busy = !!(latestStatus && latestStatus.loading) || updateBusy || activeServerJobs().length > 0;
+    if(status){
+      if(install.installed){
+        status.textContent = install.running_from_installed_path ? "Installed in Program Files." : "Installed in Program Files. Restart from installed copy when ready.";
+      }else if(install.repair_required){
+        status.textContent = "Repair available: " + (install.repair_reason || "installation is incomplete") + ".";
+      }else{
+        status.textContent = "Not installed. Install to " + (targetPath || "Program Files") + " to enable machine-wide registration.";
+      }
+    }
+    if(installButton){
+      var canInstallOrRepair = !install.installed || install.repair_required;
+      installButton.classList.toggle("hidden", !canInstallOrRepair);
+      installButton.disabled = busy || !canInstallOrRepair;
+      installButton.textContent = install.repair_required ? "Repair installation" : "Install to Program Files";
+    }
+    if(restartButton){
+      var canRestartInstalled = !!install.installed && !install.running_from_installed_path;
+      restartButton.classList.toggle("hidden", !canRestartInstalled);
+      restartButton.disabled = busy || !canRestartInstalled;
+    }
     applyBackendAvailabilityState();
   }
 
@@ -2057,6 +2092,8 @@
         showToast("Application update " + (data.latest_version || data.latest_tag || "") + " is available.", "info");
       }else if(data.error){
         showToast("Application update check failed: " + data.error, "error");
+      }else if(data.incompatible_reason){
+        showToast("Latest application release is not compatible with this build.", "info");
       }else{
         showToast("Application is up to date.", "success");
       }
@@ -2096,6 +2133,39 @@
     }catch(e){
       showNotice("Could not start application update: " + e.message);
       showToast("Could not start application update: " + e.message, "error");
+      if(button){ button.disabled = false; }
+      applyBackendAvailabilityState();
+    }
+  }
+  async function installApplication(){
+    var button = $("application-install-button");
+    if(button){ button.disabled = true; }
+    showNotice("Preparing PatchBoard installation...", true);
+    var completed = false;
+    try{
+      await postCommandPayload("/api/application/install", {}, "Could not install PatchBoard");
+      completed = true;
+      showNotice("PatchBoard installation completed.");
+      showToast("PatchBoard installation completed.", "success");
+      await loadStatus(true);
+    }catch(e){
+      showNotice("Could not install PatchBoard: " + e.message);
+      showToast("Could not install PatchBoard: " + e.message, "error");
+    }finally{
+      if(button && !completed){ button.disabled = false; }
+      applyBackendAvailabilityState();
+    }
+  }
+  async function restartInstalledApplication(){
+    var button = $("application-restart-installed");
+    if(button){ button.disabled = true; }
+    showNotice("Starting installed PatchBoard...", true);
+    try{
+      await postCommandPayload("/api/application/restart-installed", {}, "Could not restart from installed copy");
+      showNotice("Installed PatchBoard started. This session will close.", true);
+    }catch(e){
+      showNotice("Could not restart from installed copy: " + e.message);
+      showToast("Could not restart from installed copy: " + e.message, "error");
       if(button){ button.disabled = false; }
       applyBackendAvailabilityState();
     }
@@ -3270,6 +3340,8 @@
   });
   $("app-update-check").addEventListener("click", function(){ checkAppUpdate(); });
   $("app-update-apply").addEventListener("click", function(){ startAppSelfUpdate(); });
+  $("application-install-button").addEventListener("click", function(){ installApplication(); });
+  $("application-restart-installed").addEventListener("click", function(){ restartInstalledApplication(); });
   $("auto-all").addEventListener("click", function(){ setAllAuto(true); });
   $("auto-none").addEventListener("click", function(){ setAllAuto(false); });
   $("clear-log-view").addEventListener("click", function(){

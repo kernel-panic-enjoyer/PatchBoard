@@ -466,6 +466,11 @@ func (app *App) startSelfUpdateJob() OperationJobStatus {
 			app.finishSelfUpdateJob(job, result, jobStateFailed, "Application update check failed.")
 			return
 		}
+		if updateStatus.IncompatibleReason != "" {
+			result := CommandResult{OK: true, Command: "self-update", Stdout: updateStatus.IncompatibleReason}
+			app.finishSelfUpdateJob(job, result, jobStateSucceeded, "No compatible application release is available.")
+			return
+		}
 		if !updateStatus.Available {
 			result := CommandResult{OK: true, Command: "self-update", Stdout: "No newer application release is available."}
 			app.finishSelfUpdateJob(job, result, jobStateSucceeded, "Application is already up to date.")

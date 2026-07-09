@@ -40,13 +40,14 @@ type appUpdateChecker interface {
 }
 
 type AppUpdateStatus struct {
-	CurrentVersion string `json:"current_version"`
-	LatestVersion  string `json:"latest_version,omitempty"`
-	LatestTag      string `json:"latest_tag,omitempty"`
-	Available      bool   `json:"available"`
-	CheckedAt      string `json:"checked_at,omitempty"`
-	ReleaseURL     string `json:"release_url,omitempty"`
-	Error          string `json:"error,omitempty"`
+	CurrentVersion     string `json:"current_version"`
+	LatestVersion      string `json:"latest_version,omitempty"`
+	LatestTag          string `json:"latest_tag,omitempty"`
+	Available          bool   `json:"available"`
+	CheckedAt          string `json:"checked_at,omitempty"`
+	ReleaseURL         string `json:"release_url,omitempty"`
+	Error              string `json:"error,omitempty"`
+	IncompatibleReason string `json:"incompatible_reason,omitempty"`
 
 	ExecutableURL  string `json:"-"`
 	MetadataURL    string `json:"-"`
@@ -71,25 +72,6 @@ type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
-}
-
-type selfUpdateReleaseAssetNames struct {
-	Executable string
-	Metadata   string
-	SHA256     string
-}
-
-var supportedSelfUpdateReleaseAssetNames = []selfUpdateReleaseAssetNames{
-	{
-		Executable: patchBoardReleaseAssetExecutable,
-		Metadata:   patchBoardReleaseAssetMetadata,
-		SHA256:     patchBoardReleaseAssetSHA256,
-	},
-	{
-		Executable: releaseAssetExecutable,
-		Metadata:   releaseAssetMetadata,
-		SHA256:     releaseAssetSHA256,
-	},
 }
 
 type selfUpdateArtifact struct {
@@ -173,9 +155,12 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	for _, asset := range latestRelease.Assets {
 		assetsByName[asset.Name] = asset
 	}
-	executableAsset, metadataAsset, checksumAsset, ok := selectSelfUpdateReleaseAssets(assetsByName)
-	if !ok {
-		return updateStatus, errors.New("newer release is missing required release assets")
+	executableAsset := assetsByName[releaseAssetExecutable]
+	metadataAsset := assetsByName[releaseAssetMetadata]
+	checksumAsset := assetsByName[releaseAssetSHA256]
+	if executableAsset.BrowserDownloadURL == "" || metadataAsset.BrowserDownloadURL == "" || checksumAsset.BrowserDownloadURL == "" {
+		updateStatus.IncompatibleReason = missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset)
+		return updateStatus, nil
 	}
 	if executableAsset.Size > maxSelfUpdateExecutableBytes {
 		return updateStatus, fmt.Errorf("release executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
@@ -188,16 +173,21 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	return updateStatus, nil
 }
 
-func selectSelfUpdateReleaseAssets(assetsByName map[string]githubReleaseAsset) (githubReleaseAsset, githubReleaseAsset, githubReleaseAsset, bool) {
-	for _, names := range supportedSelfUpdateReleaseAssetNames {
-		executableAsset := assetsByName[names.Executable]
-		metadataAsset := assetsByName[names.Metadata]
-		checksumAsset := assetsByName[names.SHA256]
-		if executableAsset.BrowserDownloadURL != "" && metadataAsset.BrowserDownloadURL != "" && checksumAsset.BrowserDownloadURL != "" {
-			return executableAsset, metadataAsset, checksumAsset, true
-		}
+func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset githubReleaseAsset) string {
+	var missing []string
+	if executableAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetExecutable)
 	}
-	return githubReleaseAsset{}, githubReleaseAsset{}, githubReleaseAsset{}, false
+	if metadataAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetMetadata)
+	}
+	if checksumAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetSHA256)
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "latest release does not include PatchBoard self-update assets: " + strings.Join(missing, ", ")
 }
 
 func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, updateStatus AppUpdateStatus, downloadDir string) (selfUpdateArtifact, error) {

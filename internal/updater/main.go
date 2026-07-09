@@ -32,6 +32,8 @@ const (
 	flagTask            = "--task"
 	flagElevatedWorker  = "--elevated-worker"
 	flagSelfUpdateApply = "--self-update-apply"
+	flagUninstall       = "--uninstall"
+	flagUninstallApply  = "--uninstall-apply"
 	flagNoElevate       = "--no-elevate"
 )
 
@@ -55,6 +57,8 @@ const (
 	cliModeStoreInventory  cliMode = "store-inventory-worker"
 	cliModeStoreDiscovery  cliMode = "store-update-discovery-worker"
 	cliModeSelfUpdateApply cliMode = "self-update-apply"
+	cliModeUninstall       cliMode = "uninstall"
+	cliModeUninstallApply  cliMode = "uninstall-apply"
 )
 
 type cliOptions struct {
@@ -68,6 +72,8 @@ type cliOptions struct {
 	SelfUpdateSHA256    string
 	SelfUpdateRestart   bool
 	SelfUpdateElevated  bool
+	UninstallTarget     string
+	UninstallParentPID  int
 }
 
 type trayController interface {
@@ -105,6 +111,10 @@ func parseCLI(args []string) (cliOptions, error) {
 	selfUpdateSHA256 := set.String("self-update-sha256", "", "")
 	selfUpdateRestart := set.Bool("self-update-restart", false, "")
 	selfUpdateElevated := set.Bool("self-update-elevated", false, "")
+	uninstall := set.Bool(strings.TrimPrefix(flagUninstall, "--"), false, "")
+	uninstallApply := set.Bool(strings.TrimPrefix(flagUninstallApply, "--"), false, "")
+	uninstallTarget := set.String("uninstall-target", "", "")
+	uninstallParentPID := set.String("uninstall-parent-pid", "", "")
 	workerPipe := set.String("worker-pipe", "", "")
 	workerCapability := set.String("worker-capability", "", "")
 	workerUserSID := set.String("worker-user-sid", "", "")
@@ -148,6 +158,23 @@ func parseCLI(args []string) (cliOptions, error) {
 		options.SelfUpdateElevated = *selfUpdateElevated
 		return options, nil
 	}
+	if *uninstall && *uninstallApply {
+		return options, errors.New("--uninstall and --uninstall-apply cannot be combined")
+	}
+	if *uninstallApply {
+		parentPID, err := parseSelfUpdateParentPID(*uninstallParentPID)
+		if err != nil {
+			return options, err
+		}
+		options.Mode = cliModeUninstallApply
+		options.UninstallTarget = strings.TrimSpace(*uninstallTarget)
+		options.UninstallParentPID = parentPID
+		return options, nil
+	}
+	if *uninstall {
+		options.Mode = cliModeUninstall
+		return options, nil
+	}
 	if *elevatedWorker {
 		options.Mode = cliModeElevatedWorker
 		return options, nil
@@ -177,6 +204,7 @@ func helpText() string {
 Usage:
   PatchBoard.exe [--no-browser] [--port PORT] [--token TOKEN]
   PatchBoard.exe --task auto-update
+  PatchBoard.exe --uninstall
 
 Options:
   --no-browser   Start the local WebUI without opening a browser. Prints the URL.
@@ -186,9 +214,9 @@ Options:
 
 Internal unsupported modes:
   --elevated-worker, --store-inventory-worker, --store-update-discovery-worker,
-  and --self-update-apply are implementation details for privileged package
-  actions, isolated current-user Store inventory/discovery, and verified
-  application self-replacement.`) + "\n"
+  --self-update-apply, and --uninstall-apply are implementation details for
+  privileged package actions, isolated current-user Store inventory/discovery,
+  verified application self-replacement, and installed-copy cleanup.`) + "\n"
 }
 
 func listenerPort(listener net.Listener) int {
@@ -388,6 +416,18 @@ func Main() {
 		os.Exit(runStoreUpdateDiscoveryWorkerFromArgs())
 	case cliModeSelfUpdateApply:
 		if err := runSelfUpdateApply(selfUpdateApplyRequestFromOptions(options)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	case cliModeUninstall:
+		if err := runApplicationUninstall(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	case cliModeUninstallApply:
+		if err := runApplicationUninstallApply(options.UninstallTarget, options.UninstallParentPID); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

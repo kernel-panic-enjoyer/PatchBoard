@@ -113,6 +113,13 @@ const pageTemplateHTML = `<!doctype html>
               <div class="button-row"><button id="app-update-check" class="ghost" type="button">Check App</button><button id="app-update-apply" type="button" class="hidden">Install and Restart</button></div>
             </div>
           </section>
+          <section class="settings-section" aria-labelledby="settings-application-install-title">
+            <div class="settings-section-heading"><h3 id="settings-application-install-title">Application installation</h3><span class="panel-kicker">Program Files</span></div>
+            <div class="stack">
+              <p id="application-install-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking installation...</span></span></p>
+              <div class="button-row"><button id="application-install-button" type="button" disabled>Install to Program Files</button><button id="application-restart-installed" class="ghost hidden" type="button" disabled>Restart from installed copy</button></div>
+            </div>
+          </section>
           <section class="settings-section" aria-labelledby="settings-shortcuts-title">
             <div class="settings-section-heading"><h3 id="settings-shortcuts-title">Desktop shortcuts</h3><span class="panel-kicker">Cleanup</span></div>
             <p class="muted">After package installs or updates, remove only newly-created Desktop .lnk shortcuts. Existing shortcuts, folders, and non-shortcut files are preserved.</p>

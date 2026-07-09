@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -769,5 +770,57 @@ func TestApplicationPreferencesEndpointPersistsStatePreferences(t *testing.T) {
 	loaded := loadState()
 	if !loaded.AppUpdateAutoInstallEnabled || !loaded.AppUpdateChecksDisabled || !loaded.RemoveNewDesktopShortcuts || loaded.Theme != "light" || !loaded.AutoUpdatePackages["winget:Git.Git"] {
 		t.Fatalf("endpoint did not preserve unrelated state or persist preferences: %#v", loaded)
+	}
+}
+
+func TestApplicationInstallEndpointRunsInstallOperation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	originalRunner := applicationInstallRunner
+	applicationInstallRunner = func(context.Context) CommandResult {
+		return CommandResult{OK: true, Command: applicationInstallCommand, Stdout: "installed"}
+	}
+	t.Cleanup(func() { applicationInstallRunner = originalRunner })
+
+	app := testSessionApp()
+	request := authenticatedRequest(app, http.MethodPost, "/api/application/install", nil)
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded commandAPIResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Result == nil || !decoded.Result.OK || decoded.Result.Command != applicationInstallCommand {
+		t.Fatalf("unexpected install response: %#v", decoded.Result)
+	}
+}
+
+func TestApplicationRestartInstalledEndpointReportsValidationFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", dir)
+	originalRunner := applicationRestartInstalledRunner
+	applicationRestartInstalledRunner = func(context.Context) CommandResult {
+		return validationCommandResult("restart installed PatchBoard", errors.New("not installed"))
+	}
+	t.Cleanup(func() { applicationRestartInstalledRunner = originalRunner })
+
+	app := testSessionApp()
+	request := authenticatedRequest(app, http.MethodPost, "/api/application/restart-installed", nil)
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected ok, got %d: %s", response.Code, response.Body.String())
+	}
+	var decoded commandAPIResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Result == nil || decoded.Result.OK {
+		t.Fatalf("expected validation result, got %#v", decoded.Result)
 	}
 }

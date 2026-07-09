@@ -67,6 +67,10 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jobAcceptedResponse(w, app.startSelfUpdateJob())
+	case "/api/application/install":
+		app.handleApplicationInstallAPI(w, r)
+	case "/api/application/restart-installed":
+		app.handleApplicationRestartInstalledAPI(w, r)
 	case "/api/packages":
 		if !requireMethod(w, r, http.MethodGet) {
 			return

@@ -24,6 +24,7 @@ const (
 	workerOperationManagerInstall     = "manager_install"
 	workerOperationStartupTask        = "startup_task"
 	workerOperationAutoUpdateTask     = "auto_update_task"
+	workerOperationApplicationInstall = "application_install"
 )
 
 type elevatedWorkerMessage struct {
@@ -81,6 +82,11 @@ type elevatedWorkerManagerInstallPayload struct {
 
 type elevatedWorkerTaskPayload struct {
 	Enabled bool `json:"enabled"`
+}
+
+type elevatedWorkerApplicationInstallPayload struct {
+	SourceExe string `json:"source_exe"`
+	TargetExe string `json:"target_exe"`
 }
 
 type elevatedWorkerAuthContext struct {
@@ -198,6 +204,12 @@ func validateWorkerOperationPayload(operation string, rawPayload json.RawMessage
 	case workerOperationStartupTask, workerOperationAutoUpdateTask:
 		var taskPayload elevatedWorkerTaskPayload
 		return decodeWorkerPayload(rawPayload, &taskPayload)
+	case workerOperationApplicationInstall:
+		var installPayload elevatedWorkerApplicationInstallPayload
+		if err := decodeWorkerPayload(rawPayload, &installPayload); err != nil {
+			return err
+		}
+		return validateApplicationInstallPayload(installPayload)
 	default:
 		return fmt.Errorf("unknown worker operation %q", operation)
 	}

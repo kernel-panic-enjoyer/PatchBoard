@@ -30,6 +30,7 @@ type StatusResponse struct {
 	Settings                  StatusSettings           `json:"settings"`
 	AppUpdate                 AppUpdateStatus          `json:"app_update"`
 	Application               ApplicationInfo          `json:"application"`
+	ApplicationInstall        ApplicationInstallStatus `json:"application_install"`
 	AsyncSnapshot
 }
 
