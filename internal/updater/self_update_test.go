@@ -70,13 +70,41 @@ func TestParseGitHubReleaseIgnoresPrereleaseAndSameVersion(t *testing.T) {
 	}
 }
 
-func TestParseGitHubReleaseRejectsMissingAssets(t *testing.T) {
-	_, err := parseGitHubRelease([]byte(`{
+func TestParseGitHubReleaseTreatsMissingAssetsAsIncompatible(t *testing.T) {
+	status, err := parseGitHubRelease([]byte(`{
 		"tag_name": "v0.0.2",
 		"assets": [{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234}]
 	}`), "0.0.1")
-	if err == nil || !strings.Contains(err.Error(), "required release assets") {
-		t.Fatalf("expected missing asset error, got %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Available {
+		t.Fatalf("missing release assets must not become available: %#v", status)
+	}
+	if status.IncompatibleReason == "" || !strings.Contains(status.IncompatibleReason, "PatchBoard.metadata.json") || !strings.Contains(status.IncompatibleReason, "PatchBoard.exe.sha256") {
+		t.Fatalf("expected incompatible missing-asset reason, got %#v", status)
+	}
+}
+
+func TestParseGitHubReleaseTreatsLegacyRenamedAssetsAsIncompatible(t *testing.T) {
+	status, err := parseGitHubRelease([]byte(`{
+		"tag_name": "v0.1.7",
+		"draft": false,
+		"prerelease": false,
+		"assets": [
+			{"name":"WindowsUpdaterWebUI.exe","browser_download_url":"https://github.example/old.exe","size":1234},
+			{"name":"WindowsUpdaterWebUI.metadata.json","browser_download_url":"https://github.example/old.metadata.json","size":321},
+			{"name":"WindowsUpdaterWebUI.exe.sha256","browser_download_url":"https://github.example/old.exe.sha256","size":64}
+		]
+	}`), "0.0.0-dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Available || status.ExecutableURL != "" || status.SHA256URL != "" {
+		t.Fatalf("legacy release assets must not be actionable for PatchBoard: %#v", status)
+	}
+	if status.IncompatibleReason == "" || !strings.Contains(status.IncompatibleReason, "PatchBoard.exe") {
+		t.Fatalf("expected incompatible legacy-asset reason, got %#v", status)
 	}
 }
 

@@ -50,6 +50,24 @@ func TestParseCLIElevatedWorkerAllowsInternalProtocolFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLIApplicationUninstallModes(t *testing.T) {
+	uninstall, err := parseCLI([]string{"--uninstall"})
+	if err != nil {
+		t.Fatalf("parse uninstall CLI: %v", err)
+	}
+	if uninstall.Mode != cliModeUninstall {
+		t.Fatalf("mode = %q, want %q", uninstall.Mode, cliModeUninstall)
+	}
+
+	apply, err := parseCLI([]string{"--uninstall-apply", "--uninstall-target=C:\\Program Files\\PatchBoard", "--uninstall-parent-pid=123"})
+	if err != nil {
+		t.Fatalf("parse uninstall apply CLI: %v", err)
+	}
+	if apply.Mode != cliModeUninstallApply || apply.UninstallParentPID != 123 || apply.UninstallTarget == "" {
+		t.Fatalf("unexpected uninstall apply options: %#v", apply)
+	}
+}
+
 func TestParseCLIRejectsWorkerProtocolFlagsOutsideElevatedWorker(t *testing.T) {
 	for _, args := range [][]string{
 		{"--worker-pipe=\\\\.\\pipe\\PatchBoard-test"},

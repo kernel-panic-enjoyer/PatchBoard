@@ -493,6 +493,12 @@ func executeElevatedWorkerOperation(ctx context.Context, operation string, paylo
 			return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
 		}
 		return elevatedWorkerOperationResult{Result: setAutoUpdateTaskDirect(decoded.Enabled)}
+	case workerOperationApplicationInstall:
+		var decoded elevatedWorkerApplicationInstallPayload
+		if err := decodeWorkerPayload(payload, &decoded); err != nil {
+			return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
+		}
+		return elevatedWorkerOperationResult{Result: installApplicationDirectContext(ctx, decoded.SourceExe, decoded.TargetExe)}
 	default:
 		return elevatedWorkerOperationResult{Result: validationCommandResult(operation, fmt.Errorf("unknown worker operation %q", operation))}
 	}

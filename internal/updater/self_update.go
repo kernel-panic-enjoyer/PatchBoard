@@ -40,13 +40,14 @@ type appUpdateChecker interface {
 }
 
 type AppUpdateStatus struct {
-	CurrentVersion string `json:"current_version"`
-	LatestVersion  string `json:"latest_version,omitempty"`
-	LatestTag      string `json:"latest_tag,omitempty"`
-	Available      bool   `json:"available"`
-	CheckedAt      string `json:"checked_at,omitempty"`
-	ReleaseURL     string `json:"release_url,omitempty"`
-	Error          string `json:"error,omitempty"`
+	CurrentVersion     string `json:"current_version"`
+	LatestVersion      string `json:"latest_version,omitempty"`
+	LatestTag          string `json:"latest_tag,omitempty"`
+	Available          bool   `json:"available"`
+	CheckedAt          string `json:"checked_at,omitempty"`
+	ReleaseURL         string `json:"release_url,omitempty"`
+	Error              string `json:"error,omitempty"`
+	IncompatibleReason string `json:"incompatible_reason,omitempty"`
 
 	ExecutableURL  string `json:"-"`
 	MetadataURL    string `json:"-"`
@@ -158,7 +159,8 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	metadataAsset := assetsByName[releaseAssetMetadata]
 	checksumAsset := assetsByName[releaseAssetSHA256]
 	if executableAsset.BrowserDownloadURL == "" || metadataAsset.BrowserDownloadURL == "" || checksumAsset.BrowserDownloadURL == "" {
-		return updateStatus, errors.New("newer release is missing required release assets")
+		updateStatus.IncompatibleReason = missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset)
+		return updateStatus, nil
 	}
 	if executableAsset.Size > maxSelfUpdateExecutableBytes {
 		return updateStatus, fmt.Errorf("release executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
@@ -169,6 +171,23 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	updateStatus.SHA256URL = checksumAsset.BrowserDownloadURL
 	updateStatus.ExecutableSize = executableAsset.Size
 	return updateStatus, nil
+}
+
+func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset githubReleaseAsset) string {
+	var missing []string
+	if executableAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetExecutable)
+	}
+	if metadataAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetMetadata)
+	}
+	if checksumAsset.BrowserDownloadURL == "" {
+		missing = append(missing, releaseAssetSHA256)
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "latest release does not include PatchBoard self-update assets: " + strings.Join(missing, ", ")
 }
 
 func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, updateStatus AppUpdateStatus, downloadDir string) (selfUpdateArtifact, error) {

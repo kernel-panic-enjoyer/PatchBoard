@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +130,11 @@ func TestElevatedWorkerOperationAllowlist(t *testing.T) {
 			payload:   elevatedWorkerTaskPayload{Enabled: true},
 		},
 		{
+			name:      "application install allowed",
+			operation: workerOperationApplicationInstall,
+			payload:   validApplicationInstallPayloadForTest(t),
+		},
+		{
 			name:      "winget choco package update batch allowed",
 			operation: workerOperationPackageUpdateBatch,
 			payload: elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
@@ -174,6 +181,63 @@ func TestElevatedWorkerOperationAllowlist(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestElevatedWorkerApplicationInstallRejectsUnsafePayloads(t *testing.T) {
+	valid := validApplicationInstallPayloadForTest(t)
+	tests := []struct {
+		name    string
+		payload json.RawMessage
+	}{
+		{
+			name:    "unknown field",
+			payload: json.RawMessage(`{"source_exe":"` + jsonEscaped(valid.SourceExe) + `","target_exe":"` + jsonEscaped(valid.TargetExe) + `","args":["/c","whoami"]}`),
+		},
+		{
+			name:    "alternate source",
+			payload: json.RawMessage(`{"source_exe":"C:\\Windows\\System32\\cmd.exe","target_exe":"` + jsonEscaped(valid.TargetExe) + `"}`),
+		},
+		{
+			name:    "alternate target",
+			payload: json.RawMessage(`{"source_exe":"` + jsonEscaped(valid.SourceExe) + `","target_exe":"C:\\Temp\\PatchBoard.exe"}`),
+		},
+		{
+			name:    "non PatchBoard target",
+			payload: json.RawMessage(`{"source_exe":"` + jsonEscaped(valid.SourceExe) + `","target_exe":"C:\\Program Files\\PatchBoard\\Other.exe"}`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateWorkerOperationPayload(workerOperationApplicationInstall, tt.payload); err == nil {
+				t.Fatal("expected application install payload rejection")
+			}
+		})
+	}
+}
+
+func validApplicationInstallPayloadForTest(t *testing.T) elevatedWorkerApplicationInstallPayload {
+	t.Helper()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "PatchBoard.exe")
+	if err := os.WriteFile(source, []byte("test executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	programFiles := filepath.Join(dir, "Program Files")
+	programData := filepath.Join(dir, "ProgramData")
+	t.Setenv("ProgramFiles", programFiles)
+	t.Setenv("ProgramData", programData)
+	originalExecutable := applicationInstallCurrentExecutable
+	applicationInstallCurrentExecutable = func() (string, error) { return source, nil }
+	t.Cleanup(func() { applicationInstallCurrentExecutable = originalExecutable })
+	return elevatedWorkerApplicationInstallPayload{
+		SourceExe: source,
+		TargetExe: filepath.Join(programFiles, applicationInstallFolderName, applicationInstallExecutable),
+	}
+}
+
+func jsonEscaped(value string) string {
+	encoded, _ := json.Marshal(value)
+	return strings.Trim(string(encoded), `"`)
 }
 
 func TestElevatedWorkerPackageUpdateBatchRejectsUnsafePayloads(t *testing.T) {

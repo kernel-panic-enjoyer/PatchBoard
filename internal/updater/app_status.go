@@ -131,6 +131,7 @@ func buildStatusResponseContextWithStateAndUpdate(ctx context.Context, forceRefr
 		Settings:                  statusSettingsFromState(persistedState),
 		AppUpdate:                 appUpdateStatus,
 		Application:               currentApplicationInfo(),
+		ApplicationInstall:        currentApplicationInstallStatus(),
 	}
 }
 
@@ -202,6 +203,7 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	if snapshot.Application.License == "" || snapshot.Application.Repository == "" {
 		snapshot.Application = currentApplicationInfo()
 	}
+	snapshot.ApplicationInstall = currentApplicationInstallStatus()
 	mergeStatusInventoryManagerDetails(&snapshot, inventoryManagerStatuses)
 	snapshot.AsyncSnapshot = asyncSnapshot(statusLoading, fetchedAt, refreshErr)
 	return snapshot
