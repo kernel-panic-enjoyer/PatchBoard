@@ -21,7 +21,7 @@ func appRoot() string {
 }
 
 func stateDir() (string, error) {
-	if override := os.Getenv("UPDATER_STATE_DIR"); override != "" {
+	if override := os.Getenv("UPDATER_STATE_DIR"); override != "" && userEnvironmentOverridesAllowed() {
 		if err := os.MkdirAll(override, 0o755); err != nil {
 			return "", err
 		}
@@ -120,7 +120,7 @@ func copyFile(sourcePath, targetPath string) error {
 }
 
 func appTempDir() (string, error) {
-	if override := os.Getenv("UPDATER_TEMP_DIR"); override != "" {
+	if override := os.Getenv("UPDATER_TEMP_DIR"); override != "" && userEnvironmentOverridesAllowed() {
 		if err := os.MkdirAll(override, 0o755); err != nil {
 			return "", err
 		}

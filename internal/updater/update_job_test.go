@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestUpdateJobQueuesConcurrentStarts(t *testing.T) {
+func TestUpdateJobRejectsConcurrentDuplicateStarts(t *testing.T) {
 	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
@@ -32,13 +32,12 @@ func TestUpdateJobQueuesConcurrentStarts(t *testing.T) {
 
 	next, err := app.startUpdateJob(nil)
 	if err != nil {
-		t.Fatalf("expected concurrent update job to queue, got %v", err)
+		t.Fatalf("duplicate update start should return a rejected status, got error %v", err)
 	}
-	if next.JobID == status.JobID || next.State != jobStateQueued {
-		t.Fatalf("expected second queued update job, first=%#v second=%#v", status, next)
+	if next.State != jobStateFailed || next.ExistingJobID != status.JobID || !strings.Contains(next.Error, "package operation is already queued or running") {
+		t.Fatalf("expected duplicate update job rejection, first=%#v second=%#v", status, next)
 	}
 	app.cancelOperationJob(status.JobID)
-	app.cancelOperationJob(next.JobID)
 	waitForUpdateJobStopped(t, app)
 }
 

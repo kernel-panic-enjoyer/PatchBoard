@@ -1,11 +1,19 @@
 package updater
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+)
+
+const (
+	maxJSONBodyBytes        int64 = 1 << 20
+	maxSmallJSONBodyBytes   int64 = 64 << 10
+	maxActionJSONBodyBytes  int64 = 64 << 10
+	maxPackageListBodyBytes int64 = 256 << 10
 )
 
 type apiErrorResponse struct {
@@ -97,16 +105,77 @@ func requestIsJSON(r *http.Request) bool {
 }
 
 func decodeJSONRequest(r *http.Request, target any) error {
-	decoder := json.NewDecoder(r.Body)
+	return decodeJSONRequestBounded(r, target, maxJSONBodyBytes)
+}
+
+func decodeSmallJSONRequest(r *http.Request, target any) error {
+	return decodeJSONRequestBounded(r, target, maxSmallJSONBodyBytes)
+}
+
+func decodeActionJSONRequest(r *http.Request, target any) error {
+	return decodeJSONRequestBounded(r, target, maxActionJSONBodyBytes)
+}
+
+func decodePackageListJSONRequest(r *http.Request, target any) error {
+	return decodeJSONRequestBounded(r, target, maxPackageListBodyBytes)
+}
+
+func decodeJSONRequestBounded(r *http.Request, target any, maxBytes int64) error {
+	body, err := readBoundedRequestBody(r, maxBytes)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("invalid JSON body: %w", err)
 	}
-	var trailing any
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
 			return fmt.Errorf("invalid JSON body: trailing data")
 		}
 		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	return nil
+}
+
+func decodeRawJSONMapRequestBounded(r *http.Request, target *map[string]json.RawMessage, maxBytes int64) error {
+	body, err := readBoundedRequestBody(r, maxBytes)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("invalid JSON body: trailing data")
+		}
+		return fmt.Errorf("invalid JSON body: %w", err)
+	}
+	return nil
+}
+
+func readBoundedRequestBody(r *http.Request, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("invalid request body limit")
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read request body: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("request body too large")
+	}
+	return body, nil
+}
+
+func parseFormRequest(r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		return fmt.Errorf("invalid form body: %w", err)
 	}
 	return nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -90,7 +89,7 @@ func parseStartupRequest(r *http.Request) (bool, *CommandResult) {
 		var startupSettings struct {
 			Enabled *bool `json:"enabled"`
 		}
-		if err := decodeJSONRequest(r, &startupSettings); err != nil {
+		if err := decodeSmallJSONRequest(r, &startupSettings); err != nil {
 			result := validationCommandResult("startup settings", err)
 			return false, &result
 		}
@@ -100,7 +99,10 @@ func parseStartupRequest(r *http.Request) (bool, *CommandResult) {
 		}
 		return *startupSettings.Enabled, nil
 	}
-	_ = r.ParseForm()
+	if err := parseFormRequest(r); err != nil {
+		result := validationCommandResult("startup settings", err)
+		return false, &result
+	}
 	startupEnabled, err := requiredFormBool(r, "enabled")
 	if err != nil {
 		result := validationCommandResult("startup settings", err)
@@ -124,14 +126,17 @@ func parseAutoUpdateRequest(r *http.Request) (*bool, []string, *bool, *CommandRe
 			PackageKeys    oneOrManyStrings `json:"package_keys"`
 			PackageEnabled *bool            `json:"package_enabled"`
 		}
-		if err := decodeJSONRequest(r, &autoUpdateSettings); err != nil {
+		if err := decodeSmallJSONRequest(r, &autoUpdateSettings); err != nil {
 			result := validationCommandResult("auto-update settings", err)
 			return nil, nil, nil, &result
 		}
 		packageKeys := combineStringLists(autoUpdateSettings.PackageKey, autoUpdateSettings.PackageKeys)
 		return autoUpdateSettings.Global, packageKeys, autoUpdateSettings.PackageEnabled, nil
 	}
-	_ = r.ParseForm()
+	if err := parseFormRequest(r); err != nil {
+		result := validationCommandResult("auto-update settings", err)
+		return nil, nil, nil, &result
+	}
 	var globalAutoUpdateEnabled *bool
 	if value, ok := formBool(r, "global"); ok {
 		globalAutoUpdateEnabled = &value
@@ -148,12 +153,14 @@ func parseThemeRequest(r *http.Request) (string, error) {
 		var themeSettings struct {
 			Theme string `json:"theme"`
 		}
-		if err := decodeJSONRequest(r, &themeSettings); err != nil {
+		if err := decodeSmallJSONRequest(r, &themeSettings); err != nil {
 			return "", err
 		}
 		return themeSettings.Theme, nil
 	}
-	_ = r.ParseForm()
+	if err := parseFormRequest(r); err != nil {
+		return "", err
+	}
 	return r.Form.Get("theme"), nil
 }
 
@@ -163,12 +170,14 @@ func parseAppUpdatePromptRequest(r *http.Request) (string, error) {
 		var appUpdatePromptSettings struct {
 			Version string `json:"version"`
 		}
-		if err := decodeJSONRequest(r, &appUpdatePromptSettings); err != nil {
+		if err := decodeSmallJSONRequest(r, &appUpdatePromptSettings); err != nil {
 			return "", err
 		}
 		dismissedVersion = appUpdatePromptSettings.Version
 	} else {
-		_ = r.ParseForm()
+		if err := parseFormRequest(r); err != nil {
+			return "", err
+		}
 		dismissedVersion = r.Form.Get("version")
 	}
 	return strings.TrimSpace(dismissedVersion), nil
@@ -177,17 +186,9 @@ func parseAppUpdatePromptRequest(r *http.Request) (string, error) {
 func parseApplicationPreferencesRequest(r *http.Request) (applicationPreferenceSettings, error) {
 	var preferences applicationPreferenceSettings
 	if requestIsJSON(r) {
-		decoder := json.NewDecoder(r.Body)
 		var rawPreferences map[string]json.RawMessage
-		if err := decoder.Decode(&rawPreferences); err != nil {
-			return preferences, fmt.Errorf("invalid JSON body: %w", err)
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); err != io.EOF {
-			if err == nil {
-				return preferences, fmt.Errorf("invalid JSON body: trailing data")
-			}
-			return preferences, fmt.Errorf("invalid JSON body: %w", err)
+		if err := decodeRawJSONMapRequestBounded(r, &rawPreferences, maxSmallJSONBodyBytes); err != nil {
+			return preferences, err
 		}
 		for fieldName, rawValue := range rawPreferences {
 			value, err := parseRawJSONBool(rawValue, fieldName)
@@ -206,7 +207,9 @@ func parseApplicationPreferencesRequest(r *http.Request) (applicationPreferenceS
 			}
 		}
 	} else {
-		_ = r.ParseForm()
+		if err := parseFormRequest(r); err != nil {
+			return preferences, err
+		}
 		if value, ok, err := optionalFormBool(r, "app_update_auto_install_enabled"); err != nil {
 			return preferences, err
 		} else if ok {

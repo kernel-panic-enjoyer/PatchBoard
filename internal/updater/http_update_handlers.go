@@ -10,12 +10,14 @@ type packageActionRequest struct {
 	PackageID string `json:"package_id"`
 }
 
-func packageActionRequestFromForm(r *http.Request) packageActionRequest {
-	_ = r.ParseForm()
+func packageActionRequestFromForm(r *http.Request) (packageActionRequest, error) {
+	if err := parseFormRequest(r); err != nil {
+		return packageActionRequest{}, err
+	}
 	return packageActionRequest{
 		Manager:   r.Form.Get("manager"),
 		PackageID: r.Form.Get("package_id"),
-	}
+	}, nil
 }
 
 func validatePackageActionRequest(commandName string, actionRequest packageActionRequest) (string, string, *CommandResult) {
@@ -29,12 +31,17 @@ func validatePackageActionRequest(commandName string, actionRequest packageActio
 func parsePackageAction(r *http.Request, commandName string) (string, string, *CommandResult) {
 	var actionRequest packageActionRequest
 	if requestIsJSON(r) {
-		if err := decodeJSONRequest(r, &actionRequest); err != nil {
+		if err := decodeActionJSONRequest(r, &actionRequest); err != nil {
 			result := validationCommandResult(commandName, err)
 			return "", "", &result
 		}
 	} else {
-		actionRequest = packageActionRequestFromForm(r)
+		var err error
+		actionRequest, err = packageActionRequestFromForm(r)
+		if err != nil {
+			result := validationCommandResult(commandName, err)
+			return "", "", &result
+		}
 	}
 	return validatePackageActionRequest(commandName, actionRequest)
 }
@@ -49,7 +56,7 @@ func parsePackageUpdateAction(r *http.Request) (string, string, UpdateOptions, *
 			AllowUnknownVersion bool   `json:"allow_unknown_version"`
 			AllowPinned         bool   `json:"allow_pinned"`
 		}
-		if err := decodeJSONRequest(r, &jsonPayload); err != nil {
+		if err := decodeActionJSONRequest(r, &jsonPayload); err != nil {
 			result := validationCommandResult("update", err)
 			return "", "", UpdateOptions{}, &result
 		}
@@ -62,7 +69,12 @@ func parsePackageUpdateAction(r *http.Request) (string, string, UpdateOptions, *
 			AllowPinned:         jsonPayload.AllowPinned,
 		}
 	} else {
-		actionRequest = packageActionRequestFromForm(r)
+		var err error
+		actionRequest, err = packageActionRequestFromForm(r)
+		if err != nil {
+			result := validationCommandResult("update", err)
+			return "", "", UpdateOptions{}, &result
+		}
 		options = updateOptionsFromForm(r)
 	}
 	manager, packageID, validationFailure := validatePackageActionRequest("update", actionRequest)
@@ -77,13 +89,16 @@ func parseManagerRequest(r *http.Request) (string, *CommandResult) {
 		var jsonPayload struct {
 			Manager string `json:"manager"`
 		}
-		if err := decodeJSONRequest(r, &jsonPayload); err != nil {
+		if err := decodeActionJSONRequest(r, &jsonPayload); err != nil {
 			result := validationCommandResult("manager install", err)
 			return "", &result
 		}
 		return jsonPayload.Manager, nil
 	}
-	_ = r.ParseForm()
+	if err := parseFormRequest(r); err != nil {
+		result := validationCommandResult("manager install", err)
+		return "", &result
+	}
 	return r.Form.Get("manager"), nil
 }
 
@@ -104,7 +119,7 @@ func parseUpdateAllRequest(r *http.Request) ([]string, UpdateOptions, *UpdateRes
 			AllowUnknownVersion bool             `json:"allow_unknown_version"`
 			AllowPinned         bool             `json:"allow_pinned"`
 		}
-		if err := decodeJSONRequest(r, &jsonPayload); err != nil {
+		if err := decodePackageListJSONRequest(r, &jsonPayload); err != nil {
 			result := UpdateResult{Result: validationCommandResult("update-all", err)}
 			return nil, UpdateOptions{}, &result
 		}
@@ -113,7 +128,10 @@ func parseUpdateAllRequest(r *http.Request) ([]string, UpdateOptions, *UpdateRes
 			AllowPinned:         jsonPayload.AllowPinned,
 		}, nil
 	}
-	_ = r.ParseForm()
+	if err := parseFormRequest(r); err != nil {
+		result := UpdateResult{Result: validationCommandResult("update-all", err)}
+		return nil, UpdateOptions{}, &result
+	}
 	return r.Form["package_key"], updateOptionsFromForm(r), nil
 }
 

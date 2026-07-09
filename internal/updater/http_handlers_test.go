@@ -630,6 +630,116 @@ func TestJSONRequestParsersRejectTrailingData(t *testing.T) {
 	}
 }
 
+func TestAPIRejectsUnknownJSONFields(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		body       string
+		wantResult bool
+		wantText   string
+	}{
+		{"update", "/api/update", `{"manager":"winget","package_id":"Git.Git","extra":true}`, true, `unknown field "extra"`},
+		{"update all", "/api/update-all", `{"package_keys":["winget:Git.Git"],"extra":true}`, false, `unknown field "extra"`},
+		{"theme", "/api/settings/theme", `{"theme":"dark","extra":true}`, false, `unknown field "extra"`},
+		{"startup", "/api/settings/startup", `{"enabled":true,"extra":true}`, true, `unknown field "extra"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := testSessionApp()
+			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			app.serveHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request, got %d: %s", response.Code, response.Body.String())
+			}
+			if tc.wantResult {
+				var decoded commandAPIResponse
+				if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if decoded.Result == nil || decoded.Result.Code != 2 || !strings.Contains(decoded.Result.Stderr, tc.wantText) {
+					t.Fatalf("unexpected validation result: %#v", decoded.Result)
+				}
+				return
+			}
+			var updateAllResponse UpdateJobStatus
+			if err := json.Unmarshal(response.Body.Bytes(), &updateAllResponse); err == nil && len(updateAllResponse.Results) > 0 {
+				if !strings.Contains(updateAllResponse.Results[0].Result.Stderr, tc.wantText) {
+					t.Fatalf("unexpected update-all validation result: %#v", updateAllResponse.Results[0].Result)
+				}
+				return
+			}
+			var decoded apiErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(decoded.Error, tc.wantText) {
+				t.Fatalf("unexpected api error: %#v", decoded)
+			}
+		})
+	}
+}
+
+func TestAPIRejectsOversizedRequestBodies(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		body    string
+		content string
+	}{
+		{
+			name:    "small json endpoint",
+			path:    "/api/settings/theme",
+			body:    `{"theme":"` + strings.Repeat("x", int(maxSmallJSONBodyBytes)) + `"}`,
+			content: "application/json",
+		},
+		{
+			name:    "package list json endpoint",
+			path:    "/api/update-all",
+			body:    `{"package_keys":["` + strings.Repeat("winget:Git.Git,", int(maxPackageListBodyBytes)/len("winget:Git.Git,")+1) + `"]}`,
+			content: "application/json",
+		},
+		{
+			name:    "form endpoint",
+			path:    "/api/settings/startup",
+			body:    "enabled=true&padding=" + strings.Repeat("x", int(maxSmallJSONBodyBytes)),
+			content: "application/x-www-form-urlencoded",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := testSessionApp()
+			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", tc.content)
+			response := httptest.NewRecorder()
+
+			app.serveHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected bad request for oversized body, got %d: %s", response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), "request body too large") {
+				t.Fatalf("expected body limit error, got %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPIRejectsGETRequestBodies(t *testing.T) {
+	app := testSessionApp()
+	request := authenticatedRequest(app, http.MethodGet, "/api/status", strings.NewReader("unexpected"))
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected GET body rejection, got %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "request body is not allowed") {
+		t.Fatalf("unexpected response: %s", response.Body.String())
+	}
+}
+
 func TestStartupSettingsRequireExplicitStrictBoolean(t *testing.T) {
 	cases := []struct {
 		name string

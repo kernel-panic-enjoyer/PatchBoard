@@ -9,32 +9,39 @@ import (
 )
 
 type jobsAPIResponse struct {
-	Jobs     []OperationJobStatus `json:"jobs"`
-	Revision int64                `json:"revision,omitempty"`
+	Jobs       []OperationJobStatus `json:"jobs"`
+	Revision   int64                `json:"revision,omitempty"`
+	QueueDepth int                  `json:"queue_depth,omitempty"`
 }
 
-func jobIDFromRequest(r *http.Request) string {
+func jobIDFromRequest(r *http.Request) (string, error) {
 	if jobID := r.URL.Query().Get("job_id"); jobID != "" {
-		return jobID
+		return jobID, nil
 	}
 	if requestIsJSON(r) {
 		var requestPayload struct {
 			JobID string `json:"job_id"`
 		}
-		if err := decodeJSONRequest(r, &requestPayload); err == nil {
-			return requestPayload.JobID
+		if err := decodeSmallJSONRequest(r, &requestPayload); err != nil {
+			return "", err
 		}
-		return ""
+		return requestPayload.JobID, nil
 	}
-	_ = r.ParseForm()
-	return r.Form.Get("job_id")
+	if err := parseFormRequest(r); err != nil {
+		return "", err
+	}
+	return r.Form.Get("job_id"), nil
 }
 
 func (app *App) handleJobStatusAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	jobID := jobIDFromRequest(r)
+	jobID, err := jobIDFromRequest(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	status, ok := app.operationJobStatus(jobID)
 	if !ok {
 		writeAPIError(w, http.StatusNotFound, jobNotFoundError(jobID))
@@ -47,15 +54,19 @@ func (app *App) handleJobsAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	jobStatuses, revision := app.operationJobsSnapshotWithRevision()
-	writeJSON(w, http.StatusOK, jobsAPIResponse{Jobs: jobStatuses, Revision: revision})
+	jobStatuses, revision, queueDepth := app.operationJobsSnapshotWithRevision()
+	writeJSON(w, http.StatusOK, jobsAPIResponse{Jobs: jobStatuses, Revision: revision, QueueDepth: queueDepth})
 }
 
 func (app *App) handleJobLogAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	jobID := jobIDFromRequest(r)
+	jobID, err := jobIDFromRequest(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if _, ok := app.operationJobStatus(jobID); !ok {
 		writeAPIError(w, http.StatusNotFound, jobNotFoundError(jobID))
 		return
@@ -71,7 +82,11 @@ func (app *App) handleJobCancelAPI(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	jobID := jobIDFromRequest(r)
+	jobID, err := jobIDFromRequest(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	status, ok := app.cancelOperationJob(jobID)
 	if !ok {
 		writeAPIError(w, http.StatusNotFound, jobNotFoundError(jobID))
@@ -129,8 +144,8 @@ func (app *App) handleEventsAPI(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	initialJobStatuses, lastJobRevision := app.operationJobsSnapshotWithRevision()
-	sendEvent("jobs", jobsAPIResponse{Jobs: initialJobStatuses, Revision: lastJobRevision})
+	initialJobStatuses, lastJobRevision, initialQueueDepth := app.operationJobsSnapshotWithRevision()
+	sendEvent("jobs", jobsAPIResponse{Jobs: initialJobStatuses, Revision: lastJobRevision, QueueDepth: initialQueueDepth})
 	initialLogQuery := sessionLogs.Query(lastSentLogID)
 	initialLogEntries := initialLogQuery.Entries
 	if !sendEvent("logs", logsAPIResponseFromQuery(initialLogQuery)) {
@@ -145,7 +160,7 @@ func (app *App) handleEventsAPI(w http.ResponseWriter, r *http.Request) {
 	heartbeatInterval := 10 * time.Second
 	nextHeartbeatAt := time.Now().Add(heartbeatInterval)
 	for {
-		jobStatuses, _ := app.operationJobsSnapshotWithRevision()
+		jobStatuses, _, _ := app.operationJobsSnapshotWithRevision()
 		hasActiveJobs := false
 		for _, job := range jobStatuses {
 			if !operationJobComplete(job) {
@@ -164,12 +179,13 @@ func (app *App) handleEventsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-timer.C:
 			var jobRevision int64
-			jobStatuses, jobRevision = app.operationJobsSnapshotWithRevision()
+			var queueDepth int
+			jobStatuses, jobRevision, queueDepth = app.operationJobsSnapshotWithRevision()
 			logQuery := sessionLogs.Query(lastSentLogID)
 			logEntries := logQuery.Entries
 			latestLogID := logQuery.LatestID
 			if jobRevision != lastJobRevision {
-				if !sendEvent("jobs", jobsAPIResponse{Jobs: jobStatuses, Revision: jobRevision}) {
+				if !sendEvent("jobs", jobsAPIResponse{Jobs: jobStatuses, Revision: jobRevision, QueueDepth: queueDepth}) {
 					return
 				}
 				lastJobRevision = jobRevision

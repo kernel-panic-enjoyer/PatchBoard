@@ -455,6 +455,7 @@ func Main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	configureProcessExecutionMode(options.Mode)
 	switch options.Mode {
 	case cliModeHelp:
 		fmt.Print(helpText())

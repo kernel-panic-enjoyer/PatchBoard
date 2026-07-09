@@ -28,14 +28,17 @@ const (
 )
 
 const operationJobRecentHistoryLimit = 25
+const maxPendingOperationJobs = 25
 
 type OperationJobStatus struct {
 	JobID               string         `json:"job_id,omitempty"`
+	ExistingJobID       string         `json:"existing_job_id,omitempty"`
 	Revision            int64          `json:"revision,omitempty"`
 	Type                string         `json:"type,omitempty"`
 	Mode                string         `json:"mode,omitempty"`
 	State               string         `json:"state"`
 	Running             bool           `json:"running"`
+	QueueDepth          int            `json:"queue_depth,omitempty"`
 	CancelRequested     bool           `json:"cancel_requested"`
 	CurrentPackage      string         `json:"current_package,omitempty"`
 	CurrentKey          string         `json:"current_key,omitempty"`
@@ -83,6 +86,14 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 	if app.jobs == nil {
 		app.jobs = map[string]*OperationJob{}
 	}
+	if duplicateStatus, duplicate := app.duplicateOperationJobStatusLocked(jobType, mode, total, packageKeys); duplicate {
+		app.jobsMu.Unlock()
+		return duplicateStatus
+	}
+	if pendingJobs := app.pendingOperationJobCountLocked(); pendingJobs >= maxPendingOperationJobs {
+		app.jobsMu.Unlock()
+		return rejectedOperationJobStatus(jobType, mode, total, packageKeys, "", "operation job queue is full")
+	}
 	allowsUnknownVersion, allowsPinnedVersion := packageSnapshotUpdateAllowances(packages)
 	app.jobSeq++
 	operationJob := &OperationJob{
@@ -93,6 +104,7 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 			Type:                jobType,
 			Mode:                mode,
 			State:               jobStateQueued,
+			QueueDepth:          len(app.jobQueue) + 1,
 			Total:               total,
 			PackageKeys:         append([]string(nil), packageKeys...),
 			Packages:            append([]Package(nil), packages...),
@@ -121,6 +133,89 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 		}
 	}
 	return queuedStatus
+}
+
+func rejectedOperationJobStatus(jobType, mode string, total int, packageKeys []string, existingJobID, message string) OperationJobStatus {
+	return OperationJobStatus{
+		ExistingJobID: existingJobID,
+		Type:          jobType,
+		Mode:          mode,
+		State:         jobStateFailed,
+		Running:       false,
+		Total:         total,
+		PackageKeys:   append([]string(nil), packageKeys...),
+		Notice:        message,
+		Error:         message,
+		FinishedAt:    utcNow(),
+	}
+}
+
+func (app *App) duplicateOperationJobStatusLocked(jobType, mode string, total int, packageKeys []string) (OperationJobStatus, bool) {
+	for i := app.jobSeq; i >= 1; i-- {
+		jobID := fmt.Sprintf("job-%d", i)
+		job := app.jobs[jobID]
+		if job == nil || operationJobComplete(job.status) {
+			continue
+		}
+		if operationJobTypeDedupesByType(jobType) && job.status.Type == jobType {
+			message := fmt.Sprintf("%s job is already queued or running as %s", jobType, job.status.JobID)
+			return rejectedOperationJobStatus(jobType, mode, total, packageKeys, job.status.JobID, message), true
+		}
+		if operationJobTypeDedupesByPackage(jobType) && operationJobTypeDedupesByPackage(job.status.Type) && packageKeysOverlap(packageKeys, job.status.PackageKeys) {
+			message := fmt.Sprintf("package operation is already queued or running as %s", job.status.JobID)
+			return rejectedOperationJobStatus(jobType, mode, total, packageKeys, job.status.JobID, message), true
+		}
+	}
+	return OperationJobStatus{}, false
+}
+
+func operationJobTypeDedupesByType(jobType string) bool {
+	switch jobType {
+	case jobTypeScan, jobTypeInventoryRefresh, jobTypeSelfUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
+func operationJobTypeDedupesByPackage(jobType string) bool {
+	switch jobType {
+	case jobTypeInstall, jobTypeUpdate, jobTypeUpdateAll:
+		return true
+	default:
+		return false
+	}
+}
+
+func packageKeysOverlap(left, right []string) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, key := range left {
+		normalized := strings.TrimSpace(key)
+		if normalized != "" {
+			seen[normalized] = true
+		}
+	}
+	for _, key := range right {
+		if seen[strings.TrimSpace(key)] {
+			return true
+		}
+	}
+	return false
+}
+
+func (app *App) pendingOperationJobCountLocked() int {
+	pendingJobs := 0
+	for _, jobID := range app.jobQueue {
+		job := app.jobs[jobID]
+		if job == nil || operationJobComplete(job.status) {
+			continue
+		}
+		pendingJobs++
+	}
+	return pendingJobs
 }
 
 func (app *App) bumpJobsRevisionLocked() {
@@ -340,11 +435,11 @@ func (app *App) latestOperationJobStatus(jobTypes ...string) OperationJobStatus 
 }
 
 func (app *App) operationJobsSnapshot() []OperationJobStatus {
-	statuses, _ := app.operationJobsSnapshotWithRevision()
+	statuses, _, _ := app.operationJobsSnapshotWithRevision()
 	return statuses
 }
 
-func (app *App) operationJobsSnapshotWithRevision() ([]OperationJobStatus, int64) {
+func (app *App) operationJobsSnapshotWithRevision() ([]OperationJobStatus, int64, int) {
 	app.jobsMu.Lock()
 	defer app.jobsMu.Unlock()
 	app.pruneOperationJobsLocked()
@@ -357,7 +452,7 @@ func (app *App) operationJobsSnapshotWithRevision() ([]OperationJobStatus, int64
 		}
 		statuses = append(statuses, cloneOperationJobStatus(job.status))
 	}
-	return statuses, app.jobsRevision
+	return statuses, app.jobsRevision, app.pendingOperationJobCountLocked()
 }
 
 func (app *App) activeOperationJobsSnapshot() []OperationJobStatus {

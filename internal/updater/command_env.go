@@ -48,8 +48,10 @@ func launchPathAdditions() []string {
 			filepath.Join(localAppData, "Microsoft", "WinGet", "Links"),
 		)
 	}
-	if chocolateyInstall := os.Getenv("ChocolateyInstall"); chocolateyInstall != "" {
-		pathAdditions = append(pathAdditions, filepath.Join(chocolateyInstall, "bin"))
+	if userEnvironmentOverridesAllowed() {
+		if chocolateyInstall := os.Getenv("ChocolateyInstall"); chocolateyInstall != "" {
+			pathAdditions = append(pathAdditions, filepath.Join(chocolateyInstall, "bin"))
+		}
 	}
 	if programData := os.Getenv("ProgramData"); programData != "" {
 		pathAdditions = append(pathAdditions, filepath.Join(programData, "chocolatey", "bin"))
@@ -92,23 +94,41 @@ func setCommandEnvValue(commandEnv []string, key, value string) []string {
 }
 
 func resolveExecutable(executableName string) string {
-	if overridePath := os.Getenv("UPDATER_" + strings.ToUpper(executableName) + "_PATH"); overridePath != "" {
-		return overridePath
+	executablePath, resolved := resolveExecutablePath(executableName)
+	if resolved {
+		return executablePath
 	}
-	if resolvedPath, err := exec.LookPath(executableName); err == nil {
-		return resolvedPath
+	return executableName
+}
+
+func resolveExecutablePath(executableName string) (string, bool) {
+	if userEnvironmentOverridesAllowed() {
+		if overridePath := os.Getenv("UPDATER_" + strings.ToUpper(executableName) + "_PATH"); overridePath != "" {
+			return overridePath, true
+		}
+		if resolvedPath, err := exec.LookPath(executableName); err == nil {
+			return resolvedPath, true
+		}
 	}
+	if existingPath := knownManagerExecutablePath(executableName); existingPath != "" {
+		return existingPath, true
+	}
+	return "", false
+}
+
+func knownManagerExecutablePath(executableName string) string {
 	if strings.EqualFold(executableName, "choco") {
 		var candidatePaths []string
-		if chocolateyInstall := os.Getenv("ChocolateyInstall"); chocolateyInstall != "" {
-			candidatePaths = append(candidatePaths, filepath.Join(chocolateyInstall, "bin", "choco.exe"))
+		if userEnvironmentOverridesAllowed() {
+			if chocolateyInstall := os.Getenv("ChocolateyInstall"); chocolateyInstall != "" {
+				candidatePaths = append(candidatePaths, filepath.Join(chocolateyInstall, "bin", "choco.exe"))
+			}
 		}
 		if programData := os.Getenv("ProgramData"); programData != "" {
 			candidatePaths = append(candidatePaths, filepath.Join(programData, "chocolatey", "bin", "choco.exe"))
 		}
-		if existingPath := firstExistingPath(candidatePaths); existingPath != "" {
-			return existingPath
-		}
+		candidatePaths = append(candidatePaths, filepath.Join(`C:\ProgramData`, "chocolatey", "bin", "choco.exe"))
+		return firstExistingPath(candidatePaths)
 	}
 	if strings.EqualFold(executableName, "winget") || strings.EqualFold(executableName, "store") {
 		executableFileName := executableName
@@ -116,10 +136,10 @@ func resolveExecutable(executableName string) string {
 			executableFileName += ".exe"
 		}
 		var candidatePaths []string
-		if systemRoot := os.Getenv("SystemRoot"); systemRoot != "" {
+		for _, windowsDirectory := range windowsDirectories() {
 			candidatePaths = append(candidatePaths,
-				filepath.Join(systemRoot, "System32", executableFileName),
-				filepath.Join(systemRoot, "Sysnative", executableFileName),
+				filepath.Join(windowsDirectory, "System32", executableFileName),
+				filepath.Join(windowsDirectory, "Sysnative", executableFileName),
 			)
 		}
 		for _, envVarName := range []string{"LOCALAPPDATA", "USERPROFILE"} {
@@ -136,11 +156,52 @@ func resolveExecutable(executableName string) string {
 				filepath.Join(localAppData, "Microsoft", "WinGet", "Links", executableFileName),
 			)
 		}
-		if existingPath := firstExistingPath(candidatePaths); existingPath != "" {
+		return firstExistingPath(candidatePaths)
+	}
+	return ""
+}
+
+func windowsDirectories() []string {
+	var directories []string
+	for _, envVarName := range []string{"SystemRoot", "windir"} {
+		if directory := strings.TrimSpace(os.Getenv(envVarName)); directory != "" {
+			directories = append(directories, directory)
+		}
+	}
+	directories = append(directories, `C:\Windows`)
+	return uniqueCleanPaths(directories)
+}
+
+func uniqueCleanPaths(paths []string) []string {
+	var unique []string
+	seen := map[string]bool{}
+	for _, path := range paths {
+		cleaned := filepath.Clean(strings.TrimSpace(path))
+		if cleaned == "." {
+			continue
+		}
+		normalized := strings.ToLower(cleaned)
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		unique = append(unique, cleaned)
+	}
+	return unique
+}
+
+func commandProcessorPath() string {
+	executableName := commandProcessorExecutable
+	for _, windowsDirectory := range windowsDirectories() {
+		if existingPath := firstExistingPath([]string{filepath.Join(windowsDirectory, "System32", executableName)}); existingPath != "" {
 			return existingPath
 		}
 	}
 	return executableName
+}
+
+func unresolvedHardenedManagerPath(managerName string) string {
+	return filepath.Join(`C:\Windows`, "System32", "PatchBoard-"+managerName+"-not-resolved.exe")
 }
 
 func firstExistingPath(candidatePaths []string) string {
@@ -243,12 +304,15 @@ func mergePathLists(pathLists ...string) string {
 }
 
 func managerCommand(managerName string, args ...string) []string {
-	executablePath := resolveExecutable(managerName)
-	if executablePath != managerName {
+	executablePath, resolved := resolveExecutablePath(managerName)
+	if resolved {
 		return append([]string{executablePath}, args...)
 	}
+	if hardenedProcessExecutionMode() {
+		return append([]string{unresolvedHardenedManagerPath(managerName)}, args...)
+	}
 	if managerName == "winget" || managerName == "store" {
-		return append([]string{"cmd.exe", "/d", "/c", managerName}, args...)
+		return append([]string{commandProcessorPath(), "/d", "/c", managerName}, args...)
 	}
 	return append([]string{managerName}, args...)
 }

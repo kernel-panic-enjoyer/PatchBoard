@@ -21,6 +21,26 @@ func TestStateDirOverride(t *testing.T) {
 	}
 }
 
+func TestStateDirOverrideIgnoredInHardenedMode(t *testing.T) {
+	overrideDirectory := t.TempDir()
+	localAppData := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", overrideDirectory)
+	t.Setenv("LOCALAPPDATA", localAppData)
+	setProcessExecutionModeForTest(t, processModeScheduledAutoUpdate)
+
+	got, err := stateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(localAppData, appDirName)
+	if got != want {
+		t.Fatalf("expected hardened state dir %s, got %s", want, got)
+	}
+	if got == overrideDirectory {
+		t.Fatalf("hardened state dir used override %s", overrideDirectory)
+	}
+}
+
 func TestStateDirMigratesLegacyApplicationDirectory(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", "")
@@ -63,6 +83,27 @@ func TestAppTempDirOverride(t *testing.T) {
 	}
 	if got != dir {
 		t.Fatalf("expected temp override %s, got %s", dir, got)
+	}
+}
+
+func TestAppTempDirOverrideIgnoredInHardenedMode(t *testing.T) {
+	overrideDirectory := t.TempDir()
+	tempRoot := t.TempDir()
+	t.Setenv("UPDATER_TEMP_DIR", overrideDirectory)
+	t.Setenv("TMP", tempRoot)
+	t.Setenv("TEMP", tempRoot)
+	setProcessExecutionModeForTest(t, processModeElevatedWorker)
+
+	got, err := appTempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(tempRoot, appDirName)
+	if got != want {
+		t.Fatalf("expected hardened temp dir %s, got %s", want, got)
+	}
+	if got == overrideDirectory {
+		t.Fatalf("hardened temp dir used override %s", overrideDirectory)
 	}
 }
 

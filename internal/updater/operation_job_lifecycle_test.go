@@ -83,16 +83,127 @@ func TestOperationJobListRevisionIncreasesForNewJobsAfterOlderJobMutations(t *te
 	if _, ok := waitForOperationJobState(app, first.JobID, 2*time.Second); !ok {
 		t.Fatal("first job did not finish")
 	}
-	_, beforeRevision := app.operationJobsSnapshotWithRevision()
+	_, beforeRevision, _ := app.operationJobsSnapshotWithRevision()
 
 	second := app.startOperationJob(jobTypeInventoryRefresh, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			status.State = jobStateSucceeded
 		})
 	})
-	_, afterRevision := app.operationJobsSnapshotWithRevision()
+	_, afterRevision, _ := app.operationJobsSnapshotWithRevision()
 	if afterRevision <= beforeRevision {
 		t.Fatalf("new job did not advance list revision: before=%d after=%d second=%s", beforeRevision, afterRevision, second.JobID)
+	}
+}
+
+func TestOperationJobRejectsDuplicateSingletonJob(t *testing.T) {
+	app := testSessionApp()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
+		close(started)
+		select {
+		case <-release:
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateSucceeded
+			})
+		case <-ctx.Done():
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first scan job did not start")
+	}
+
+	duplicate := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
+		t.Fatal("duplicate scan job should not be enqueued")
+	})
+	if duplicate.State != jobStateFailed || duplicate.ExistingJobID != first.JobID || !strings.Contains(duplicate.Error, "already queued or running") {
+		t.Fatalf("expected duplicate scan rejection, got %#v", duplicate)
+	}
+	close(release)
+	if _, ok := waitForOperationJobState(app, first.JobID, 2*time.Second); !ok {
+		t.Fatal("first scan job did not finish")
+	}
+}
+
+func TestOperationJobRejectsDuplicatePackageMutation(t *testing.T) {
+	app := testSessionApp()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	first := app.startOperationJob(jobTypeUpdate, updateJobModeSelected, 1, []string{"winget:Git.Git"}, func(ctx context.Context, job *OperationJob) {
+		close(started)
+		select {
+		case <-release:
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateSucceeded
+			})
+		case <-ctx.Done():
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first package job did not start")
+	}
+
+	duplicate := app.startOperationJob(jobTypeUpdateAll, updateJobModeSelected, 2, []string{"winget:Git.Git", "choco:gh"}, func(ctx context.Context, job *OperationJob) {
+		t.Fatal("duplicate package mutation should not be enqueued")
+	})
+	if duplicate.State != jobStateFailed || duplicate.ExistingJobID != first.JobID || !strings.Contains(duplicate.Error, "package operation is already queued or running") {
+		t.Fatalf("expected duplicate package rejection, got %#v", duplicate)
+	}
+	close(release)
+	if _, ok := waitForOperationJobState(app, first.JobID, 2*time.Second); !ok {
+		t.Fatal("first package job did not finish")
+	}
+}
+
+func TestOperationJobRejectsWhenPendingQueueIsFull(t *testing.T) {
+	app := testSessionApp()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	running := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
+		close(started)
+		select {
+		case <-release:
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateSucceeded
+			})
+		case <-ctx.Done():
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("running job did not start")
+	}
+
+	for i := 0; i < maxPendingOperationJobs; i++ {
+		status := app.startOperationJob(jobTypeManagerInstall, "", 1, []string{fmt.Sprintf("manager-%d", i)}, func(ctx context.Context, job *OperationJob) {
+			app.mutateOperationJob(job, func(status *OperationJobStatus) {
+				status.State = jobStateSucceeded
+			})
+		})
+		if status.State != jobStateQueued {
+			t.Fatalf("pending job %d was not queued: %#v", i, status)
+		}
+	}
+	_, _, queueDepth := app.operationJobsSnapshotWithRevision()
+	if queueDepth != maxPendingOperationJobs {
+		t.Fatalf("expected queue depth %d, got %d", maxPendingOperationJobs, queueDepth)
+	}
+
+	overflow := app.startOperationJob(jobTypeManagerInstall, "", 1, []string{"manager-overflow"}, func(ctx context.Context, job *OperationJob) {
+		t.Fatal("overflow job should not be enqueued")
+	})
+	if overflow.State != jobStateFailed || !strings.Contains(overflow.Error, "operation job queue is full") {
+		t.Fatalf("expected queue-full rejection, got %#v", overflow)
+	}
+	close(release)
+	if _, ok := waitForOperationJobState(app, running.JobID, 2*time.Second); !ok {
+		t.Fatal("running job did not finish")
 	}
 }
 

@@ -214,6 +214,9 @@ func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
+		if !limitAPIRequestBody(w, r) {
+			return
+		}
 		app.serveAPI(w, r)
 		return
 	}
@@ -223,6 +226,48 @@ func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, PageData{})
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func limitAPIRequestBody(w http.ResponseWriter, r *http.Request) bool {
+	if r.Body == nil || r.Body == http.NoBody {
+		return true
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if r.ContentLength != 0 {
+			writeAPIError(w, http.StatusBadRequest, "request body is not allowed")
+			return false
+		}
+		return true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, apiRequestBodyLimit(r.URL.Path))
+	return true
+}
+
+func apiRequestBodyLimit(path string) int64 {
+	switch path {
+	case "/api/update-all":
+		return maxPackageListBodyBytes
+	case "/api/install",
+		"/api/managers/install",
+		"/api/update",
+		"/api/jobs/cancel",
+		"/api/status/refresh",
+		"/api/app-update/check",
+		"/api/app-update/apply",
+		"/api/application/install",
+		"/api/application/restart-installed",
+		"/api/inventory/refresh",
+		"/api/scan",
+		"/api/update-all/cancel",
+		"/api/settings/startup",
+		"/api/settings/auto-update",
+		"/api/settings/theme",
+		"/api/settings/app-update-prompt",
+		"/api/settings/preferences":
+		return maxSmallJSONBodyBytes
+	default:
+		return maxJSONBodyBytes
 	}
 }
 

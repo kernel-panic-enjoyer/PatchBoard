@@ -30,6 +30,78 @@ func TestManagerCommandOverride(t *testing.T) {
 	}
 }
 
+func TestManagerCommandIgnoresEnvironmentOverridesInHardenedModes(t *testing.T) {
+	fakeDirectory := t.TempDir()
+	for _, executableName := range []string{"winget.exe", "store.exe", "choco.exe"} {
+		if err := os.WriteFile(filepath.Join(fakeDirectory, executableName), []byte("fake"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("UPDATER_WINGET_PATH", filepath.Join(fakeDirectory, "winget.exe"))
+	t.Setenv("UPDATER_STORE_PATH", filepath.Join(fakeDirectory, "store.exe"))
+	t.Setenv("UPDATER_CHOCO_PATH", filepath.Join(fakeDirectory, "choco.exe"))
+	t.Setenv("PATH", fakeDirectory)
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	t.Setenv("USERPROFILE", filepath.Join(t.TempDir(), "Profile"))
+	t.Setenv("ProgramData", filepath.Join(t.TempDir(), "ProgramData"))
+	t.Setenv("ChocolateyInstall", filepath.Join(fakeDirectory, "Chocolatey"))
+	t.Setenv("SystemRoot", filepath.Join(t.TempDir(), "Windows"))
+	t.Setenv("windir", "")
+
+	for _, tc := range []struct {
+		name string
+		mode processExecutionMode
+	}{
+		{"scheduled auto update", processModeScheduledAutoUpdate},
+		{"elevated worker", processModeElevatedWorker},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setProcessExecutionModeForTest(t, tc.mode)
+			for _, managerName := range []string{managerWinget, managerStore, managerChoco} {
+				got := managerCommand(managerName, "--version")
+				if len(got) == 0 {
+					t.Fatalf("%s returned empty command", managerName)
+				}
+				if strings.HasPrefix(strings.ToLower(got[0]), strings.ToLower(fakeDirectory)) {
+					t.Fatalf("%s resolved to fake environment path in hardened mode: %#v", managerName, got)
+				}
+				if packageManagerNameFromArg(got[0]) == commandProcessorExecutable {
+					t.Fatalf("%s used shell fallback in hardened mode: %#v", managerName, got)
+				}
+			}
+		})
+	}
+}
+
+func TestAutoUpdateTaskCLIIgnoresManagerPathOverride(t *testing.T) {
+	setProcessExecutionModeForTest(t, processModeInteractive)
+	fakeDirectory := t.TempDir()
+	fakeWinget := filepath.Join(fakeDirectory, "winget.exe")
+	if err := os.WriteFile(fakeWinget, []byte("fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDATER_WINGET_PATH", fakeWinget)
+	t.Setenv("PATH", fakeDirectory)
+	t.Setenv("LOCALAPPDATA", filepath.Join(t.TempDir(), "LocalAppData"))
+	t.Setenv("USERPROFILE", filepath.Join(t.TempDir(), "Profile"))
+	t.Setenv("SystemRoot", filepath.Join(t.TempDir(), "Windows"))
+	t.Setenv("windir", "")
+
+	options, err := parseCLI([]string{"--task", "auto-update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configureProcessExecutionMode(options.Mode)
+
+	got := managerCommand(managerWinget, "--version")
+	if len(got) == 0 {
+		t.Fatal("managerCommand returned an empty command")
+	}
+	if got[0] == fakeWinget || strings.HasPrefix(strings.ToLower(got[0]), strings.ToLower(fakeDirectory)) {
+		t.Fatalf("auto-update task mode used fake winget override: %#v", got)
+	}
+}
+
 func readZipTextFiles(t *testing.T, data []byte) map[string]string {
 	t.Helper()
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))

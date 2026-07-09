@@ -528,7 +528,15 @@ func (app *App) finishSelfUpdateJob(job *OperationJob, result CommandResult, job
 }
 
 func jobAcceptedResponse(w http.ResponseWriter, status OperationJobStatus) {
+	if operationJobStartRejected(status) {
+		writeJSON(w, http.StatusConflict, status)
+		return
+	}
 	writeJSON(w, http.StatusAccepted, status)
+}
+
+func operationJobStartRejected(status OperationJobStatus) bool {
+	return status.State == jobStateFailed && status.Error != "" && status.StartedAt == ""
 }
 
 func jobNotFoundError(jobID string) string {
