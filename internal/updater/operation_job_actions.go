@@ -447,7 +447,7 @@ func (app *App) startSelfUpdateJob() OperationJobStatus {
 	return app.startOperationJob(jobTypeSelfUpdate, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			status.CurrentIndex = 1
-			status.CurrentPackage = "WindowsUpdaterWebUI"
+			status.CurrentPackage = "PatchBoard"
 			status.Notice = "Checking for application update..."
 		})
 		if app.appUpdateChecker == nil {

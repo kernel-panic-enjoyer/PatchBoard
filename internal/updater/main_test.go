@@ -37,7 +37,7 @@ func TestParseCLIRejectsNoElevateContract(t *testing.T) {
 func TestParseCLIElevatedWorkerAllowsInternalProtocolFlags(t *testing.T) {
 	options, err := parseCLI([]string{
 		"--elevated-worker",
-		"--worker-pipe=\\\\.\\pipe\\WindowsUpdaterWebUI-test",
+		"--worker-pipe=\\\\.\\pipe\\PatchBoard-test",
 		"--worker-capability=test-capability",
 		"--worker-user-sid=S-1-5-21-test-1001",
 		"--worker-session-id=7",
@@ -52,7 +52,7 @@ func TestParseCLIElevatedWorkerAllowsInternalProtocolFlags(t *testing.T) {
 
 func TestParseCLIRejectsWorkerProtocolFlagsOutsideElevatedWorker(t *testing.T) {
 	for _, args := range [][]string{
-		{"--worker-pipe=\\\\.\\pipe\\WindowsUpdaterWebUI-test"},
+		{"--worker-pipe=\\\\.\\pipe\\PatchBoard-test"},
 		{"--store-inventory-worker", "--worker-capability=test-capability"},
 		{"--store-update-discovery-worker", "--worker-user-sid=S-1-5-21-test-1001"},
 	} {

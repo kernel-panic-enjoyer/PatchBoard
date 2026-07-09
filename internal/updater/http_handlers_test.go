@@ -176,7 +176,7 @@ func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	if got := response.Header().Get("Content-Type"); got != "application/zip" {
 		t.Fatalf("expected zip content type, got %q", got)
 	}
-	if !strings.Contains(response.Header().Get("Content-Disposition"), "_windows-updater-webui-logs.zip") {
+	if !strings.Contains(response.Header().Get("Content-Disposition"), "_patchboard-logs.zip") {
 		t.Fatalf("missing zip attachment header: %q", response.Header().Get("Content-Disposition"))
 	}
 
@@ -199,7 +199,7 @@ func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 
 func TestLogExportFilenameUsesTimestampPrefix(t *testing.T) {
 	got := logExportFilename(time.Date(2026, 6, 21, 17, 42, 9, 0, time.Local))
-	want := "2026-06-21_17-42-09_windows-updater-webui-logs.zip"
+	want := "2026-06-21_17-42-09_patchboard-logs.zip"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}

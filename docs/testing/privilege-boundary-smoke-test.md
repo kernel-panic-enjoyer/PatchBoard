@@ -13,7 +13,7 @@ powershell -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1
 ## 1. Administrator Account
 
 1. Sign in as an administrator.
-2. Start `dist\WindowsUpdaterWebUI.exe` normally from Explorer or PowerShell without "Run as administrator".
+2. Start `dist\PatchBoard.exe` normally from Explorer or PowerShell without "Run as administrator".
 3. Confirm Task Manager does not show the WebUI process as elevated.
 4. Confirm Store inventory and Store actions run without a startup UAC prompt.
 5. Start a Chocolatey or WinGet install/update.

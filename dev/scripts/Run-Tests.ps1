@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Runs the Windows Updater Web UI test suites independently.
+    Runs the PatchBoard test suites independently.
 
 .DESCRIPTION
     Runs each suite as its own step and reports each result separately:

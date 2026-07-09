@@ -135,7 +135,7 @@ func startTray(app *App, url string) (*trayIcon, error) {
 	tray := &trayIcon{
 		app:        app,
 		url:        url,
-		className:  syscall.StringToUTF16(fmt.Sprintf("WindowsUpdaterWebUITray-%d", os.Getpid())),
+		className:  syscall.StringToUTF16(fmt.Sprintf("PatchBoardTray-%d", os.Getpid())),
 		windowName: syscall.StringToUTF16(appName),
 		ready:      make(chan error, 1),
 		done:       make(chan struct{}),

@@ -1,4 +1,4 @@
-module windows-updater-webui
+module patchboard
 
 go 1.26
 

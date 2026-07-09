@@ -8,6 +8,6 @@ func acquireStateStoreProcessLock(ctx context.Context, dir string) (func(), erro
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	name := `Local\WindowsUpdaterWebUIState-` + shortHash(dir)
+	name := `Local\PatchBoardState-` + shortHash(dir)
 	return acquireCancellableWindowsNamedMutex(ctx, name, nil, nil)
 }

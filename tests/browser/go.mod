@@ -1,11 +1,11 @@
-module windows-updater-webui/tests/browser
+module patchboard/tests/browser
 
 go 1.26
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b
 	github.com/chromedp/chromedp v0.15.1
-	windows-updater-webui v0.0.0
+	patchboard v0.0.0
 )
 
 require (
@@ -19,4 +19,4 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 )
 
-replace windows-updater-webui => ../../
+replace patchboard => ../../

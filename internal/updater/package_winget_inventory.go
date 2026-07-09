@@ -19,7 +19,7 @@ func wingetInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 	var exportedPackages []Package
 	var exportFilePath string
 	if tempDir, err := appTempDir(); err == nil {
-		if exportFile, err := os.CreateTemp(tempDir, "windows-updater-winget-*.json"); err == nil {
+		if exportFile, err := os.CreateTemp(tempDir, "patchboard-winget-*.json"); err == nil {
 			exportFilePath = exportFile.Name()
 			_ = exportFile.Close()
 			_ = os.Remove(exportFilePath)

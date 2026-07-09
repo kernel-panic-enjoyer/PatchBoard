@@ -11,13 +11,13 @@ import (
 
 func TestAutoUpdateTaskExecutableRequiresTrustedRoot(t *testing.T) {
 	roots := []string{`C:\Program Files`, `C:\Program Files (x86)`, `C:\Windows`}
-	if !pathWithinAnyRoot(`C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`, roots) {
+	if !pathWithinAnyRoot(`C:\Program Files\PatchBoard\PatchBoard.exe`, roots) {
 		t.Fatal("expected Program Files executable to be trusted")
 	}
 	for _, exe := range []string{
-		`C:\Users\User\Downloads\WindowsUpdaterWebUI.exe`,
-		`C:\Program Files Evil\WindowsUpdaterWebUI.exe`,
-		`C:\Users\User\AppData\Local\Temp\WindowsUpdaterWebUI.exe`,
+		`C:\Users\User\Downloads\PatchBoard.exe`,
+		`C:\Program Files Evil\PatchBoard.exe`,
+		`C:\Users\User\AppData\Local\Temp\PatchBoard.exe`,
 	} {
 		if pathWithinAnyRoot(exe, roots) {
 			t.Fatalf("expected user-writable executable path to be rejected: %s", exe)
@@ -26,7 +26,7 @@ func TestAutoUpdateTaskExecutableRequiresTrustedRoot(t *testing.T) {
 }
 
 func TestAutoUpdateTaskSupportStatusExplainsUntrustedInstallLocation(t *testing.T) {
-	supported, reason := autoUpdateTaskSupportStatusForExecutable(`C:\Users\User\Documents\Updater\dist\WindowsUpdaterWebUI.exe`)
+	supported, reason := autoUpdateTaskSupportStatusForExecutable(`C:\Users\User\Documents\Updater\dist\PatchBoard.exe`)
 	if supported {
 		t.Fatal("expected daily auto-update to reject user-writable install location")
 	}
@@ -34,18 +34,18 @@ func TestAutoUpdateTaskSupportStatusExplainsUntrustedInstallLocation(t *testing.
 		t.Fatalf("expected install-location guidance, got %q", reason)
 	}
 
-	supported, reason = autoUpdateTaskSupportStatusForExecutable(`C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`)
+	supported, reason = autoUpdateTaskSupportStatusForExecutable(`C:\Program Files\PatchBoard\PatchBoard.exe`)
 	if !supported || reason != "" {
 		t.Fatalf("expected Program Files executable to support daily auto-update, supported=%v reason=%q", supported, reason)
 	}
 }
 
 func TestScheduledTaskXMLMatchesExpectedExecutableAndArguments(t *testing.T) {
-	exe := `C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`
+	exe := `C:\Program Files\PatchBoard\PatchBoard.exe`
 	taskXML := `<Task>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe</Command>
+      <Command>C:\Program Files\PatchBoard\PatchBoard.exe</Command>
       <Arguments>--task auto-update</Arguments>
     </Exec>
   </Actions>
@@ -57,17 +57,17 @@ func TestScheduledTaskXMLMatchesExpectedExecutableAndArguments(t *testing.T) {
 	if scheduledTaskXMLMatchesAction(taskXML, exe, []string{"--no-browser"}) {
 		t.Fatal("startup arguments should not match auto-update task XML")
 	}
-	if scheduledTaskXMLMatchesAction(taskXML, `C:\Other\WindowsUpdaterWebUI.exe`, []string{"--task", "auto-update"}) {
+	if scheduledTaskXMLMatchesAction(taskXML, `C:\Other\PatchBoard.exe`, []string{"--task", "auto-update"}) {
 		t.Fatal("task XML for another executable should not match")
 	}
 }
 
 func TestScheduledTaskXMLMatchesCombinedCommandAction(t *testing.T) {
-	exe := `C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`
+	exe := `C:\Program Files\PatchBoard\PatchBoard.exe`
 	taskXML := `<Task>
   <Actions>
     <Exec>
-      <Command>"C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe" --no-browser</Command>
+      <Command>"C:\Program Files\PatchBoard\PatchBoard.exe" --no-browser</Command>
     </Exec>
   </Actions>
 </Task>`
@@ -78,7 +78,7 @@ func TestScheduledTaskXMLMatchesCombinedCommandAction(t *testing.T) {
 }
 
 func TestScheduledTaskActionComposerKeepsExecutableAndArgumentsSeparate(t *testing.T) {
-	exe := `C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`
+	exe := `C:\Program Files\PatchBoard\PatchBoard.exe`
 	action := windows.ComposeCommandLine([]string{exe, "--task", "auto-update"})
 	args, err := windows.DecomposeCommandLine(action)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestSetStartupUsesRunEntryForEnableAndDisable(t *testing.T) {
 }
 
 func TestStartupRunEntryRequiresExactExecutableAndArgument(t *testing.T) {
-	exe := `C:\Program Files\WindowsUpdaterWebUI\WindowsUpdaterWebUI.exe`
+	exe := `C:\Program Files\PatchBoard\PatchBoard.exe`
 	valid := startupRunEntryCommandLineForExecutable(exe)
 	if !startupRunEntryMatchesAction(valid, exe) {
 		t.Fatalf("expected exact startup Run command to match: %q", valid)
@@ -152,8 +152,8 @@ func TestStartupRunEntryRequiresExactExecutableAndArgument(t *testing.T) {
 	for _, value := range []string{
 		windows.ComposeCommandLine([]string{exe}),
 		windows.ComposeCommandLine([]string{exe, "--task", "auto-update"}),
-		windows.ComposeCommandLine([]string{`C:\Other\WindowsUpdaterWebUI.exe`, "--no-browser"}),
-		`schtasks.exe /Run /TN WindowsUpdaterWebUI-Startup`,
+		windows.ComposeCommandLine([]string{`C:\Other\PatchBoard.exe`, "--no-browser"}),
+		`schtasks.exe /Run /TN PatchBoard-Startup`,
 	} {
 		if startupRunEntryMatchesAction(value, exe) {
 			t.Fatalf("unexpected startup Run match for %q", value)
@@ -178,7 +178,7 @@ func withTemporaryStartupRunRegistry(t *testing.T) {
 	oldPath := startupRunRegistryPath
 	oldValue := startupRunRegistryValue
 	safeName := strings.NewReplacer("\\", "_", "/", "_", " ", "_").Replace(t.Name())
-	testPath := `Software\WindowsUpdaterWebUI-Test-` + safeName
+	testPath := `Software\PatchBoard-Test-` + safeName
 	testValue := "Startup"
 	startupRunRegistryPath = testPath
 	startupRunRegistryValue = testValue

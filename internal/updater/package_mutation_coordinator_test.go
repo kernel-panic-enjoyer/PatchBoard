@@ -259,7 +259,7 @@ func packageMutationHelperCommand(t *testing.T, mode, mutexName, readyPath, rele
 
 func packageMutationTestMutexName(t *testing.T) string {
 	t.Helper()
-	return `Local\WindowsUpdaterWebUIPackageMutationTest-` + shortHash(t.Name()+"-"+t.TempDir())
+	return `Local\PatchBoardPackageMutationTest-` + shortHash(t.Name()+"-"+t.TempDir())
 }
 
 func filepathForTest(dir, name string) string {

@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-const sessionCookieName = "WindowsUpdaterWebUI"
-const trustedUIRequestHeader = "X-Windows-Updater-WebUI"
+const sessionCookieName = "PatchBoard"
+const trustedUIRequestHeader = "X-PatchBoard"
 
 func setSecurityHeaders(w http.ResponseWriter) {
 	header := w.Header()

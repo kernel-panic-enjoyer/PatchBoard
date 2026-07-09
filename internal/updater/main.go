@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	appName         = "Windows Updater WebUI"
-	appDirName      = "WindowsUpdaterWebUI"
+	appName         = "PatchBoard"
+	appDirName      = "PatchBoard"
 	defaultHost     = "127.0.0.1"
 	defaultPort     = 4183
 	portSearchLimit = 50
@@ -88,7 +88,7 @@ var productionServerHooks = serverHooks{
 
 func parseCLI(args []string) (cliOptions, error) {
 	options := cliOptions{Mode: cliModeServer}
-	set := flag.NewFlagSet("WindowsUpdaterWebUI", flag.ContinueOnError)
+	set := flag.NewFlagSet("PatchBoard", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	help := set.Bool("help", false, "")
 	set.BoolVar(help, "h", false, "")
@@ -172,11 +172,11 @@ func parseCLI(args []string) (cliOptions, error) {
 }
 
 func helpText() string {
-	return strings.TrimSpace(`WindowsUpdaterWebUI
+	return strings.TrimSpace(`PatchBoard
 
 Usage:
-  WindowsUpdaterWebUI.exe [--no-browser] [--port PORT] [--token TOKEN]
-  WindowsUpdaterWebUI.exe --task auto-update
+  PatchBoard.exe [--no-browser] [--port PORT] [--token TOKEN]
+  PatchBoard.exe --task auto-update
 
 Options:
   --no-browser   Start the local WebUI without opening a browser. Prints the URL.

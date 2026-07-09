@@ -9,7 +9,7 @@ runs Chocolatey or other mutable package-manager commands.
 
 - In-process scope: one `PackageMutationCoordinator` mutex reduces same-process
   contention before touching the Windows object.
-- Cross-process scope: `Global\WindowsUpdaterWebUIPackageMutation`.
+- Cross-process scope: `Global\PatchBoardPackageMutation`.
 - Rationale: the lock is machine-wide rather than per-user because Chocolatey,
   source maintenance, and some installer side effects can be machine-scoped.
 - ACL: the mutex security descriptor grants access to the intended current user,
