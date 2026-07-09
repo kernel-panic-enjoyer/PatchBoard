@@ -18,7 +18,7 @@ Measured with Go `go1.26.0 windows/amd64`.
 
 | Concern | Before | After |
 | --- | --- | --- |
-| chromedp browser tests | `internal/updater/browser_test.go` (white-box, `package updater`) | `tests/browser/` — separate module `windows-updater-webui/tests/browser` (black-box, `package browser`) |
+| chromedp browser tests | `internal/updater/browser_test.go` (white-box, `package updater`) | `tests/browser/` — separate module `patchboard/tests/browser` (black-box, `package browser`) |
 | chromedp / cdproto | direct `require` in root `go.mod` | only in `tests/browser/go.mod` |
 | Browser-test access to internals | white-box (unexported symbols) | build-tag-gated exported surface `internal/updater/uitestsupport.go` (`//go:build uitestsupport`); imports only stdlib |
 | Destructive live Store tests | always-compiled (env-gated only) | `//go:build storelive` tag **and** existing `UPDATER_RUN_STORE_LIVE_*` env gates |
@@ -30,7 +30,7 @@ Measured with Go `go1.26.0 windows/amd64`.
 ### Root `go.mod` — before
 
 ```
-module windows-updater-webui
+module patchboard
 
 go 1.26
 
@@ -52,7 +52,7 @@ require (
 ### Root `go.mod` — after
 
 ```
-module windows-updater-webui
+module patchboard
 
 go 1.26
 
@@ -69,7 +69,7 @@ require golang.org/x/sys v0.44.0
 Before (11):
 
 ```
-windows-updater-webui
+patchboard
 github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 github.com/chromedp/chromedp v0.15.1
 github.com/chromedp/sysutil v1.1.0
@@ -85,7 +85,7 @@ golang.org/x/sys v0.44.0
 After (2):
 
 ```
-windows-updater-webui
+patchboard
 golang.org/x/sys v0.44.0
 ```
 

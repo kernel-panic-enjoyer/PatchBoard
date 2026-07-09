@@ -12,7 +12,7 @@ import (
 )
 
 func TestTryAcquireWindowsNamedMutexReacquiresAfterRelease(t *testing.T) {
-	name := fmt.Sprintf(`Local\WindowsUpdaterWebUITest-%d`, time.Now().UnixNano())
+	name := fmt.Sprintf(`Local\PatchBoardTest-%d`, time.Now().UnixNano())
 	release, acquired, err := tryAcquireWindowsNamedMutex(context.Background(), name, nil)
 	if err != nil {
 		t.Fatal(err)

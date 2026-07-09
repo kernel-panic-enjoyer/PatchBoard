@@ -59,7 +59,7 @@ jobs:
 
       - name: Distribution smoke
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Smoke-Distribution.ps1 -Exe .\dist\WindowsUpdaterWebUI.exe
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Smoke-Distribution.ps1 -Exe .\dist\PatchBoard.exe
 
       - name: Assert no SQLite dependency
         shell: pwsh
@@ -68,7 +68,7 @@ jobs:
           if ($deps -match 'modernc\.org/sqlite|github\.com/mattn/go-sqlite3') {
             throw 'SQLite dependency found in default module graph.'
           }
-          $metadata = go version -m .\dist\WindowsUpdaterWebUI.exe
+          $metadata = go version -m .\dist\PatchBoard.exe
           if ($metadata -match 'modernc\.org/sqlite|github\.com/mattn/go-sqlite3') {
             throw 'SQLite dependency found in built executable metadata.'
           }
@@ -76,7 +76,7 @@ jobs:
       - name: Upload executable and metadata
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: WindowsUpdaterWebUI-windows
+          name: PatchBoard-windows
           path: |
-            dist/WindowsUpdaterWebUI.exe
-            dist/WindowsUpdaterWebUI.metadata.json
+            dist/PatchBoard.exe
+            dist/PatchBoard.metadata.json

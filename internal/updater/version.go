@@ -9,7 +9,7 @@ var appVersion = "0.0.0-dev"
 
 const (
 	appLicenseID     = "GPL-3.0-only"
-	appRepositoryURL = "https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility"
+	appRepositoryURL = "https://github.com/kernel-panic-enjoyer/PatchBoard"
 )
 
 type ApplicationInfo struct {

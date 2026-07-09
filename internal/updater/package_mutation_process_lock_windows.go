@@ -15,7 +15,7 @@ const (
 	// The package lock is intentionally machine-wide rather than per-user:
 	// Chocolatey and source maintenance can mutate machine-scoped package state,
 	// and an elevated helper may run under administrator credentials.
-	packageMutationMutexName            = `Global\WindowsUpdaterWebUIPackageMutation`
+	packageMutationMutexName            = `Global\PatchBoardPackageMutation`
 	packageMutationMutexNameOverrideEnv = "UPDATER_PACKAGE_MUTATION_MUTEX_NAME"
 	// Authenticated Users receive only SYNCHRONIZE|MUTEX_MODIFY_STATE so a
 	// standard WebUI, scheduled task, and alternate-admin worker can wait on and
@@ -34,7 +34,7 @@ func acquirePackageMutationProcessLock(ctx context.Context, onWait func()) (func
 
 func packageMutationProcessMutexName() string {
 	name := strings.TrimSpace(os.Getenv(packageMutationMutexNameOverrideEnv))
-	if strings.HasPrefix(name, `Local\WindowsUpdaterWebUIPackageMutationTest-`) {
+	if strings.HasPrefix(name, `Local\PatchBoardPackageMutationTest-`) {
 		return name
 	}
 	return packageMutationMutexName

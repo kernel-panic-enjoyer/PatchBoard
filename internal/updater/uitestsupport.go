@@ -3,7 +3,7 @@
 // Package updater's UI test-support surface.
 //
 // This file is compiled ONLY under the "uitestsupport" build tag. It exists so
-// the out-of-tree browser test module (windows-updater-webui/tests/browser) can
+// the out-of-tree browser test module (patchboard/tests/browser) can
 // drive the App as a black-box consumer without importing chromedp into this
 // (production) module. Because the tag is never set by `go build` or the normal
 // `go test ./...` run, none of these exported symbols enter production builds or

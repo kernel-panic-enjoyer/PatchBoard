@@ -19,16 +19,12 @@ import (
 )
 
 const (
-	windowsUpdateUtilityOwner      = "kernel-panic-enjoyer"
-	windowsUpdateUtilityRepository = "PatchBoard"
+	patchBoardGitHubOwner      = "kernel-panic-enjoyer"
+	patchBoardGitHubRepository = "PatchBoard"
 
-	releaseAssetExecutable = "WindowsUpdaterWebUI.exe"
-	releaseAssetMetadata   = "WindowsUpdaterWebUI.metadata.json"
-	releaseAssetSHA256     = "WindowsUpdaterWebUI.exe.sha256"
-
-	patchBoardReleaseAssetExecutable = "PatchBoard.exe"
-	patchBoardReleaseAssetMetadata   = "PatchBoard.metadata.json"
-	patchBoardReleaseAssetSHA256     = "PatchBoard.exe.sha256"
+	releaseAssetExecutable = "PatchBoard.exe"
+	releaseAssetMetadata   = "PatchBoard.metadata.json"
+	releaseAssetSHA256     = "PatchBoard.exe.sha256"
 
 	maxGitHubReleaseResponseBytes = 512 * 1024
 	maxSelfUpdateExecutableBytes  = 100 * 1024 * 1024
@@ -107,8 +103,8 @@ func defaultGitHubReleaseChecker() GitHubReleaseChecker {
 		Client: http.DefaultClient,
 		LatestReleaseURL: fmt.Sprintf(
 			"https://api.github.com/repos/%s/%s/releases/latest",
-			windowsUpdateUtilityOwner,
-			windowsUpdateUtilityRepository,
+			patchBoardGitHubOwner,
+			patchBoardGitHubRepository,
 		),
 	}
 }
@@ -127,7 +123,7 @@ func (checker GitHubReleaseChecker) Check(ctx context.Context, currentVersion st
 		return status, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	request.Header.Set("User-Agent", "WindowsUpdaterWebUI/"+currentAppVersion())
+	request.Header.Set("User-Agent", "PatchBoard/"+currentAppVersion())
 	response, err := checker.Client.Do(request)
 	if err != nil {
 		return status, err
@@ -224,7 +220,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if err != nil {
 		return selfUpdateArtifact{}, err
 	}
-	tempFile, err := os.CreateTemp(downloadDir, "WindowsUpdaterWebUI-update-*.exe")
+	tempFile, err := os.CreateTemp(downloadDir, "PatchBoard-update-*.exe")
 	if err != nil {
 		return selfUpdateArtifact{}, err
 	}
@@ -268,7 +264,7 @@ func downloadFileAndHash(ctx context.Context, client *http.Client, downloadURL s
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("User-Agent", "WindowsUpdaterWebUI/"+currentAppVersion())
+	request.Header.Set("User-Agent", "PatchBoard/"+currentAppVersion())
 	response, err := client.Do(request)
 	if err != nil {
 		return "", err
@@ -294,7 +290,7 @@ func httpGetBounded(ctx context.Context, client *http.Client, downloadURL string
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("User-Agent", "WindowsUpdaterWebUI/"+currentAppVersion())
+	request.Header.Set("User-Agent", "PatchBoard/"+currentAppVersion())
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err

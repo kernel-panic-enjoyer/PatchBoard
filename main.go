@@ -1,6 +1,6 @@
 package main
 
-import "windows-updater-webui/internal/updater"
+import "patchboard/internal/updater"
 
 func main() {
 	updater.Main()

@@ -1,11 +1,11 @@
-# WindowsUpdateUtility
+# PatchBoard
 
-[![Windows CI](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/windows-ci.yml)
-[![Browser UI CI](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/browser-ci.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/browser-ci.yml)
-[![Release](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/release.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/actions/workflows/release.yml)
+[![Windows CI](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/windows-ci.yml)
+[![Browser UI CI](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/browser-ci.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/browser-ci.yml)
+[![Release](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/release.yml/badge.svg)](https://github.com/kernel-panic-enjoyer/PatchBoard/actions/workflows/release.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE)
 
-WindowsUpdateUtility is a Windows app updater with a local browser UI for
+PatchBoard is a Windows app updater with a local browser UI for
 WinGet, Chocolatey, and Microsoft Store apps. It runs in the interactive user
 session, keeps package-manager operations explicit, and treats Microsoft Store
 updates conservatively so stale or ambiguous Store evidence cannot become an
@@ -62,15 +62,15 @@ Development requirements:
 
 ## Install
 
-Download `WindowsUpdaterWebUI.exe` from the
-[latest GitHub Release](https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility/releases/latest).
+Download `PatchBoard.exe` from the
+[latest GitHub Release](https://github.com/kernel-panic-enjoyer/PatchBoard/releases/latest).
 
 Release assets are built by GitHub Actions on `windows-latest`. Do not use
 local `dist\` builds as release artifacts.
 
 ## Run
 
-Double-click `WindowsUpdaterWebUI.exe`.
+Double-click `PatchBoard.exe`.
 
 The app starts the local WebUI and opens a browser tab. The main process runs
 unelevated by default; UAC is requested only for specific privileged actions.
@@ -84,8 +84,8 @@ go run . --no-browser
 Supported user-facing options:
 
 ```text
-WindowsUpdaterWebUI.exe [--no-browser] [--port PORT] [--token TOKEN]
-WindowsUpdaterWebUI.exe --task auto-update
+PatchBoard.exe [--no-browser] [--port PORT] [--token TOKEN]
+PatchBoard.exe --task auto-update
 ```
 
 | Option | Description |
@@ -103,14 +103,14 @@ automation interfaces.
 ## Application updates
 
 The Automation panel can check GitHub Releases for a newer stable version of
-`WindowsUpdaterWebUI.exe`.
+`PatchBoard.exe`.
 
 The self-update flow:
 
 1. Reads the latest non-draft, non-prerelease GitHub Release.
-2. Requires `WindowsUpdaterWebUI.exe`,
-   `WindowsUpdaterWebUI.metadata.json`, and
-   `WindowsUpdaterWebUI.exe.sha256`.
+2. Requires `PatchBoard.exe`,
+   `PatchBoard.metadata.json`, and
+   `PatchBoard.exe.sha256`.
 3. Downloads the executable to a temporary directory.
 4. Verifies the SHA-256 checksum.
 5. Starts an internal apply helper that waits for the current process to exit,
@@ -121,7 +121,7 @@ Restart**.
 
 ## Safety model
 
-WindowsUpdateUtility is intentionally strict about Microsoft Store updates:
+PatchBoard is intentionally strict about Microsoft Store updates:
 
 - Store package identity is the exact `(user SID, package family name)` pair.
 - Display names and fuzzy matching never establish Store update identity.
@@ -163,7 +163,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspac
 ```
 
 No build uses UPX or executable packing. Each build writes
-`dist\WindowsUpdaterWebUI.metadata.json` with provenance including commit,
+`dist\PatchBoard.metadata.json` with provenance including commit,
 dirty-worktree state, Go version, target platform, byte count, SHA-256,
 stripping state, license, and repository URL.
 
@@ -195,7 +195,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Run-Tests.ps1
 Distribution smoke:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Smoke-Distribution.ps1 -Exe .\dist\WindowsUpdaterWebUI.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Smoke-Distribution.ps1 -Exe .\dist\PatchBoard.exe
 ```
 
 Browser UI tests live in [tests/browser](tests/browser) and use the
@@ -250,8 +250,8 @@ Official release executables are built and uploaded by
 
 To publish a release, dispatch the **Release** workflow from `main` with a
 semantic version such as `0.0.1`. The workflow builds
-the stripped `dist\WindowsUpdaterWebUI.exe`, generates
-`WindowsUpdaterWebUI.exe.sha256`, and creates the `v<version>` GitHub Release
+the stripped `dist\PatchBoard.exe`, generates
+`PatchBoard.exe.sha256`, and creates the `v<version>` GitHub Release
 with the executable, metadata, and checksum assets.
 
 Normal CI artifacts are not release assets and are not consumed by the
@@ -269,5 +269,5 @@ script `-Strip` path.
 
 ## License
 
-WindowsUpdateUtility is licensed under the GNU General Public License version 3
+PatchBoard is licensed under the GNU General Public License version 3
 only (`GPL-3.0-only`). See [LICENSE](LICENSE).

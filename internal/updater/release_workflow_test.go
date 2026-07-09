@@ -18,8 +18,8 @@ func TestReleaseWorkflowBuildsAndPublishesWindowsExecutable(t *testing.T) {
 		"windows-latest",
 		"-Version",
 		"-Strip",
-		"WindowsUpdaterWebUI.exe.sha256",
-		"WindowsUpdaterWebUI.metadata.json",
+		"PatchBoard.exe.sha256",
+		"PatchBoard.metadata.json",
 		"gh release create",
 		"v${{ inputs.version }}",
 	} {
@@ -43,7 +43,7 @@ func TestBuildWorkspaceSupportsReleaseStrippingMetadata(t *testing.T) {
 		"license",
 		"GPL-3.0-only",
 		"repository",
-		"https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility",
+		"https://github.com/kernel-panic-enjoyer/PatchBoard",
 		"Get-Command node -ErrorAction SilentlyContinue",
 	} {
 		if !strings.Contains(script, expected) {

@@ -1,4 +1,4 @@
-﻿// Embedded Windows Updater WebUI frontend.
+﻿// Embedded PatchBoard frontend.
 
 (function(){
   var packages = [];
@@ -674,7 +674,7 @@
         if(panel){ panel.setAttribute("aria-labelledby", button.id); }
       }
     });
-    renderLogLines(false);
+    renderLogLines(true);
   }
   function focusAdjacentLogTab(current, direction){
     var tabs = Array.prototype.slice.call(document.querySelectorAll(".log-tab"));
@@ -836,7 +836,7 @@
   }
   function postForm(path, params, options){
     var body = params instanceof URLSearchParams ? params : new URLSearchParams(params || {});
-    var request = {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-Windows-Updater-WebUI":"1"}, body:body};
+    var request = {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-PatchBoard":"1"}, body:body};
     if(options && options.keepalive){ request.keepalive = true; }
     return fetch(api(path), request);
   }
@@ -861,7 +861,7 @@
 
   function setTheme(theme){
     document.documentElement.dataset.theme = theme;
-    try{ localStorage.setItem("windows-updater-theme", theme); }catch(e){}
+    try{ localStorage.setItem("patchboard-theme", theme); }catch(e){}
     var button = $("theme-toggle");
     if(button){ button.innerHTML = icon(theme === "dark" ? "sun" : "moon") + '<span>' + (theme === "dark" ? "Light Mode" : "Dark Mode") + '</span>'; }
   }
@@ -1417,7 +1417,7 @@
     var target = $("app-license-note");
     if(!target){ return; }
     var license = String(info.license || "GPL-3.0-only").trim() || "GPL-3.0-only";
-    var repository = String(info.repository || "https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility").trim();
+    var repository = String(info.repository || "https://github.com/kernel-panic-enjoyer/PatchBoard").trim();
     var repoLink = repository ? ' - <a href="' + attr(repository) + '" target="_blank" rel="noreferrer">GitHub repository</a>' : "";
     target.innerHTML = "Licensed under " + html(license) + repoLink;
   }

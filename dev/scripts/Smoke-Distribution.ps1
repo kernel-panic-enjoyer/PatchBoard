@@ -11,12 +11,12 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $root
 
 if ([string]::IsNullOrWhiteSpace($Exe)) {
-    $Exe = Join-Path $root 'dist\WindowsUpdaterWebUI.exe'
+    $Exe = Join-Path $root 'dist\PatchBoard.exe'
 }
 $Exe = (Resolve-Path $Exe).Path
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "WindowsUpdaterWebUI\smoke-$stamp"
+$smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) "PatchBoard\smoke-$stamp"
 $stateDir = Join-Path $smokeRoot 'state'
 $tmpDir = Join-Path $smokeRoot 'tmp'
 New-Item -ItemType Directory -Force $stateDir, $tmpDir | Out-Null

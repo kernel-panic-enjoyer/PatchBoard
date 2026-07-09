@@ -72,9 +72,9 @@ if ($node) {
 
 if ($TimestampedOutput) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $output = Join-Path $root "dist\WindowsUpdaterWebUI-$stamp.exe"
+    $output = Join-Path $root "dist\PatchBoard-$stamp.exe"
 } else {
-    $output = Join-Path $root 'dist\WindowsUpdaterWebUI.exe'
+    $output = Join-Path $root 'dist\PatchBoard.exe'
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
@@ -83,7 +83,7 @@ if ($Version.Trim() -ne '') {
     if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
         throw "Version must be semantic, for example 0.0.1"
     }
-    $ldflagsParts += "-X windows-updater-webui/internal/updater.appVersion=$Version"
+    $ldflagsParts += "-X patchboard/internal/updater.appVersion=$Version"
 }
 if ($Strip) {
     $ldflagsParts += @('-s', '-w')
@@ -119,7 +119,7 @@ $metadata = [ordered]@{
     stripped = $stripped
     unstripped = -not $stripped
     license = 'GPL-3.0-only'
-    repository = 'https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility'
+    repository = 'https://github.com/kernel-panic-enjoyer/PatchBoard'
     linker_flags = $ldflags
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
 }

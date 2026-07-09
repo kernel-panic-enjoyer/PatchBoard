@@ -14,14 +14,14 @@ import (
 )
 
 const (
-	taskAutoUpdate            = "WindowsUpdaterWebUI-AutoUpdate"
+	taskAutoUpdate            = "PatchBoard-AutoUpdate"
 	defaultAutoUpdateTime     = "03:00"
 	startupRunRegistryCommand = "startup run entry"
 )
 
 var (
 	startupRunRegistryPath  = `Software\Microsoft\Windows\CurrentVersion\Run`
-	startupRunRegistryValue = "WindowsUpdaterWebUI"
+	startupRunRegistryValue = "PatchBoard"
 )
 
 type scheduledTaskXML struct {

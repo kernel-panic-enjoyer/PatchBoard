@@ -126,7 +126,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`Queued`,
 		`postCommandPayload`,
 		`postForm("/api/status/refresh"`,
-		`X-Windows-Updater-WebUI`,
+		`X-PatchBoard`,
 		`form.id === "shutdown-form"`,
 		`postForm("/shutdown"`,
 		`payload.result && !payload.result.ok`,
@@ -159,7 +159,7 @@ func TestRenderedHTMLContainsAsyncUpdateHooks(t *testing.T) {
 		`class="app-footer"`,
 		`id="app-license-note"`,
 		`GPL-3.0-only`,
-		`https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility`,
+		`https://github.com/kernel-panic-enjoyer/PatchBoard`,
 		`Application update`,
 		`renderApplicationInfo`,
 		`startAppSelfUpdate`,
@@ -690,5 +690,23 @@ func TestStaleConnectionWatchdogFallsBackWithoutReload(t *testing.T) {
 		if !strings.Contains(uiJS, expected) {
 			t.Fatalf("expected stale connection recovery support to contain %q", expected)
 		}
+	}
+}
+
+func TestSessionLogTabSwitchScrollsToLatestEntries(t *testing.T) {
+	start := strings.Index(uiJS, `function setActiveLogCategory(category){`)
+	if start < 0 {
+		t.Fatal("setActiveLogCategory function not found")
+	}
+	end := strings.Index(uiJS[start:], `function focusAdjacentLogTab`)
+	if end < 0 {
+		t.Fatal("focusAdjacentLogTab function not found after setActiveLogCategory")
+	}
+	body := uiJS[start : start+end]
+	if !strings.Contains(body, `renderLogLines(true);`) {
+		t.Fatalf("switching log tabs should render and scroll to latest entries; body:\n%s", body)
+	}
+	if strings.Contains(body, `renderLogLines(false);`) {
+		t.Fatalf("switching log tabs should not preserve a stale scroll position; body:\n%s", body)
 	}
 }

@@ -164,7 +164,7 @@ func logsAPIResponseFromQuery(result LogQueryResult) logsAPIResponse {
 }
 
 func logExportFilename(now time.Time) string {
-	return now.Format("2006-01-02_15-04-05") + "_windows-updater-webui-logs.zip"
+	return now.Format("2006-01-02_15-04-05") + "_patchboard-logs.zip"
 }
 
 func storeDiagnosticsExportFilename(now time.Time) string {

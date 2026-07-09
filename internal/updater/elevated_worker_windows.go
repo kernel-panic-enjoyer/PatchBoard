@@ -110,7 +110,7 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 		return elevatedWorkerResponse{}, err
 	}
 
-	pipeName := `\\.\pipe\WindowsUpdaterWebUI-` + requestID
+	pipeName := `\\.\pipe\PatchBoard-` + requestID
 	pipeServer, err := newElevatedWorkerPipeServer(pipeName, userSID)
 	if err != nil {
 		return elevatedWorkerResponse{}, err

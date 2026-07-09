@@ -28,14 +28,14 @@ const pageTemplateHTML = `<!doctype html>
   <link rel="icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon" sizes="any">
   <link rel="shortcut icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon">
   <link rel="stylesheet" href="/assets/ui.css?v={{.AssetVersion}}">
-  <title>Windows Updater WebUI</title>
+  <title>PatchBoard</title>
 </head>
 <body>
   <header class="app-header">
     <div class="brand-block">
       <span class="app-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5.8 12 2l8 3.8v6.1c0 4.9-3.3 8.4-8 10.1-4.7-1.7-8-5.2-8-10.1V5.8Z"/><path d="m8 12.4 2.4 2.4L16.5 8.8"/></svg></span>
       <div>
-        <h1>Windows Updater WebUI</h1>
+        <h1>PatchBoard</h1>
         <p>{{if .Admin}}Running elevated{{else}}Not elevated{{end}} - Local dashboard - State: {{.StateDir}}</p>
       </div>
     </div>
@@ -206,7 +206,7 @@ const pageTemplateHTML = `<!doctype html>
     </section>
   </main>
   <footer class="app-footer" aria-label="Application information">
-    <p id="app-license-note" class="muted app-license-note">Licensed under GPL-3.0-only - <a href="https://github.com/kernel-panic-enjoyer/WindowsUpdateUtility" target="_blank" rel="noreferrer">GitHub repository</a></p>
+    <p id="app-license-note" class="muted app-license-note">Licensed under GPL-3.0-only - <a href="https://github.com/kernel-panic-enjoyer/PatchBoard" target="_blank" rel="noreferrer">GitHub repository</a></p>
   </footer>
   <script src="/assets/ui.js?v={{.AssetVersion}}" defer></script>
 </body>

@@ -21,6 +21,39 @@ func TestStateDirOverride(t *testing.T) {
 	}
 }
 
+func TestStateDirMigratesLegacyApplicationDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", "")
+	t.Setenv("LOCALAPPDATA", root)
+
+	legacyDirectory := filepath.Join(root, legacyAppDirName)
+	if err := os.MkdirAll(filepath.Join(legacyDirectory, "store-scans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stateJSON := []byte(`{"created_at":"2026-07-09T00:00:00Z","updated_at":"2026-07-09T00:00:00Z","theme":"light"}`)
+	if err := os.WriteFile(filepath.Join(legacyDirectory, "state.json"), stateJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDirectory, "store-scans", "snapshot.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := stateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, appDirName)
+	if got != want {
+		t.Fatalf("expected migrated PatchBoard state dir %s, got %s", want, got)
+	}
+	if _, err := os.Stat(filepath.Join(want, "state.json")); err != nil {
+		t.Fatalf("expected state.json to be copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(want, "store-scans", "snapshot.json")); err != nil {
+		t.Fatalf("expected nested Store snapshot data to be copied: %v", err)
+	}
+}
+
 func TestAppTempDirOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_TEMP_DIR", dir)

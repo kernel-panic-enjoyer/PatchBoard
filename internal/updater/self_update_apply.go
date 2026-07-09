@@ -51,7 +51,7 @@ func replaceExecutableForSelfUpdate(request selfUpdateApplyRequest) error {
 		return fmt.Errorf("self-update checksum mismatch: got %s want %s", actual, request.ExpectedSHA256)
 	}
 	targetDir := filepath.Dir(request.TargetPath)
-	temp, err := os.CreateTemp(targetDir, ".WindowsUpdaterWebUI-replace-*.exe")
+	temp, err := os.CreateTemp(targetDir, ".PatchBoard-replace-*.exe")
 	if err != nil {
 		return err
 	}

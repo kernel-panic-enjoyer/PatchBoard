@@ -1,7 +1,7 @@
 // Package browser holds the chromedp-driven, browser-level UI tests for the
-// Windows Updater Web UI.
+// PatchBoard.
 //
-// These tests live in a SEPARATE Go module (windows-updater-webui/tests/browser)
+// These tests live in a SEPARATE Go module (patchboard/tests/browser)
 // so that chromedp and cdproto stay out of the production module's dependency
 // graph. They drive the app as a black-box consumer of the exported test-support
 // surface in internal/updater/uitestsupport.go, and therefore must be built with
@@ -32,7 +32,7 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 
-	updater "windows-updater-webui/internal/updater"
+	updater "patchboard/internal/updater"
 )
 
 const browserTestToken = updater.BrowserTestToken

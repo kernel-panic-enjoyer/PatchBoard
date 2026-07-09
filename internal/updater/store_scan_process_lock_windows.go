@@ -11,7 +11,7 @@ func acquireStoreScanProcessLock(ctx context.Context, userSID string) (func(), e
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	name := `Local\WindowsUpdaterWebUIStoreScan-` + shortHash(userSID)
+	name := `Local\PatchBoardStoreScan-` + shortHash(userSID)
 	release, acquired, err := tryAcquireWindowsNamedMutex(ctx, name, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not acquire Store scan mutex: %w", err)

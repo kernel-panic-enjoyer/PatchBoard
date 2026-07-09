@@ -42,9 +42,9 @@ func TestParseGitHubReleaseRequiresStableNewerAssets(t *testing.T) {
 		"prerelease": false,
 		"html_url": "https://github.example/release",
 		"assets": [
-			{"name":"WindowsUpdaterWebUI.exe","browser_download_url":"https://github.example/app.exe","size":1234},
-			{"name":"WindowsUpdaterWebUI.metadata.json","browser_download_url":"https://github.example/app.metadata.json","size":321},
-			{"name":"WindowsUpdaterWebUI.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64}
+			{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234},
+			{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/app.metadata.json","size":321},
+			{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64}
 		]
 	}`), "0.0.1")
 	if err != nil {
@@ -114,7 +114,7 @@ func TestParseGitHubReleaseIgnoresPrereleaseAndSameVersion(t *testing.T) {
 func TestParseGitHubReleaseRejectsMissingAssets(t *testing.T) {
 	_, err := parseGitHubRelease([]byte(`{
 		"tag_name": "v0.0.2",
-		"assets": [{"name":"WindowsUpdaterWebUI.exe","browser_download_url":"https://github.example/app.exe","size":1234}]
+		"assets": [{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234}]
 	}`), "0.0.1")
 	if err == nil || !strings.Contains(err.Error(), "required release assets") {
 		t.Fatalf("expected missing asset error, got %v", err)
@@ -137,7 +137,7 @@ func TestGitHubReleaseCheckerRejectsOversizedResponse(t *testing.T) {
 func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 	payload := []byte("new executable")
 	sum := sha256.Sum256(payload)
-	shaText := hex.EncodeToString(sum[:]) + "  WindowsUpdaterWebUI.exe\n"
+	shaText := hex.EncodeToString(sum[:]) + "  PatchBoard.exe\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app.exe":
@@ -196,8 +196,8 @@ func TestDownloadSelfUpdateRejectsChecksumMismatch(t *testing.T) {
 
 func TestApplySelfUpdateCopiesExecutableAndKeepsBackup(t *testing.T) {
 	dir := t.TempDir()
-	source := filepath.Join(dir, "WindowsUpdaterWebUI-new.exe")
-	target := filepath.Join(dir, "WindowsUpdaterWebUI.exe")
+	source := filepath.Join(dir, "PatchBoard-new.exe")
+	target := filepath.Join(dir, "PatchBoard.exe")
 	if err := os.WriteFile(source, []byte("new"), 0o755); err != nil {
 		t.Fatal(err)
 	}

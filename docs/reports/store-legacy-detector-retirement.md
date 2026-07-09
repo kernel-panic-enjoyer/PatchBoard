@@ -90,10 +90,10 @@ Commands run:
 - bundled Node `--check internal/updater/assets/ui.js`
 - `powershell -NoProfile -ExecutionPolicy Bypass -File ./dev/scripts/Build-Workspace.ps1`
 - `git diff --check`
-- `go tool nm dist/WindowsUpdaterWebUI.exe` retired-symbol search
-- `rg -a` retired-text search against `dist/WindowsUpdaterWebUI.exe`
+- `go tool nm dist/PatchBoard.exe` retired-symbol search
+- `rg -a` retired-text search against `dist/PatchBoard.exe`
 - `go list -deps ./...` modernc/SQLite absence check
-- `go version -m dist/WindowsUpdaterWebUI.exe` modernc/SQLite absence check
+- `go version -m dist/PatchBoard.exe` modernc/SQLite absence check
 - `powershell -NoProfile -ExecutionPolicy Bypass -File ./dev/scripts/Smoke-Distribution.ps1 -Port 4355 -TimeoutSeconds 300 -StoreProviderTimeoutSeconds 120`
 - Safe live VP9 Store tests:
   `TestLiveStoreCLIExactVP9Assessment`,
