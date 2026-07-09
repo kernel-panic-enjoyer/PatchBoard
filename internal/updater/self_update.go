@@ -29,6 +29,7 @@ const (
 	maxGitHubReleaseResponseBytes = 512 * 1024
 	maxSelfUpdateExecutableBytes  = 100 * 1024 * 1024
 	maxSelfUpdateChecksumBytes    = 4 * 1024
+	maxSelfUpdateMetadataBytes    = 64 * 1024
 	appUpdateCheckTimeout         = 8 * time.Second
 	selfUpdateApplyTimeout        = 2 * time.Minute
 )
@@ -78,6 +79,25 @@ type selfUpdateArtifact struct {
 	Path    string
 	SHA256  string
 	Version string
+}
+
+type selfUpdateReleaseMetadata struct {
+	Artifact    string `json:"artifact"`
+	Commit      string `json:"commit"`
+	Dirty       bool   `json:"dirty"`
+	GoVersion   string `json:"go_version"`
+	GOOS        string `json:"goos"`
+	GOARCH      string `json:"goarch"`
+	CGOEnabled  string `json:"cgo_enabled"`
+	Bytes       int64  `json:"bytes"`
+	SHA256      string `json:"sha256"`
+	Version     string `json:"version"`
+	Stripped    bool   `json:"stripped"`
+	Unstripped  bool   `json:"unstripped"`
+	License     string `json:"license"`
+	Repository  string `json:"repository"`
+	LinkerFlags string `json:"linker_flags"`
+	GeneratedAt string `json:"generated_at"`
 }
 
 func defaultGitHubReleaseChecker() GitHubReleaseChecker {
@@ -197,7 +217,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if !updateStatus.Available {
 		return selfUpdateArtifact{}, errors.New("no application update is available")
 	}
-	if updateStatus.ExecutableURL == "" || updateStatus.SHA256URL == "" {
+	if updateStatus.ExecutableURL == "" || updateStatus.MetadataURL == "" || updateStatus.SHA256URL == "" {
 		return selfUpdateArtifact{}, errors.New("application update release assets are incomplete")
 	}
 	if updateStatus.ExecutableSize > maxSelfUpdateExecutableBytes {
@@ -207,6 +227,10 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 		return selfUpdateArtifact{}, err
 	}
 	expectedSHA256, err := downloadExpectedSHA256(ctx, client, updateStatus.SHA256URL)
+	if err != nil {
+		return selfUpdateArtifact{}, err
+	}
+	metadata, err := downloadSelfUpdateMetadata(ctx, client, updateStatus.MetadataURL)
 	if err != nil {
 		return selfUpdateArtifact{}, err
 	}
@@ -221,7 +245,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 			_ = os.Remove(artifactPath)
 		}
 	}()
-	actualSHA256, err := downloadFileAndHash(ctx, client, updateStatus.ExecutableURL, tempFile, sha256.New())
+	actualSHA256, actualBytes, err := downloadFileAndHash(ctx, client, updateStatus.ExecutableURL, tempFile, sha256.New())
 	closeErr := tempFile.Close()
 	if err != nil {
 		return selfUpdateArtifact{}, err
@@ -232,9 +256,70 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if !strings.EqualFold(actualSHA256, expectedSHA256) {
 		return selfUpdateArtifact{}, fmt.Errorf("self-update checksum mismatch: got %s want %s", actualSHA256, expectedSHA256)
 	}
+	if err := validateSelfUpdateMetadata(metadata, updateStatus, actualSHA256, actualBytes); err != nil {
+		return selfUpdateArtifact{}, err
+	}
 	_ = os.Chmod(artifactPath, 0o755)
 	removePartialDownload = false
 	return selfUpdateArtifact{Path: artifactPath, SHA256: strings.ToLower(actualSHA256), Version: updateStatus.LatestVersion}, nil
+}
+
+func downloadSelfUpdateMetadata(ctx context.Context, client *http.Client, metadataURL string) (selfUpdateReleaseMetadata, error) {
+	metadataData, err := httpGetBounded(ctx, client, metadataURL, maxSelfUpdateMetadataBytes, "metadata")
+	if err != nil {
+		return selfUpdateReleaseMetadata{}, err
+	}
+	return decodeSelfUpdateMetadata(metadataData)
+}
+
+func decodeSelfUpdateMetadata(metadataData []byte) (selfUpdateReleaseMetadata, error) {
+	var metadata selfUpdateReleaseMetadata
+	decoder := json.NewDecoder(bytes.NewReader(metadataData))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&metadata); err != nil {
+		return metadata, fmt.Errorf("invalid self-update metadata: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return metadata, errors.New("invalid self-update metadata: trailing data")
+		}
+		return metadata, fmt.Errorf("invalid self-update metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+func validateSelfUpdateMetadata(metadata selfUpdateReleaseMetadata, updateStatus AppUpdateStatus, actualSHA256 string, actualBytes int64) error {
+	metadataSHA256 := strings.ToLower(strings.TrimSpace(metadata.SHA256))
+	if metadataSHA256 == "" || !sha256LinePattern.MatchString(metadataSHA256) {
+		return errors.New("self-update metadata has invalid SHA-256")
+	}
+	if !strings.EqualFold(metadataSHA256, actualSHA256) {
+		return fmt.Errorf("self-update metadata SHA-256 mismatch: metadata %s executable %s", metadataSHA256, actualSHA256)
+	}
+	metadataVersion, ok := normalizeAppVersion(metadata.Version)
+	if !ok || metadataVersion != updateStatus.LatestVersion {
+		return fmt.Errorf("self-update metadata version %q does not match release version %q", metadata.Version, updateStatus.LatestVersion)
+	}
+	if strings.TrimSpace(metadata.Repository) != appRepositoryURL {
+		return fmt.Errorf("self-update metadata repository %q does not match %q", metadata.Repository, appRepositoryURL)
+	}
+	if strings.TrimSpace(metadata.License) != appLicenseID {
+		return fmt.Errorf("self-update metadata license %q does not match %q", metadata.License, appLicenseID)
+	}
+	if metadata.Dirty {
+		return errors.New("self-update metadata reports a dirty release build")
+	}
+	if metadata.Bytes <= 0 || metadata.Bytes != actualBytes {
+		return fmt.Errorf("self-update metadata byte count %d does not match executable size %d", metadata.Bytes, actualBytes)
+	}
+	if updateStatus.ExecutableSize > 0 && metadata.Bytes != updateStatus.ExecutableSize {
+		return fmt.Errorf("self-update metadata byte count %d does not match release asset size %d", metadata.Bytes, updateStatus.ExecutableSize)
+	}
+	if !strings.EqualFold(filepath.Base(strings.TrimSpace(metadata.Artifact)), releaseAssetExecutable) {
+		return fmt.Errorf("self-update metadata artifact must describe %s", releaseAssetExecutable)
+	}
+	return nil
 }
 
 func downloadExpectedSHA256(ctx context.Context, client *http.Client, checksumURL string) (string, error) {
@@ -249,30 +334,30 @@ func downloadExpectedSHA256(ctx context.Context, client *http.Client, checksumUR
 	return strings.ToLower(digest), nil
 }
 
-func downloadFileAndHash(ctx context.Context, client *http.Client, downloadURL string, destination io.Writer, digest hash.Hash) (string, error) {
+func downloadFileAndHash(ctx context.Context, client *http.Client, downloadURL string, destination io.Writer, digest hash.Hash) (string, int64, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	request.Header.Set("User-Agent", "PatchBoard/"+currentAppVersion())
 	response, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return "", fmt.Errorf("download failed with HTTP %d", response.StatusCode)
+		return "", 0, fmt.Errorf("download failed with HTTP %d", response.StatusCode)
 	}
 	limitedBody := &io.LimitedReader{R: response.Body, N: maxSelfUpdateExecutableBytes + 1}
 	hashingWriter := io.MultiWriter(destination, digest)
 	bytesWritten, err := io.Copy(hashingWriter, limitedBody)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if bytesWritten > maxSelfUpdateExecutableBytes || limitedBody.N == 0 {
-		return "", fmt.Errorf("downloaded executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
+		return "", 0, fmt.Errorf("downloaded executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
 	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	return hex.EncodeToString(digest.Sum(nil)), bytesWritten, nil
 }
 
 func httpGetBounded(ctx context.Context, client *http.Client, downloadURL string, maxBytes int64, resourceLabel string) ([]byte, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -125,10 +126,13 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 	payload := []byte("new executable")
 	sum := sha256.Sum256(payload)
 	shaText := hex.EncodeToString(sum[:]) + "  PatchBoard.exe\n"
+	metadataText := selfUpdateMetadataFixture(payload, "0.0.2", nil)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app.exe":
 			_, _ = w.Write(payload)
+		case "/app.metadata.json":
+			_, _ = w.Write([]byte(metadataText))
 		case "/app.exe.sha256":
 			_, _ = w.Write([]byte(shaText))
 		default:
@@ -142,6 +146,7 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 		Available:      true,
 		LatestVersion:  "0.0.2",
 		ExecutableURL:  server.URL + "/app.exe",
+		MetadataURL:    server.URL + "/app.metadata.json",
 		SHA256URL:      server.URL + "/app.exe.sha256",
 		ExecutableSize: int64(len(payload)),
 	}, dir)
@@ -158,10 +163,13 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 }
 
 func TestDownloadSelfUpdateRejectsChecksumMismatch(t *testing.T) {
+	payload := []byte("new executable")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app.exe":
-			_, _ = w.Write([]byte("new executable"))
+			_, _ = w.Write(payload)
+		case "/app.metadata.json":
+			_, _ = w.Write([]byte(selfUpdateMetadataFixture(payload, "0.0.2", nil)))
 		case "/app.exe.sha256":
 			_, _ = w.Write([]byte(strings.Repeat("0", 64)))
 		default:
@@ -174,10 +182,72 @@ func TestDownloadSelfUpdateRejectsChecksumMismatch(t *testing.T) {
 		Available:     true,
 		LatestVersion: "0.0.2",
 		ExecutableURL: server.URL + "/app.exe",
+		MetadataURL:   server.URL + "/app.metadata.json",
 		SHA256URL:     server.URL + "/app.exe.sha256",
 	}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("expected checksum mismatch, got %v", err)
+	}
+}
+
+func TestDownloadSelfUpdateRejectsMetadataMismatch(t *testing.T) {
+	payload := []byte("new executable")
+	sum := sha256.Sum256(payload)
+	shaText := hex.EncodeToString(sum[:]) + "  PatchBoard.exe\n"
+	cases := []struct {
+		name     string
+		metadata string
+		want     string
+	}{
+		{
+			name:     "sha mismatch",
+			metadata: selfUpdateMetadataFixture(payload, "0.0.2", map[string]string{"sha256": strings.Repeat("1", 64)}),
+			want:     "metadata SHA-256 mismatch",
+		},
+		{
+			name:     "dirty build",
+			metadata: selfUpdateMetadataFixture(payload, "0.0.2", map[string]string{"dirty": "true"}),
+			want:     "dirty release build",
+		},
+		{
+			name:     "wrong repository",
+			metadata: selfUpdateMetadataFixture(payload, "0.0.2", map[string]string{"repository": "https://github.example/other/repo"}),
+			want:     "metadata repository",
+		},
+		{
+			name:     "wrong version",
+			metadata: selfUpdateMetadataFixture(payload, "9.9.9", nil),
+			want:     "metadata version",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/app.exe":
+					_, _ = w.Write(payload)
+				case "/app.metadata.json":
+					_, _ = w.Write([]byte(tc.metadata))
+				case "/app.exe.sha256":
+					_, _ = w.Write([]byte(shaText))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			_, err := downloadSelfUpdateArtifact(context.Background(), server.Client(), AppUpdateStatus{
+				Available:      true,
+				LatestVersion:  "0.0.2",
+				ExecutableURL:  server.URL + "/app.exe",
+				MetadataURL:    server.URL + "/app.metadata.json",
+				SHA256URL:      server.URL + "/app.exe.sha256",
+				ExecutableSize: int64(len(payload)),
+			}, t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected metadata rejection containing %q, got %v", tc.want, err)
+			}
+		})
 	}
 }
 
@@ -211,4 +281,34 @@ func TestApplySelfUpdateCopiesExecutableAndKeepsBackup(t *testing.T) {
 	if string(targetData) != "new" || string(backupData) != "old" {
 		t.Fatalf("unexpected replacement target=%q backup=%q", targetData, backupData)
 	}
+}
+
+func selfUpdateMetadataFixture(payload []byte, version string, overrides map[string]string) string {
+	sum := sha256.Sum256(payload)
+	values := map[string]string{
+		"artifact":   `"C:\\Program Files\\PatchBoard\\PatchBoard.exe"`,
+		"sha256":     fmt.Sprintf("%q", hex.EncodeToString(sum[:])),
+		"version":    fmt.Sprintf("%q", version),
+		"bytes":      fmt.Sprintf("%d", len(payload)),
+		"dirty":      "false",
+		"license":    fmt.Sprintf("%q", appLicenseID),
+		"repository": fmt.Sprintf("%q", appRepositoryURL),
+	}
+	for key, value := range overrides {
+		switch key {
+		case "artifact", "sha256", "version", "license", "repository":
+			values[key] = fmt.Sprintf("%q", value)
+		default:
+			values[key] = value
+		}
+	}
+	return fmt.Sprintf(`{
+		"artifact": %s,
+		"sha256": %s,
+		"version": %s,
+		"bytes": %s,
+		"dirty": %s,
+		"license": %s,
+		"repository": %s
+	}`, values["artifact"], values["sha256"], values["version"], values["bytes"], values["dirty"], values["license"], values["repository"])
 }

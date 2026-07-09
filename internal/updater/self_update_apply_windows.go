@@ -23,6 +23,9 @@ func launchSelfUpdateApply(ctx context.Context, artifact selfUpdateArtifact, tar
 	if artifact.Path == "" || artifact.SHA256 == "" {
 		return errors.New("self-update artifact is incomplete")
 	}
+	if err := validateSelfUpdateLaunchTarget(targetPath); err != nil {
+		return err
+	}
 	args := []string{
 		flagSelfUpdateApply,
 		"--self-update-target=" + targetPath,
@@ -34,6 +37,21 @@ func launchSelfUpdateApply(ctx context.Context, artifact selfUpdateArtifact, tar
 	cmd.Env = launchEnv()
 	cmd.SysProcAttr = hiddenSysProcAttr()
 	return cmd.Start()
+}
+
+func validateSelfUpdateLaunchTarget(targetPath string) error {
+	currentExecutable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if sameSelfUpdatePath(targetPath, currentExecutable) {
+		return nil
+	}
+	installedTargetPath := applicationInstallPathsProvider().TargetPath
+	if installedTargetPath != "" && sameSelfUpdatePath(targetPath, installedTargetPath) {
+		return nil
+	}
+	return errors.New("self-update target must be the running executable or installed PatchBoard executable")
 }
 
 func runSelfUpdateApply(request selfUpdateApplyRequest) error {

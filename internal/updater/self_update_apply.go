@@ -27,16 +27,62 @@ func validateSelfUpdateApplyRequest(request selfUpdateApplyRequest) error {
 	if strings.TrimSpace(request.TargetPath) == "" {
 		return errors.New("self-update target path is required")
 	}
-	if !strings.EqualFold(filepath.Base(request.TargetPath), releaseAssetExecutable) {
+	sourcePath, err := filepath.Abs(request.SourcePath)
+	if err != nil {
+		return fmt.Errorf("self-update source path is invalid: %w", err)
+	}
+	targetPath, err := filepath.Abs(request.TargetPath)
+	if err != nil {
+		return fmt.Errorf("self-update target path is invalid: %w", err)
+	}
+	if sameSelfUpdatePath(sourcePath, targetPath) {
+		return errors.New("self-update source and target paths must differ")
+	}
+	if err := validateSelfUpdateSourcePath(sourcePath); err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Base(targetPath), releaseAssetExecutable) {
 		return fmt.Errorf("self-update target must be %s", releaseAssetExecutable)
 	}
-	if _, err := os.Stat(request.SourcePath); err != nil {
+	if _, err := os.Stat(sourcePath); err != nil {
 		return fmt.Errorf("self-update source is not readable: %w", err)
 	}
 	if request.ExpectedSHA256 == "" || !sha256LinePattern.MatchString(request.ExpectedSHA256) {
 		return errors.New("self-update expected SHA-256 is invalid")
 	}
 	return nil
+}
+
+func validateSelfUpdateSourcePath(sourcePath string) error {
+	downloadDir, err := selfUpdateDownloadDir()
+	if err != nil {
+		return err
+	}
+	downloadDir, err = filepath.Abs(downloadDir)
+	if err != nil {
+		return err
+	}
+	if !pathWithinDirectory(sourcePath, downloadDir) {
+		return errors.New("self-update source must be inside PatchBoard's self-update staging directory")
+	}
+	return nil
+}
+
+func pathWithinDirectory(path, directory string) bool {
+	path = filepath.Clean(path)
+	directory = filepath.Clean(directory)
+	if sameSelfUpdatePath(path, directory) {
+		return true
+	}
+	relative, err := filepath.Rel(directory, path)
+	if err != nil {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func sameSelfUpdatePath(left, right string) bool {
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 }
 
 func replaceExecutableForSelfUpdate(request selfUpdateApplyRequest) error {
