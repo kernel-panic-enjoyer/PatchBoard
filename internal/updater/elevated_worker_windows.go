@@ -453,7 +453,8 @@ func executeElevatedWorkerOperation(ctx context.Context, operation string, paylo
 		if err := decodeWorkerPayload(payload, &decoded); err != nil {
 			return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
 		}
-		return elevatedWorkerOperationResult{Result: installPackageContext(ctx, decoded.Manager, decoded.PackageID)}
+		operationCtx := withPackageMutationOptions(ctx, packageMutationOptions{RemoveNewDesktopShortcuts: decoded.RemoveNewDesktopShortcuts})
+		return elevatedWorkerOperationResult{Result: installPackageContext(operationCtx, decoded.Manager, decoded.PackageID)}
 	case workerOperationPackageUpdate:
 		var decoded elevatedWorkerPackageUpdatePayload
 		if err := decodeWorkerPayload(payload, &decoded); err != nil {
@@ -462,7 +463,8 @@ func executeElevatedWorkerOperation(ctx context.Context, operation string, paylo
 		pkg := decoded.Package
 		pkg.AllowUnknownVersionUpdate = decoded.AllowUnknownVersion
 		pkg.AllowPinnedUpdate = decoded.AllowPinned
-		return elevatedWorkerOperationResult{Result: updatePackageWithMetadataContext(ctx, pkg)}
+		operationCtx := withPackageMutationOptions(ctx, packageMutationOptions{RemoveNewDesktopShortcuts: decoded.RemoveNewDesktopShortcuts})
+		return elevatedWorkerOperationResult{Result: updatePackageWithMetadataContext(operationCtx, pkg)}
 	case workerOperationPackageUpdateBatch:
 		var decoded elevatedWorkerPackageUpdateBatchPayload
 		if err := decodeWorkerPayload(payload, &decoded); err != nil {
@@ -471,7 +473,8 @@ func executeElevatedWorkerOperation(ctx context.Context, operation string, paylo
 		if err := validateBatchWorkerIdentity(auth, decoded.Packages); err != nil {
 			return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
 		}
-		return executeElevatedPackageUpdateBatch(ctx, decoded.Packages, progress)
+		operationCtx := withPackageMutationOptions(ctx, packageMutationOptions{RemoveNewDesktopShortcuts: decoded.RemoveNewDesktopShortcuts})
+		return executeElevatedPackageUpdateBatch(operationCtx, decoded.Packages, progress)
 	case workerOperationManagerInstall:
 		var decoded elevatedWorkerManagerInstallPayload
 		if err := decodeWorkerPayload(payload, &decoded); err != nil {
@@ -592,7 +595,10 @@ func aggregatePackageUpdateBatchResult(results []UpdateResult, err error) Comman
 }
 
 func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
-	payload := elevatedWorkerPackageUpdateBatchPayload{Packages: packages}
+	payload := elevatedWorkerPackageUpdateBatchPayload{
+		Packages:                  packages,
+		RemoveNewDesktopShortcuts: packageMutationOptionsFromContext(ctx).RemoveNewDesktopShortcuts,
+	}
 	if err := validateWorkerOperationPayloadFromAny(workerOperationPackageUpdateBatch, payload); err != nil {
 		return nil, validationCommandResult(workerOperationPackageUpdateBatch, err)
 	}
@@ -679,8 +685,9 @@ func runPrivilegedPackageInstall(ctx context.Context, manager, id string) Comman
 	return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
 		Operation: workerOperationPackageInstall,
 		Payload: elevatedWorkerPackageInstallPayload{
-			Manager:   manager,
-			PackageID: id,
+			Manager:                   manager,
+			PackageID:                 id,
+			RemoveNewDesktopShortcuts: packageMutationOptionsFromContext(ctx).RemoveNewDesktopShortcuts,
 		},
 	})
 }
@@ -692,9 +699,10 @@ func runPrivilegedPackageUpdate(ctx context.Context, pkg Package) CommandResult 
 	return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
 		Operation: workerOperationPackageUpdate,
 		Payload: elevatedWorkerPackageUpdatePayload{
-			Package:             pkg,
-			AllowUnknownVersion: pkg.AllowUnknownVersionUpdate,
-			AllowPinned:         pkg.AllowPinnedUpdate,
+			Package:                   pkg,
+			AllowUnknownVersion:       pkg.AllowUnknownVersionUpdate,
+			AllowPinned:               pkg.AllowPinnedUpdate,
+			RemoveNewDesktopShortcuts: packageMutationOptionsFromContext(ctx).RemoveNewDesktopShortcuts,
 		},
 	})
 }

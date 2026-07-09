@@ -42,6 +42,7 @@ const pageTemplateHTML = `<!doctype html>
     <div class="header-actions">
       <button id="theme-toggle" class="ghost" type="button"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 1 0 6 6c0 5-4 9-9 9a6 6 0 0 0 3-15Z"/></svg></span><span>Theme</span></button>
       <span id="log-connection-status" class="badge connection-badge" role="status" aria-live="polite">Connecting</span>
+      <button id="settings-button" class="ghost" type="button" data-settings-open><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.2 2.2 0 1 1-3.11 3.11l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.65V21.5a2.2 2.2 0 1 1-4.4 0v-.08a1.8 1.8 0 0 0-1.1-1.65 1.8 1.8 0 0 0-1.98.36l-.05.05a2.2 2.2 0 1 1-3.11-3.11l.05-.05A1.8 1.8 0 0 0 3.34 15a1.8 1.8 0 0 0-1.65-1.1H1.6a2.2 2.2 0 1 1 0-4.4h.08a1.8 1.8 0 0 0 1.65-1.1 1.8 1.8 0 0 0-.36-1.98l-.05-.05a2.2 2.2 0 1 1 3.11-3.11l.05.05a1.8 1.8 0 0 0 1.98.36 1.8 1.8 0 0 0 1.1-1.65V1.95a2.2 2.2 0 1 1 4.4 0v.08a1.8 1.8 0 0 0 1.1 1.65 1.8 1.8 0 0 0 1.98-.36l.05-.05a2.2 2.2 0 1 1 3.11 3.11l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.65 1.1h.08a2.2 2.2 0 1 1 0 4.4h-.08a1.8 1.8 0 0 0-1.65 1.1Z"/></svg></span><span>Settings</span></button>
       <form id="shutdown-form" method="post" action="/shutdown"><button id="shutdown-button" class="danger" type="submit"><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M7.1 6.9a8 8 0 1 0 9.8 0"/></svg></span><span>Stop</span></button></form>
     </div>
   </header>
@@ -86,6 +87,41 @@ const pageTemplateHTML = `<!doctype html>
       </div>
     </section>
 
+    <section id="settings-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+      <div class="modal-backdrop" data-settings-close></div>
+      <div class="modal-panel settings-modal" role="document">
+        <div class="modal-header">
+          <div><span class="panel-kicker">Preferences</span><h2 id="settings-modal-title">Settings</h2></div>
+          <button id="settings-close" class="ghost" type="button" data-settings-close><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg></span><span>Close</span></button>
+        </div>
+        <div class="settings-grid">
+          <section class="settings-section" aria-labelledby="settings-automation-title">
+            <div class="settings-section-heading"><h3 id="settings-automation-title">Automation</h3><span class="panel-kicker">Scheduled tasks</span></div>
+            <div class="stack">
+              <button id="startup-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking startup...</span></span></button>
+              <button id="auto-global-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking auto-update...</span></span></button>
+              <div class="button-row"><button id="auto-all" type="button" disabled>Auto All</button><button id="auto-none" type="button" disabled>Auto None</button></div>
+              <p id="automation-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading startup status...</span></span></p>
+            </div>
+          </section>
+          <section class="settings-section" aria-labelledby="settings-app-update-title">
+            <div class="settings-section-heading"><h3 id="settings-app-update-title">Application update</h3><span class="panel-kicker">Self-update</span></div>
+            <div class="stack">
+              <button id="app-update-checking-toggle" class="ghost preference-toggle" type="button" disabled>Checking application updates: On</button>
+              <button id="app-update-auto-install-toggle" class="ghost preference-toggle" type="button" disabled>Automatic application self update: Off</button>
+              <div><p id="app-update-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking application version...</span></span></p></div>
+              <div class="button-row"><button id="app-update-check" class="ghost" type="button">Check App</button><button id="app-update-apply" type="button" class="hidden">Install and Restart</button></div>
+            </div>
+          </section>
+          <section class="settings-section" aria-labelledby="settings-shortcuts-title">
+            <div class="settings-section-heading"><h3 id="settings-shortcuts-title">Desktop shortcuts</h3><span class="panel-kicker">Cleanup</span></div>
+            <p class="muted">After package installs or updates, remove only newly-created Desktop .lnk shortcuts. Existing shortcuts, folders, and non-shortcut files are preserved.</p>
+            <button id="desktop-shortcut-cleanup-toggle" class="ghost preference-toggle" type="button" disabled>Remove new Desktop shortcuts: Off</button>
+          </section>
+        </div>
+      </div>
+    </section>
+
     <section class="dashboard-hero">
       <div class="hero-copy">
         <div class="hero-topline"><span class="eyebrow">Updates first</span></div>
@@ -108,14 +144,8 @@ const pageTemplateHTML = `<!doctype html>
     <section class="control-grid">
       <div class="panel manager-panel"><div class="section-heading"><h2>Package Managers</h2><span class="panel-kicker">Availability</span></div><div id="manager-list"><p class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking package managers...</span></span></p></div></div>
       <div class="panel automation-panel"><div class="section-heading"><h2>Automation</h2><span class="panel-kicker">Scheduled tasks</span></div><div class="stack">
-        <button id="startup-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking startup...</span></span></button>
-        <button id="auto-global-toggle" type="button" disabled><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking auto-update...</span></span></button>
-        <div class="button-row"><button id="auto-all" type="button" disabled>Auto All</button><button id="auto-none" type="button" disabled>Auto None</button></div>
-        <p id="automation-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading startup status...</span></span></p>
-        <div class="app-update-control">
-          <div><strong>Application update</strong><p id="app-update-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Checking application version...</span></span></p></div>
-          <div class="button-row"><button id="app-update-check" class="ghost" type="button">Check App</button><button id="app-update-apply" type="button" class="hidden">Install and Restart</button></div>
-        </div>
+        <p id="automation-summary-status" class="muted"><span class="loading-text"><span class="spinner" aria-hidden="true"></span><span>Loading task status...</span></span></p>
+        <button id="automation-settings-open" class="ghost" type="button" data-settings-open><span class="button-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2.2 2.2 0 1 1-3.11 3.11l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.65V21.5a2.2 2.2 0 1 1-4.4 0v-.08a1.8 1.8 0 0 0-1.1-1.65 1.8 1.8 0 0 0-1.98.36l-.05.05a2.2 2.2 0 1 1-3.11-3.11l.05-.05A1.8 1.8 0 0 0 3.34 15a1.8 1.8 0 0 0-1.65-1.1H1.6a2.2 2.2 0 1 1 0-4.4h.08a1.8 1.8 0 0 0 1.65-1.1 1.8 1.8 0 0 0-.36-1.98l-.05-.05a2.2 2.2 0 1 1 3.11-3.11l.05.05a1.8 1.8 0 0 0 1.98.36 1.8 1.8 0 0 0 1.1-1.65V1.95a2.2 2.2 0 1 1 4.4 0v.08a1.8 1.8 0 0 0 1.1 1.65 1.8 1.8 0 0 0 1.98-.36l.05-.05a2.2 2.2 0 1 1 3.11 3.11l-.05.05a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.65 1.1h.08a2.2 2.2 0 1 1 0 4.4h-.08a1.8 1.8 0 0 0-1.65 1.1Z"/></svg></span><span>Open Settings</span></button>
       </div></div>
     </section>
 

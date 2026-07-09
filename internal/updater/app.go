@@ -42,6 +42,9 @@ type StatusSettings struct {
 	LastAutoUpdateResults           []UpdateResultSummary       `json:"last_auto_update_results,omitempty"`
 	LastAutoUpdateSummary           *ScheduledAutoUpdateSummary `json:"last_auto_update_summary,omitempty"`
 	AppUpdatePromptDismissedVersion string                      `json:"app_update_prompt_dismissed_version,omitempty"`
+	AppUpdateAutoInstallEnabled     bool                        `json:"app_update_auto_install_enabled"`
+	AppUpdateCheckingEnabled        bool                        `json:"app_update_checking_enabled"`
+	RemoveNewDesktopShortcuts       bool                        `json:"remove_new_desktop_shortcuts"`
 }
 
 type AsyncSnapshot struct {

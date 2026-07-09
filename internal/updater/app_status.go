@@ -78,15 +78,21 @@ func (app *App) startQueuedStatusRefresh() {
 }
 
 func buildStatusResponseContext(ctx context.Context, forceRefresh bool) StatusResponse {
-	return buildStatusResponseContextWithUpdate(ctx, forceRefresh, AppUpdateStatus{CurrentVersion: currentAppVersion()})
+	persistedState := loadStateContext(ctx)
+	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, AppUpdateStatus{CurrentVersion: currentAppVersion()})
 }
 
 func (app *App) buildStatusResponseContext(ctx context.Context, forceRefresh bool) StatusResponse {
-	return buildStatusResponseContextWithUpdate(ctx, forceRefresh, app.appUpdateStatusContext(ctx, forceRefresh))
+	persistedState := loadStateContext(ctx)
+	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, app.appUpdateStatusForStatus(ctx, persistedState))
 }
 
 func buildStatusResponseContextWithUpdate(ctx context.Context, forceRefresh bool, appUpdateStatus AppUpdateStatus) StatusResponse {
 	persistedState := loadStateContext(ctx)
+	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, appUpdateStatus)
+}
+
+func buildStatusResponseContextWithStateAndUpdate(ctx context.Context, forceRefresh bool, persistedState State, appUpdateStatus AppUpdateStatus) StatusResponse {
 	stateDirectory, _ := stateDir()
 	var startupTaskEnabled bool
 	var autoTaskEnabled bool
@@ -178,7 +184,8 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	inventoryManagerStatuses := cloneManagerStatuses(app.inventory.Managers)
 	app.mu.RUnlock()
 
-	snapshot.Settings = statusSettingsFromState(loadStateContext(ctx))
+	persistedState := loadStateContext(ctx)
+	snapshot.Settings = statusSettingsFromState(persistedState)
 	if snapshot.StateDir == "" {
 		snapshot.StateDir, _ = stateDir()
 		snapshot.Admin = isAdmin()
@@ -191,13 +198,20 @@ func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
 	if fetchedAt.IsZero() && snapshot.AutoTaskUnsupportedReason == "" {
 		snapshot.AutoTaskSupported, snapshot.AutoTaskUnsupportedReason = autoUpdateTaskSupportStatus()
 	}
-	snapshot.AppUpdate = app.appUpdateStatusContext(ctx, false)
+	snapshot.AppUpdate = app.appUpdateStatusForStatus(ctx, persistedState)
 	if snapshot.Application.License == "" || snapshot.Application.Repository == "" {
 		snapshot.Application = currentApplicationInfo()
 	}
 	mergeStatusInventoryManagerDetails(&snapshot, inventoryManagerStatuses)
 	snapshot.AsyncSnapshot = asyncSnapshot(statusLoading, fetchedAt, refreshErr)
 	return snapshot
+}
+
+func (app *App) appUpdateStatusForStatus(ctx context.Context, persistedState State) AppUpdateStatus {
+	if persistedState.AppUpdateChecksDisabled {
+		return AppUpdateStatus{CurrentVersion: currentAppVersion()}
+	}
+	return app.appUpdateStatusContext(ctx, false)
 }
 
 func (app *App) appUpdateStatusContext(ctx context.Context, forceRefresh bool) AppUpdateStatus {
@@ -227,6 +241,9 @@ func statusSettingsFromState(persistedState State) StatusSettings {
 		LastAutoUpdateResults:           trimUpdateResultSummaries(persistedState.LastAutoUpdateResults),
 		LastAutoUpdateSummary:           persistedState.LastAutoUpdateSummary,
 		AppUpdatePromptDismissedVersion: persistedState.AppUpdatePromptDismissedVersion,
+		AppUpdateAutoInstallEnabled:     persistedState.AppUpdateAutoInstallEnabled,
+		AppUpdateCheckingEnabled:        !persistedState.AppUpdateChecksDisabled,
+		RemoveNewDesktopShortcuts:       persistedState.RemoveNewDesktopShortcuts,
 	}
 }
 

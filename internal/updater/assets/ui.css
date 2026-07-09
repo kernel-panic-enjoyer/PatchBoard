@@ -197,6 +197,13 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .app-update-modal-body p{margin:0;color:var(--muted)}
 .app-update-modal-actions{justify-content:flex-end;margin-top:12px}
 .app-update-dismiss{margin-top:4px}
+.settings-modal{border-left:4px solid var(--teal)}
+.settings-grid{display:grid;gap:14px}
+.settings-section{display:grid;gap:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-strong);padding:14px}
+.settings-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.settings-section-heading h3{margin:0;font-size:16px;line-height:1.2}
+.settings-section p{margin:0}
+.preference-toggle{justify-content:space-between;width:100%;color:var(--text);background:transparent}
 .check-control{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-weight:700}
 .table-panel{padding:0;overflow:hidden}
   .table-panel>.section-heading,.table-panel>p,.table-panel>pre,.table-footer{padding-left:16px;padding-right:16px}

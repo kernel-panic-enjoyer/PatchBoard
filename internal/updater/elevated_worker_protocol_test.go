@@ -136,6 +136,14 @@ func TestElevatedWorkerOperationAllowlist(t *testing.T) {
 			}},
 		},
 		{
+			name:      "cleanup flag package update batch allowed",
+			operation: workerOperationPackageUpdateBatch,
+			payload: elevatedWorkerPackageUpdateBatchPayload{
+				Packages:                  []Package{{Manager: managerChoco, ID: "gh"}},
+				RemoveNewDesktopShortcuts: true,
+			},
+		},
+		{
 			name:      "store package update batch rejected",
 			operation: workerOperationPackageUpdateBatch,
 			payload: elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{

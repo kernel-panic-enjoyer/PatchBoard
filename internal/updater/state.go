@@ -81,6 +81,9 @@ type State struct {
 	LastAutoUpdateSummary           *ScheduledAutoUpdateSummary    `json:"last_auto_update_summary,omitempty"`
 	Theme                           string                         `json:"theme"`
 	AppUpdatePromptDismissedVersion string                         `json:"app_update_prompt_dismissed_version,omitempty"`
+	AppUpdateAutoInstallEnabled     bool                           `json:"app_update_auto_install_enabled,omitempty"`
+	AppUpdateChecksDisabled         bool                           `json:"app_update_checks_disabled,omitempty"`
+	RemoveNewDesktopShortcuts       bool                           `json:"remove_new_desktop_shortcuts,omitempty"`
 }
 
 func utcNow() string {

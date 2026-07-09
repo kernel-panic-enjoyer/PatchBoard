@@ -87,6 +87,12 @@ func installPackageContext(ctx context.Context, manager, packageIDOrQuery string
 	if err := validateManagerAndID(manager, packageIDOrQuery); err != nil {
 		return validationCommandResult("install", err)
 	}
+	return runPackageMutationWithDesktopShortcutCleanup(ctx, "install "+manager+":"+packageIDOrQuery, func() CommandResult {
+		return installPackageWithoutDesktopShortcutCleanup(ctx, manager, packageIDOrQuery)
+	})
+}
+
+func installPackageWithoutDesktopShortcutCleanup(ctx context.Context, manager, packageIDOrQuery string) CommandResult {
 	appLog("Install started for %s:%s.", manager, packageIDOrQuery)
 	if result := runPrivilegedPackageInstall(ctx, manager, packageIDOrQuery); result.Command != "" || result.Code != 0 || result.OK {
 		appLog("Install finished for %s:%s with code %d.", manager, packageIDOrQuery, result.Code)
@@ -112,6 +118,12 @@ func updatePackageWithMetadataContext(ctx context.Context, pkg Package) CommandR
 	if err := validateManagerAndID(packageManager, packageID); err != nil {
 		return validationCommandResult("update", err)
 	}
+	return runPackageMutationWithDesktopShortcutCleanup(ctx, "update "+packageManager+":"+packageID, func() CommandResult {
+		return updatePackageWithMetadataWithoutDesktopShortcutCleanup(ctx, pkg, packageManager, packageID)
+	})
+}
+
+func updatePackageWithMetadataWithoutDesktopShortcutCleanup(ctx context.Context, pkg Package, packageManager, packageID string) CommandResult {
 	appLog("Update started for %s:%s.", packageManager, packageID)
 	if result := runPrivilegedPackageUpdate(ctx, pkg); result.Command != "" || result.Code != 0 || result.OK {
 		appLog("Update finished for %s:%s with code %d.", packageManager, packageID, result.Code)

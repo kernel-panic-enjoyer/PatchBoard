@@ -125,6 +125,8 @@ func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
 		app.handleThemeSettingsAPI(w, r)
 	case "/api/settings/app-update-prompt":
 		app.handleAppUpdatePromptSettingsAPI(w, r)
+	case "/api/settings/preferences":
+		app.handleApplicationPreferencesSettingsAPI(w, r)
 	default:
 		http.NotFound(w, r)
 	}

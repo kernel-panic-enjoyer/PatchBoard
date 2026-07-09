@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,6 +99,15 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func startBrowserTestServer(t *testing.T, app *updater.App) *httptest.Server {
 	t.Helper()
 	return startBrowserTestServerWithRoutes(t, app, nil)
@@ -106,7 +116,7 @@ func startBrowserTestServer(t *testing.T, app *updater.App) *httptest.Server {
 func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map[string]http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	appHandler := app.TestHandler()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newSafeBrowserTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if route := routes[r.URL.Path]; route != nil {
 			route(w, r)
 			return
@@ -115,6 +125,47 @@ func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+func newSafeBrowserTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	for attempt := 0; attempt < 50; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := 0
+		if tcpAddress, ok := listener.Addr().(*net.TCPAddr); ok {
+			port = tcpAddress.Port
+		}
+		if chromiumBlocksLocalPort(port) {
+			_ = listener.Close()
+			continue
+		}
+		server := httptest.NewUnstartedServer(handler)
+		server.Listener = listener
+		server.Start()
+		return server
+	}
+	t.Fatal("could not allocate a Chromium-safe local test port")
+	return nil
+}
+
+func chromiumBlocksLocalPort(port int) bool {
+	blockedPorts := map[int]bool{
+		1: true, 7: true, 9: true, 11: true, 13: true, 15: true, 17: true, 19: true,
+		20: true, 21: true, 22: true, 23: true, 25: true, 37: true, 42: true, 43: true,
+		53: true, 69: true, 77: true, 79: true, 87: true, 95: true, 101: true, 102: true,
+		103: true, 104: true, 109: true, 110: true, 111: true, 113: true, 115: true,
+		117: true, 119: true, 123: true, 135: true, 137: true, 139: true, 143: true,
+		161: true, 179: true, 389: true, 427: true, 465: true, 512: true, 513: true,
+		514: true, 515: true, 526: true, 530: true, 531: true, 532: true, 540: true,
+		548: true, 554: true, 556: true, 563: true, 587: true, 601: true, 636: true,
+		989: true, 990: true, 993: true, 995: true, 1719: true, 1720: true, 1723: true,
+		2049: true, 3659: true, 4045: true, 5060: true, 5061: true, 6000: true,
+		6566: true, 6697: true, 10080: true,
+	}
+	return blockedPorts[port] || (port >= 6665 && port <= 6669)
 }
 
 func authenticateBrowserTestRequest(app *updater.App, w http.ResponseWriter, r *http.Request) bool {
@@ -233,7 +284,7 @@ func TestBrowserStopButtonUsesAsyncShutdownRequest(t *testing.T) {
 
 func TestBrowserConnectionBadgeExpiresWhenBackendStops(t *testing.T) {
 	app := updater.NewBrowserTestApp()
-	server := httptest.NewServer(app.TestHandler())
+	server := newSafeBrowserTestServer(t, app.TestHandler())
 	t.Cleanup(func() {
 		server.CloseClientConnections()
 		server.Close()
@@ -1145,7 +1196,7 @@ func TestBrowserAppUpdatePromptDismissesPerVersion(t *testing.T) {
 			if !authenticateBrowserTestRequest(app, w, r) {
 				return
 			}
-			settings := updater.StatusSettings{Theme: "dark"}
+			settings := updater.StatusSettings{Theme: "dark", AppUpdateCheckingEnabled: true}
 			if value := dismissedVersion.Load(); value != nil {
 				settings.AppUpdatePromptDismissedVersion = value.(string)
 			}
@@ -1173,7 +1224,7 @@ func TestBrowserAppUpdatePromptDismissesPerVersion(t *testing.T) {
 			version := strings.TrimSpace(r.Form.Get("version"))
 			dismissedVersion.Store(version)
 			updater.WriteTestJSON(w, http.StatusOK, map[string]any{
-				"settings": updater.StatusSettings{Theme: "dark", AppUpdatePromptDismissedVersion: version},
+				"settings": updater.StatusSettings{Theme: "dark", AppUpdateCheckingEnabled: true, AppUpdatePromptDismissedVersion: version},
 			})
 		},
 	})
@@ -1277,6 +1328,97 @@ func TestBrowserAppUpdatePromptDismissesPerVersion(t *testing.T) {
 	statusVersion.Store("1.3.0")
 	clickAppUpdateCheck()
 	waitForAppUpdateModal()
+}
+
+func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	var preferencesMu sync.Mutex
+	preferences := updater.StatusSettings{
+		Theme:                           "dark",
+		AppUpdateCheckingEnabled:        true,
+		AppUpdateAutoInstallEnabled:     false,
+		RemoveNewDesktopShortcuts:       false,
+		AppUpdatePromptDismissedVersion: "",
+	}
+	var preferencePosts []string
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/status": func(w http.ResponseWriter, r *http.Request) {
+			if !authenticateBrowserTestRequest(app, w, r) {
+				return
+			}
+			preferencesMu.Lock()
+			settings := preferences
+			preferencesMu.Unlock()
+			updater.WriteTestJSON(w, http.StatusOK, updater.StatusResponse{
+				Managers: map[string]updater.ManagerStatus{
+					updater.ManagerWinget: {Available: true},
+					updater.ManagerStore:  {Available: true},
+					updater.ManagerChoco:  {Available: true},
+				},
+				Settings: settings,
+				AppUpdate: updater.AppUpdateStatus{
+					CurrentVersion: "1.0.0",
+				},
+			})
+		},
+		"/api/settings/preferences": func(w http.ResponseWriter, r *http.Request) {
+			if !authenticateBrowserTestRequest(app, w, r) {
+				return
+			}
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			preferencesMu.Lock()
+			defer preferencesMu.Unlock()
+			for _, field := range []string{"app_update_checking_enabled", "app_update_auto_install_enabled", "remove_new_desktop_shortcuts"} {
+				if !r.Form.Has(field) {
+					continue
+				}
+				preferencePosts = append(preferencePosts, field+"="+r.Form.Get(field))
+				enabled := r.Form.Get(field) == "true"
+				switch field {
+				case "app_update_checking_enabled":
+					preferences.AppUpdateCheckingEnabled = enabled
+				case "app_update_auto_install_enabled":
+					preferences.AppUpdateAutoInstallEnabled = enabled
+				case "remove_new_desktop_shortcuts":
+					preferences.RemoveNewDesktopShortcuts = enabled
+				}
+			}
+			updater.WriteTestJSON(w, http.StatusOK, map[string]any{"settings": preferences})
+		},
+	})
+
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	if err := chromedp.Run(ctx,
+		chromedp.Click(`#settings-button`, chromedp.ByQuery),
+		chromedp.Poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.Poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.Click(`#app-update-auto-install-toggle`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.Click(`#app-update-checking-toggle`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.Click(`#desktop-shortcut-cleanup-toggle`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.Click(`#settings-close`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector("#settings-modal").classList.contains("hidden")`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+	); err != nil {
+		t.Fatal(err)
+	}
+	preferencesMu.Lock()
+	defer preferencesMu.Unlock()
+	if !preferences.AppUpdateAutoInstallEnabled || preferences.AppUpdateCheckingEnabled || !preferences.RemoveNewDesktopShortcuts {
+		t.Fatalf("preferences were not persisted through settings modal: %+v", preferences)
+	}
+	for _, want := range []string{"app_update_auto_install_enabled=true", "app_update_checking_enabled=false", "remove_new_desktop_shortcuts=true"} {
+		if !containsString(preferencePosts, want) {
+			t.Fatalf("missing settings preference post %q in %#v", want, preferencePosts)
+		}
+	}
 }
 
 func TestBrowserKeyboardAccessibilityAndMobileLayout(t *testing.T) {

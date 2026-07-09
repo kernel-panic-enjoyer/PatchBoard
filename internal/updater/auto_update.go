@@ -225,6 +225,7 @@ func runAutoUpdateWithStore(ctx context.Context, store StateStore) []UpdateResul
 		}
 		pkg.Key = inventoryKey
 		actionCtx, cancelAction := context.WithTimeout(ctx, scheduledPackageActionDeadline)
+		actionCtx = withPackageMutationOptions(actionCtx, packageMutationOptionsFromState(state))
 		actionResult := updatePackageWithMetadataContext(actionCtx, pkg)
 		actionErr := actionCtx.Err()
 		cancelAction()
