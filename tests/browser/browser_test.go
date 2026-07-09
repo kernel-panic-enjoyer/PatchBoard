@@ -1394,6 +1394,7 @@ func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
 	defer cancel()
 
 	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#log-connection-status`, "Connected")
 	if err := chromedp.Run(ctx,
 		chromedp.Click(`#settings-button`, chromedp.ByQuery),
 		chromedp.Poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
