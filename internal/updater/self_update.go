@@ -20,11 +20,15 @@ import (
 
 const (
 	windowsUpdateUtilityOwner      = "kernel-panic-enjoyer"
-	windowsUpdateUtilityRepository = "WindowsUpdateUtility"
+	windowsUpdateUtilityRepository = "PatchBoard"
 
 	releaseAssetExecutable = "WindowsUpdaterWebUI.exe"
 	releaseAssetMetadata   = "WindowsUpdaterWebUI.metadata.json"
 	releaseAssetSHA256     = "WindowsUpdaterWebUI.exe.sha256"
+
+	patchBoardReleaseAssetExecutable = "PatchBoard.exe"
+	patchBoardReleaseAssetMetadata   = "PatchBoard.metadata.json"
+	patchBoardReleaseAssetSHA256     = "PatchBoard.exe.sha256"
 
 	maxGitHubReleaseResponseBytes = 512 * 1024
 	maxSelfUpdateExecutableBytes  = 100 * 1024 * 1024
@@ -71,6 +75,25 @@ type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
+}
+
+type selfUpdateReleaseAssetNames struct {
+	Executable string
+	Metadata   string
+	SHA256     string
+}
+
+var supportedSelfUpdateReleaseAssetNames = []selfUpdateReleaseAssetNames{
+	{
+		Executable: patchBoardReleaseAssetExecutable,
+		Metadata:   patchBoardReleaseAssetMetadata,
+		SHA256:     patchBoardReleaseAssetSHA256,
+	},
+	{
+		Executable: releaseAssetExecutable,
+		Metadata:   releaseAssetMetadata,
+		SHA256:     releaseAssetSHA256,
+	},
 }
 
 type selfUpdateArtifact struct {
@@ -154,10 +177,8 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	for _, asset := range latestRelease.Assets {
 		assetsByName[asset.Name] = asset
 	}
-	executableAsset := assetsByName[releaseAssetExecutable]
-	metadataAsset := assetsByName[releaseAssetMetadata]
-	checksumAsset := assetsByName[releaseAssetSHA256]
-	if executableAsset.BrowserDownloadURL == "" || metadataAsset.BrowserDownloadURL == "" || checksumAsset.BrowserDownloadURL == "" {
+	executableAsset, metadataAsset, checksumAsset, ok := selectSelfUpdateReleaseAssets(assetsByName)
+	if !ok {
 		return updateStatus, errors.New("newer release is missing required release assets")
 	}
 	if executableAsset.Size > maxSelfUpdateExecutableBytes {
@@ -169,6 +190,18 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	updateStatus.SHA256URL = checksumAsset.BrowserDownloadURL
 	updateStatus.ExecutableSize = executableAsset.Size
 	return updateStatus, nil
+}
+
+func selectSelfUpdateReleaseAssets(assetsByName map[string]githubReleaseAsset) (githubReleaseAsset, githubReleaseAsset, githubReleaseAsset, bool) {
+	for _, names := range supportedSelfUpdateReleaseAssetNames {
+		executableAsset := assetsByName[names.Executable]
+		metadataAsset := assetsByName[names.Metadata]
+		checksumAsset := assetsByName[names.SHA256]
+		if executableAsset.BrowserDownloadURL != "" && metadataAsset.BrowserDownloadURL != "" && checksumAsset.BrowserDownloadURL != "" {
+			return executableAsset, metadataAsset, checksumAsset, true
+		}
+	}
+	return githubReleaseAsset{}, githubReleaseAsset{}, githubReleaseAsset{}, false
 }
 
 func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, updateStatus AppUpdateStatus, downloadDir string) (selfUpdateArtifact, error) {

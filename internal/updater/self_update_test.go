@@ -55,6 +55,47 @@ func TestParseGitHubReleaseRequiresStableNewerAssets(t *testing.T) {
 	}
 }
 
+func TestParseGitHubReleaseAcceptsPatchBoardAssets(t *testing.T) {
+	status, err := parseGitHubRelease([]byte(`{
+		"tag_name": "v0.2.0",
+		"draft": false,
+		"prerelease": false,
+		"assets": [
+			{"name":"PatchBoard.exe","browser_download_url":"https://github.example/patchboard.exe","size":1234},
+			{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/patchboard.metadata.json","size":321},
+			{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/patchboard.exe.sha256","size":64}
+		]
+	}`), "0.1.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Available || status.ExecutableURL != "https://github.example/patchboard.exe" || status.SHA256URL != "https://github.example/patchboard.exe.sha256" {
+		t.Fatalf("PatchBoard release assets were not accepted: %#v", status)
+	}
+}
+
+func TestParseGitHubReleasePrefersPatchBoardAssetsOverLegacyBridgeAssets(t *testing.T) {
+	status, err := parseGitHubRelease([]byte(`{
+		"tag_name": "v0.2.0",
+		"draft": false,
+		"prerelease": false,
+		"assets": [
+			{"name":"WindowsUpdaterWebUI.exe","browser_download_url":"https://github.example/legacy.exe","size":1234},
+			{"name":"WindowsUpdaterWebUI.metadata.json","browser_download_url":"https://github.example/legacy.metadata.json","size":321},
+			{"name":"WindowsUpdaterWebUI.exe.sha256","browser_download_url":"https://github.example/legacy.exe.sha256","size":64},
+			{"name":"PatchBoard.exe","browser_download_url":"https://github.example/patchboard.exe","size":1234},
+			{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/patchboard.metadata.json","size":321},
+			{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/patchboard.exe.sha256","size":64}
+		]
+	}`), "0.1.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Available || status.ExecutableURL != "https://github.example/patchboard.exe" {
+		t.Fatalf("PatchBoard release assets should be preferred: %#v", status)
+	}
+}
+
 func TestParseGitHubReleaseIgnoresPrereleaseAndSameVersion(t *testing.T) {
 	for _, body := range []string{
 		`{"tag_name":"v0.0.2","prerelease":true,"assets":[]}`,
