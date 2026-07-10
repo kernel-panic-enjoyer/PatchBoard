@@ -1,6 +1,6 @@
 module patchboard/tests/browser
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/chromedp/cdproto v0.0.0-20260427013145-5737772c319b

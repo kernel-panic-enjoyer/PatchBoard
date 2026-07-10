@@ -16,7 +16,7 @@
     UPDATER_RUN_STORE_LIVE_* / UPDATER_APPLY_STORE_LIVE_UPDATE environment
     variables and self-skip unless those gates are set.
 
-    Requires Go >= 1.26 on PATH (the module targets go 1.26).
+    Requires Go >= 1.26.5 on PATH (the module targets go 1.26.5).
 
 .EXAMPLE
     .\dev\scripts\Run-Tests.ps1
