@@ -1063,9 +1063,15 @@ func TestApplicationInstallEndpointRunsInstallOperation(t *testing.T) {
 	if decoded.Result == nil || !decoded.Result.OK || decoded.Result.Command != applicationInstallCommand {
 		t.Fatalf("unexpected install response: %#v", decoded.Result)
 	}
-	if !app.waitForBackgroundWork(2 * time.Second) {
-		t.Fatal("application install status refresh did not finish")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, loading, fetchedAt, _ := app.statusCache.snapshot()
+		if loading || !fetchedAt.IsZero() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatal("application install status refresh was not scheduled")
 }
 
 func TestApplicationRestartInstalledEndpointReportsValidationFailure(t *testing.T) {

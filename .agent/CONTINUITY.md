@@ -1,5 +1,6 @@
 [PLANS]
 
+- 2026-07-10T21:35:36+02:00 [USER] Active objective completed locally: fix the failing Windows CI assertions, validate the full Windows build/test path, and publish the focused repair to `main`.
 - 2026-07-10T21:05:41+02:00 [CODE] Self-update apply target authorization is tightened at the production apply entrypoint; the next architecture slice remains to be selected from the remaining hardening recommendations.
 - 2026-07-10T20:40:39+02:00 [CODE] Inventory/Store scan ownership extraction and race-detector coverage are complete; the next architecture slice remains to be selected from the hardening objective.
 - 2026-07-10T20:00:42+02:00 [USER] Active hardening objective remains in progress: operation jobs, status refresh/cache, and local WebUI session state now have narrow owners outside the general App lock; the next architecture slice is inventory/Store scan ownership, followed by a reliable Windows race-detector gate.
@@ -254,6 +255,7 @@
 
 [DISCOVERIES]
 
+- 2026-07-10T21:35:36+02:00 [TOOL] Windows CI run `29117060083` exposed two test-environment assumptions: Windows renders the built-in Administrator SID (`...-500`) as the SDDL alias `LA`, and a status refresh can legitimately take longer than the install endpoint test's two-second completion deadline. The private-path assertion now inspects actual DACL ACE SIDs, and the endpoint test verifies refresh scheduling instead of unrelated refresh completion.
 - 2026-07-10T21:05:41+02:00 [CODE] The self-update launcher already validated target identity, but `runSelfUpdateApply` could be reached through the internal CLI mode without that launcher and only enforced the `PatchBoard.exe` basename. Production apply now repeats the exact current/installed target check.
 - 2026-07-10T20:40:39+02:00 [TOOL] Installing user-scoped MSYS2 with `winget`, then `mingw-w64-ucrt-x86_64-gcc` with `pacman`, enabled cgo/race builds at `C:\msys64\ucrt64\bin`. The focused race suite passed; the earlier missing-GCC entries are superseded for the current worktree.
 - 2026-07-10T20:40:39+02:00 [CODE] Full race execution exposed a test lifetime bug: pending operation jobs from `TestOperationJobRejectsWhenPendingQueueIsFull` continued logging after the next test replaced the package-level `sessionLogs` pointer. Production code was not weakened; test App cleanup now cancels and waits for background work before ordered log-sink restoration.
@@ -333,6 +335,7 @@
 
 [OUTCOMES]
 
+- 2026-07-10T21:35:36+02:00 [TOOL] Windows CI repair validation passed: focused regressions, `go test -count=1 ./...`, full `go test -race -count=1 ./...` with MSYS2 GCC, `go vet ./...`, Staticcheck `v0.7.0`, bundled Node syntax check, `git diff --check`, `Build-Workspace.ps1`, and distribution smoke. Rebuilt `dist\PatchBoard.exe` SHA-256 is `5F91E6B3E23B2CDD45F6047884C1DDCB70679330D31D3FC0FD519AFB6A25B44A`.
 - 2026-07-10T21:05:41+02:00 [TOOL] Self-update target hardening validation passed the Windows-focused target tests, full normal and race Go suites, `go vet`, Staticcheck, bundled Node syntax/TypeScript checks, tagged browser tests, `git diff --check`, workspace rebuild, and distribution smoke. Rebuilt `dist\PatchBoard.exe` SHA-256 `41c233b86b562c8f21fba6fcadf2ab6c1e736915260fbdf51af067c3c7ba7273`.
 - 2026-07-10T20:55:42+02:00 [TOOL] Final validation after the race-lifetime and browser timing fixes passed `gofmt`, `go test -count=1 ./...`, `go test -race -count=1 ./...` with GCC, `go vet ./...`, root and tagged-browser Staticcheck `v0.7.0`, bundled Node syntax and TypeScript `checkJs`, tagged browser tests, `git diff --check`, `Build-Workspace.ps1`, and distribution smoke. Rebuilt `dist\PatchBoard.exe` SHA-256 `4cd3cfc42e4251e5b6b230ca2a6c31c67b66c89f35cf316bed24d2cee70bdb87`.
 - 2026-07-10T20:40:39+02:00 [TOOL] Inventory ownership/race slice validated: `go test -count=1 ./...`, `go test -race -count=1 ./...` (GCC enabled), `go vet ./...`, Staticcheck `v0.7.0`, bundled Node syntax and TypeScript `checkJs`, tagged browser tests, `git diff --check`, `Build-Workspace.ps1`, and distribution smoke all passed. Rebuilt `dist\PatchBoard.exe` SHA-256 `bdf5d09af4380f2edc841e1c3402a5ae0fb01589db117ba84e4bb371e21a4654`.
