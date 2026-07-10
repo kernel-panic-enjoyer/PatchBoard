@@ -84,21 +84,47 @@ func TestPackageAutoUpdateEnabledUsesCanonicalStoreKey(t *testing.T) {
 	}
 }
 
-func TestVersionGreater(t *testing.T) {
+func TestNumericVersionLooksNewer(t *testing.T) {
 	cases := []struct {
 		candidate string
 		current   string
 		want      bool
 	}{
 		{"1.1.0", "1.0.9", true},
+		{"1.10", "1.2", true},
 		{"2026.11050.1001.0", "2026.11050.1001.0", false},
+		{"2024.12", "2024.9", true},
 		{"1.0", "1.0.1", false},
 		{"v2.0.0", "1.9.9", true},
+		{"1.0.0-beta", "1.0.0", false},
 		{"latest", "1.0.0", false},
+		{"unbekannt", "1.0.0", false},
 	}
 	for _, tc := range cases {
-		if got := versionGreater(tc.candidate, tc.current); got != tc.want {
-			t.Fatalf("versionGreater(%q, %q) = %t, want %t", tc.candidate, tc.current, got, tc.want)
+		if got := numericVersionLooksNewer(tc.candidate, tc.current); got != tc.want {
+			t.Fatalf("numericVersionLooksNewer(%q, %q) = %t, want %t", tc.candidate, tc.current, got, tc.want)
 		}
+	}
+}
+
+func TestPackageIdentityNormalizationAndKeySplitting(t *testing.T) {
+	cases := map[string]string{
+		" OpenAI.Codex_2p2nqsd0c76g0 ":              "openaicodex2p2nqsd0c76g0",
+		"Microsoft.WindowsCalculator_8wekyb3d8bbwe": "microsoftwindowscalculator",
+		"Capture-Picker! 2026":                      "capturepicker2026",
+	}
+	for input, want := range cases {
+		if got := normalizePackageIdentity(input); got != want {
+			t.Fatalf("normalizePackageIdentity(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if _, _, err := splitPackageKey("winget:"); err == nil {
+		t.Fatal("empty package id should be rejected")
+	}
+	if _, _, err := splitPackageKey("npm:leftpad"); err == nil {
+		t.Fatal("unmanaged package manager should be rejected")
+	}
+	if manager, id, err := splitPackageKey("choco:git.install"); err != nil || manager != managerChoco || id != "git.install" {
+		t.Fatalf("unexpected split result manager=%q id=%q err=%v", manager, id, err)
 	}
 }

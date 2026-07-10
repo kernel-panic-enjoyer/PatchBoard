@@ -41,6 +41,29 @@ jobs:
         with:
           node-version: 26
 
+      - name: Go vulnerability scan
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+          & (Join-Path $tools 'govulncheck.exe') ./...
+
+      - name: Static analysis
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          & (Join-Path $tools 'staticcheck.exe') ./...
+
+      - name: JavaScript type check
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run check:js
+
       - name: Build and validate
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 -Version '${{ inputs.version }}' -Strip

@@ -44,3 +44,21 @@ jobs:
 
       - name: Browser tests
         run: go test -count=1 -tags uitestsupport ./...
+
+      - name: Static analysis
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          & (Join-Path $tools 'staticcheck.exe') -tags=uitestsupport ./...
+
+      - name: Go vulnerability scan
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+          & (Join-Path $tools 'govulncheck.exe') ./...

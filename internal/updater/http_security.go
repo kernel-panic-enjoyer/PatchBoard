@@ -1,7 +1,10 @@
 package updater
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,6 +14,8 @@ import (
 
 const sessionCookieName = "PatchBoard"
 const trustedUIRequestHeader = "X-PatchBoard"
+const csrfRequestHeader = "X-PatchBoard-CSRF"
+const csrfTokenDerivationMessage = "PatchBoard CSRF token v1"
 
 func setSecurityHeaders(w http.ResponseWriter) {
 	header := w.Header()
@@ -77,6 +82,15 @@ func tokensEqualConstantTime(providedToken, expectedToken string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) == 1
+}
+
+func csrfTokenForSession(sessionToken string) string {
+	if sessionToken == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(sessionToken))
+	_, _ = mac.Write([]byte(csrfTokenDerivationMessage))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (app *App) sessionOK(r *http.Request) bool {
@@ -155,6 +169,14 @@ func (app *App) requestBoundaryOK(w http.ResponseWriter, r *http.Request) bool {
 			writeAPIError(w, http.StatusForbidden, "forbidden origin")
 			return false
 		}
+	}
+	if !app.trustedUIRequest(r) {
+		writeAPIError(w, http.StatusForbidden, "trusted UI request header required")
+		return false
+	}
+	if !tokensEqualConstantTime(r.Header.Get(csrfRequestHeader), csrfTokenForSession(app.sessionToken)) {
+		writeAPIError(w, http.StatusForbidden, "CSRF token required")
+		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) {
 	case "", "same-origin", "none":

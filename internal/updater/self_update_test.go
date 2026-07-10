@@ -13,6 +13,8 @@ import (
 	"testing"
 )
 
+const selfUpdateTestReleaseCommit = "0123456789abcdef0123456789abcdef01234567"
+
 func TestCompareAppVersions(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -39,6 +41,7 @@ func TestCompareAppVersions(t *testing.T) {
 func TestParseGitHubReleaseRequiresStableNewerAssets(t *testing.T) {
 	status, err := parseGitHubRelease([]byte(`{
 		"tag_name": "v0.0.2",
+		"target_commitish": "0123456789abcdef0123456789abcdef01234567",
 		"draft": false,
 		"prerelease": false,
 		"html_url": "https://github.example/release",
@@ -51,7 +54,7 @@ func TestParseGitHubReleaseRequiresStableNewerAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Available || status.LatestVersion != "0.0.2" || status.ExecutableURL == "" || status.SHA256URL == "" {
+	if !status.Available || status.LatestVersion != "0.0.2" || status.ExecutableURL == "" || status.SHA256URL == "" || status.ReleaseTargetCommit != selfUpdateTestReleaseCommit {
 		t.Fatalf("release was not parsed as available with required assets: %#v", status)
 	}
 }
@@ -84,6 +87,32 @@ func TestParseGitHubReleaseTreatsMissingAssetsAsIncompatible(t *testing.T) {
 	}
 	if status.IncompatibleReason == "" || !strings.Contains(status.IncompatibleReason, "PatchBoard.metadata.json") || !strings.Contains(status.IncompatibleReason, "PatchBoard.exe.sha256") {
 		t.Fatalf("expected incompatible missing-asset reason, got %#v", status)
+	}
+}
+
+func TestParseGitHubReleaseRequiresExactTargetCommit(t *testing.T) {
+	for _, targetCommitish := range []string{"", "main", "0123456"} {
+		releaseJSON := fmt.Sprintf(`{
+			"tag_name": "v0.0.2",
+			"target_commitish": %q,
+			"draft": false,
+			"prerelease": false,
+			"assets": [
+				{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234},
+				{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/app.metadata.json","size":321},
+				{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64}
+			]
+		}`, targetCommitish)
+		status, err := parseGitHubRelease([]byte(releaseJSON), "0.0.1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.Available || status.ReleaseTargetCommit != "" {
+			t.Fatalf("release without exact target commit must not be available: %#v", status)
+		}
+		if status.IncompatibleReason == "" || !strings.Contains(status.IncompatibleReason, "exact target commit") {
+			t.Fatalf("expected target-commit incompatible reason, got %#v", status)
+		}
 	}
 }
 
@@ -143,12 +172,13 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 
 	dir := t.TempDir()
 	artifact, err := downloadSelfUpdateArtifact(context.Background(), server.Client(), AppUpdateStatus{
-		Available:      true,
-		LatestVersion:  "0.0.2",
-		ExecutableURL:  server.URL + "/app.exe",
-		MetadataURL:    server.URL + "/app.metadata.json",
-		SHA256URL:      server.URL + "/app.exe.sha256",
-		ExecutableSize: int64(len(payload)),
+		Available:           true,
+		LatestVersion:       "0.0.2",
+		ReleaseTargetCommit: selfUpdateTestReleaseCommit,
+		ExecutableURL:       server.URL + "/app.exe",
+		MetadataURL:         server.URL + "/app.metadata.json",
+		SHA256URL:           server.URL + "/app.exe.sha256",
+		ExecutableSize:      int64(len(payload)),
 	}, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -179,11 +209,12 @@ func TestDownloadSelfUpdateRejectsChecksumMismatch(t *testing.T) {
 	defer server.Close()
 
 	_, err := downloadSelfUpdateArtifact(context.Background(), server.Client(), AppUpdateStatus{
-		Available:     true,
-		LatestVersion: "0.0.2",
-		ExecutableURL: server.URL + "/app.exe",
-		MetadataURL:   server.URL + "/app.metadata.json",
-		SHA256URL:     server.URL + "/app.exe.sha256",
+		Available:           true,
+		LatestVersion:       "0.0.2",
+		ReleaseTargetCommit: selfUpdateTestReleaseCommit,
+		ExecutableURL:       server.URL + "/app.exe",
+		MetadataURL:         server.URL + "/app.metadata.json",
+		SHA256URL:           server.URL + "/app.exe.sha256",
 	}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("expected checksum mismatch, got %v", err)
@@ -219,6 +250,11 @@ func TestDownloadSelfUpdateRejectsMetadataMismatch(t *testing.T) {
 			metadata: selfUpdateMetadataFixture(payload, "9.9.9", nil),
 			want:     "metadata version",
 		},
+		{
+			name:     "wrong release commit",
+			metadata: selfUpdateMetadataFixture(payload, "0.0.2", map[string]string{"commit": "fedcba9876543210fedcba9876543210fedcba98"}),
+			want:     "metadata commit",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,12 +273,13 @@ func TestDownloadSelfUpdateRejectsMetadataMismatch(t *testing.T) {
 			defer server.Close()
 
 			_, err := downloadSelfUpdateArtifact(context.Background(), server.Client(), AppUpdateStatus{
-				Available:      true,
-				LatestVersion:  "0.0.2",
-				ExecutableURL:  server.URL + "/app.exe",
-				MetadataURL:    server.URL + "/app.metadata.json",
-				SHA256URL:      server.URL + "/app.exe.sha256",
-				ExecutableSize: int64(len(payload)),
+				Available:           true,
+				LatestVersion:       "0.0.2",
+				ReleaseTargetCommit: selfUpdateTestReleaseCommit,
+				ExecutableURL:       server.URL + "/app.exe",
+				MetadataURL:         server.URL + "/app.metadata.json",
+				SHA256URL:           server.URL + "/app.exe.sha256",
+				ExecutableSize:      int64(len(payload)),
 			}, t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected metadata rejection containing %q, got %v", tc.want, err)
@@ -251,10 +288,47 @@ func TestDownloadSelfUpdateRejectsMetadataMismatch(t *testing.T) {
 	}
 }
 
+func TestDownloadSelfUpdateRequiresReleaseTargetCommit(t *testing.T) {
+	payload := []byte("new executable")
+	sum := sha256.Sum256(payload)
+	shaText := hex.EncodeToString(sum[:]) + "  PatchBoard.exe\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app.exe":
+			_, _ = w.Write(payload)
+		case "/app.metadata.json":
+			_, _ = w.Write([]byte(selfUpdateMetadataFixture(payload, "0.0.2", nil)))
+		case "/app.exe.sha256":
+			_, _ = w.Write([]byte(shaText))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, err := downloadSelfUpdateArtifact(context.Background(), server.Client(), AppUpdateStatus{
+		Available:      true,
+		LatestVersion:  "0.0.2",
+		ExecutableURL:  server.URL + "/app.exe",
+		MetadataURL:    server.URL + "/app.metadata.json",
+		SHA256URL:      server.URL + "/app.exe.sha256",
+		ExecutableSize: int64(len(payload)),
+	}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "release target commit") {
+		t.Fatalf("expected release target commit rejection, got %v", err)
+	}
+}
+
 func TestApplySelfUpdateCopiesExecutableAndKeepsBackup(t *testing.T) {
-	dir := t.TempDir()
-	source := filepath.Join(dir, "PatchBoard-new.exe")
-	target := filepath.Join(dir, "PatchBoard.exe")
+	setProcessExecutionModeForTest(t, processModeInteractive)
+	tempRoot := t.TempDir()
+	t.Setenv("UPDATER_TEMP_DIR", tempRoot)
+	stagingDir := filepath.Join(tempRoot, "self-update")
+	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(stagingDir, "PatchBoard-new.exe")
+	target := filepath.Join(t.TempDir(), "PatchBoard.exe")
 	if err := os.WriteFile(source, []byte("new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -287,6 +361,7 @@ func selfUpdateMetadataFixture(payload []byte, version string, overrides map[str
 	sum := sha256.Sum256(payload)
 	values := map[string]string{
 		"artifact":   `"C:\\Program Files\\PatchBoard\\PatchBoard.exe"`,
+		"commit":     fmt.Sprintf("%q", selfUpdateTestReleaseCommit),
 		"sha256":     fmt.Sprintf("%q", hex.EncodeToString(sum[:])),
 		"version":    fmt.Sprintf("%q", version),
 		"bytes":      fmt.Sprintf("%d", len(payload)),
@@ -296,7 +371,7 @@ func selfUpdateMetadataFixture(payload []byte, version string, overrides map[str
 	}
 	for key, value := range overrides {
 		switch key {
-		case "artifact", "sha256", "version", "license", "repository":
+		case "artifact", "commit", "sha256", "version", "license", "repository":
 			values[key] = fmt.Sprintf("%q", value)
 		default:
 			values[key] = value
@@ -304,11 +379,12 @@ func selfUpdateMetadataFixture(payload []byte, version string, overrides map[str
 	}
 	return fmt.Sprintf(`{
 		"artifact": %s,
+		"commit": %s,
 		"sha256": %s,
 		"version": %s,
 		"bytes": %s,
 		"dirty": %s,
 		"license": %s,
 		"repository": %s
-	}`, values["artifact"], values["sha256"], values["version"], values["bytes"], values["dirty"], values["license"], values["repository"])
+	}`, values["artifact"], values["commit"], values["sha256"], values["version"], values["bytes"], values["dirty"], values["license"], values["repository"])
 }

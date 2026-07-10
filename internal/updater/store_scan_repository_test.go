@@ -1010,33 +1010,3 @@ func countJSONSnapshots(t *testing.T, dir string) int {
 	}
 	return count
 }
-
-func storeScanAPIProjectionJSON(t *testing.T, snapshot StoreScanSnapshot) []byte {
-	t.Helper()
-	restoreNow := replaceStoreScanNow(snapshot.Scan.CompletedAt)
-	defer restoreNow()
-	providers := providerSummariesFromRuns(snapshot.ProviderRuns)
-	families := map[string]StorePackagedAppFamily{}
-	for _, family := range snapshot.Inventory.Families {
-		families[strings.ToLower(family.Identity.PackageFamilyName)] = family
-	}
-	inventory := applyPublishedStoreAssessmentsToInventory(defaultState(), Inventory{
-		PackageLookup: PackageLookup{Packages: []Package{transactionalStoreAPIPackage("OpenAI.Codex_abc123")}},
-	}, snapshot, families, providers)
-	data, err := json.Marshal(inventory.Packages)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
-func storeScanDiagnosticsProjectionJSON(t *testing.T, snapshot StoreScanSnapshot) []byte {
-	t.Helper()
-	export := StoreDiagnosticsExport{GeneratedAt: "2026-06-23T10:00:02Z", SchemaVersion: storeScanSchemaVersion, DetectorMode: "new"}
-	applyStoreDiagnosticsSnapshot(&export, snapshot)
-	data, err := json.Marshal(export)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
-}

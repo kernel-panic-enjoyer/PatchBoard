@@ -47,17 +47,9 @@ func parseChocoOutdated(output string) map[string]string {
 	return availableVersionsByPackageID
 }
 
-func chocoInstalled() ([]Package, CommandResult) {
-	return chocoInstalledContext(context.Background())
-}
-
 func chocoInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 	result := runCommandContext(ctx, 90*time.Second, managerCommand(managerChoco, "list", "--local-only", "--limit-output", "--no-color")...)
 	return parseChocoList(chocoCombinedOutput(result)), result
-}
-
-func chocoUpdates() (map[string]string, map[string]Package, CommandResult) {
-	return chocoUpdatesContext(context.Background())
 }
 
 func chocoUpdatesContext(ctx context.Context) (map[string]string, map[string]Package, CommandResult) {

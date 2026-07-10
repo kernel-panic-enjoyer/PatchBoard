@@ -190,16 +190,6 @@ func uniqueCleanPaths(paths []string) []string {
 	return unique
 }
 
-func commandProcessorPath() string {
-	executableName := commandProcessorExecutable
-	for _, windowsDirectory := range windowsDirectories() {
-		if existingPath := firstExistingPath([]string{filepath.Join(windowsDirectory, "System32", executableName)}); existingPath != "" {
-			return existingPath
-		}
-	}
-	return executableName
-}
-
 func unresolvedHardenedManagerPath(managerName string) string {
 	return filepath.Join(`C:\Windows`, "System32", "PatchBoard-"+managerName+"-not-resolved.exe")
 }
@@ -308,11 +298,12 @@ func managerCommand(managerName string, args ...string) []string {
 	if resolved {
 		return append([]string{executablePath}, args...)
 	}
+	return unresolvedManagerCommand(managerName, args...)
+}
+
+func unresolvedManagerCommand(managerName string, args ...string) []string {
 	if hardenedProcessExecutionMode() {
 		return append([]string{unresolvedHardenedManagerPath(managerName)}, args...)
-	}
-	if managerName == "winget" || managerName == "store" {
-		return append([]string{commandProcessorPath(), "/d", "/c", managerName}, args...)
 	}
 	return append([]string{managerName}, args...)
 }

@@ -393,12 +393,6 @@ func clampLogEntry(entry LogEntry, maxBytes int) LogEntry {
 	return entry
 }
 
-func (buffer *LogBuffer) trimLocked() {
-	buffer.ensureLocked()
-	buffer.globalRing.trim()
-	buffer.syncCompatLocked()
-}
-
 func (buffer *LogBuffer) syncCompatLocked() {
 	buffer.entries = buffer.globalRing.entriesInOrder()
 	buffer.totalBytes = buffer.globalRing.totalBytes
@@ -540,13 +534,6 @@ func (ring *logEntryRing) append(entry LogEntry) {
 	ring.entryCount++
 }
 
-func (ring *logEntryRing) trim() {
-	maxEntries, maxBytes := ring.limits()
-	for ring.entryCount > 0 && (ring.entryCount > maxEntries || ring.totalBytes > maxBytes) {
-		ring.dropOldest()
-	}
-}
-
 func (ring *logEntryRing) dropOldest() {
 	if ring.entryCount == 0 || len(ring.entries) == 0 {
 		return
@@ -609,10 +596,6 @@ func appLog(format string, args ...any) {
 
 func appLogContext(ctx context.Context, format string, args ...any) {
 	sessionLogs.AppendContext(ctx, "app", fmt.Sprintf(format, args...), nil)
-}
-
-func appendLogLineCategorized(stream, line string, categories []string) {
-	appendLogLineContext(context.Background(), stream, line, categories)
 }
 
 func appendLogLineContext(ctx context.Context, stream, line string, categories []string) {

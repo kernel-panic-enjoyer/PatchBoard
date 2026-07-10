@@ -55,9 +55,9 @@ func TestOperationJobRetentionBoundsCompletedHistory(t *testing.T) {
 				status.State = jobStateSucceeded
 			})
 		})
-	}
-	if _, ok := waitForOperationJobState(app, latest.JobID, 5*time.Second); !ok {
-		t.Fatal("latest high-volume job did not finish")
+		if _, ok := waitForOperationJobState(app, latest.JobID, 2*time.Second); !ok {
+			t.Fatalf("high-volume job %d did not finish", index)
+		}
 	}
 	statuses := app.operationJobsSnapshot()
 	if len(statuses) > operationJobRecentHistoryLimit+1 {
@@ -221,9 +221,9 @@ func TestOperationJobRetentionPrunesPerJobLogRings(t *testing.T) {
 				status.State = jobStateSucceeded
 			})
 		})
-	}
-	if _, ok := waitForOperationJobState(app, latest.JobID, 5*time.Second); !ok {
-		t.Fatal("latest high-volume job did not finish")
+		if _, ok := waitForOperationJobState(app, latest.JobID, 2*time.Second); !ok {
+			t.Fatalf("high-volume log job %d did not finish", i)
+		}
 	}
 	statuses := app.operationJobsSnapshot()
 	retainedJobIDs := map[string]bool{}

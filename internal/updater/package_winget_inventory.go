@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-func wingetInstalled() ([]Package, CommandResult) {
-	return wingetInstalledContext(context.Background())
-}
-
 func wingetInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 	var listCommandResult CommandResult
 	var listedPackages []Package
@@ -50,10 +46,6 @@ func wingetInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 		return mergeWingetExportWithTable(exportedPackages, listedPackages), listCommandResult
 	}
 	return listedPackages, listCommandResult
-}
-
-func wingetUpdates() (map[string]string, map[string]Package, CommandResult) {
-	return wingetUpdatesContext(context.Background())
 }
 
 func wingetUpdatesContext(ctx context.Context) (map[string]string, map[string]Package, CommandResult) {

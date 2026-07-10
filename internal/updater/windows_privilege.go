@@ -17,20 +17,6 @@ func isAdmin() bool {
 	return ret != 0
 }
 
-func shellExecuteRunas(file string, params string) error {
-	shell32 := syscall.NewLazyDLL("shell32.dll")
-	proc := shell32.NewProc("ShellExecuteW")
-	verb, _ := syscall.UTF16PtrFromString("runas")
-	target, _ := syscall.UTF16PtrFromString(file)
-	parameters, _ := syscall.UTF16PtrFromString(params)
-	dir, _ := syscall.UTF16PtrFromString(appRoot())
-	ret, _, err := proc.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(target)), uintptr(unsafe.Pointer(parameters)), uintptr(unsafe.Pointer(dir)), 0)
-	if ret <= 32 {
-		return err
-	}
-	return nil
-}
-
 type shellExecuteInfo struct {
 	cbSize       uint32
 	fMask        uint32
@@ -50,7 +36,6 @@ type shellExecuteInfo struct {
 }
 
 const seeMaskNoCloseProcess = 0x00000040
-const tokenElevationTypeLimited = 3
 
 func shellExecuteRunasProcess(file string, params string) (windows.Handle, error) {
 	shell32 := syscall.NewLazyDLL("shell32.dll")
@@ -99,22 +84,6 @@ func currentSessionID() (uint32, error) {
 		return 0, err
 	}
 	return sessionID, nil
-}
-
-func currentUserCanElevateSameUser() bool {
-	if isAdmin() {
-		return false
-	}
-	var elevationType uint32
-	var outLen uint32
-	err := windows.GetTokenInformation(
-		windows.GetCurrentProcessToken(),
-		windows.TokenElevationType,
-		(*byte)(unsafe.Pointer(&elevationType)),
-		uint32(unsafe.Sizeof(elevationType)),
-		&outLen,
-	)
-	return err == nil && outLen == uint32(unsafe.Sizeof(elevationType)) && elevationType == tokenElevationTypeLimited
 }
 
 func launchElevatedWorkerProcess(pipeName, capability, userSID string, sessionID uint32) (elevatedWorkerProcess, error) {

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -186,13 +187,37 @@ var (
 	windowsUserPathPattern = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s]+`)
 	rawSIDPattern          = regexp.MustCompile(`\bS-\d-\d+(?:-\d+){2,}\b`)
 	secretPairPattern      = regexp.MustCompile(`(?i)\b(token|capability|password|secret|credential)=([^\s&]+)`)
+	sensitiveLogValues     sync.Map
 )
 
 func sanitizeLogText(text string) string {
 	text = windowsUserPathPattern.ReplaceAllString(text, `%USERPROFILE%`)
 	text = rawSIDPattern.ReplaceAllString(text, `[sid]`)
 	text = secretPairPattern.ReplaceAllString(text, `$1=[redacted]`)
+	sensitiveLogValues.Range(func(key, value any) bool {
+		secret, ok := key.(string)
+		if ok && secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+		return true
+	})
 	return text
+}
+
+func (app *App) registerSessionSecretsForLogRedaction() {
+	if app == nil {
+		return
+	}
+	registerSensitiveLogValue(app.token)
+	registerSensitiveLogValue(app.sessionToken)
+}
+
+func registerSensitiveLogValue(value string) {
+	value = strings.TrimSpace(value)
+	if len(value) < 8 {
+		return
+	}
+	sensitiveLogValues.Store(value, struct{}{})
 }
 
 func sanitizeArchiveFilename(name string) string {

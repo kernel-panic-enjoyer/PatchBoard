@@ -8,6 +8,7 @@ type PageData struct {
 	Theme        string
 	IconVersion  string
 	AssetVersion string
+	CSRFToken    string
 }
 
 func sessionLogTabsForTemplate() []LogCategorySpec {
@@ -25,6 +26,7 @@ const pageTemplateHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="patchboard-csrf-token" content="{{.CSRFToken}}">
   <link rel="icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon" sizes="any">
   <link rel="shortcut icon" href="/favicon.ico?v={{.IconVersion}}" type="image/x-icon">
   <link rel="stylesheet" href="/assets/ui.css?v={{.AssetVersion}}">

@@ -197,10 +197,6 @@ func retryPackageActionOnTransientFailure(ctx context.Context, packageManager st
 	return currentResult
 }
 
-func installManager(packageManager string) CommandResult {
-	return installManagerContext(context.Background(), packageManager)
-}
-
 func installManagerContext(ctx context.Context, packageManager string) CommandResult {
 	appLog("Package manager install action started for %s.", packageManager)
 	invalidateManagerDetectionCache()

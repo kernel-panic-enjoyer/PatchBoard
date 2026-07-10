@@ -1,5 +1,7 @@
 package updater
 
+//lint:file-ignore ST1018 Store CLI mojibake fixtures intentionally preserve C1 control characters for normalization.
+
 import (
 	"strings"
 	"time"
@@ -320,10 +322,7 @@ func isStorePipeContinuationRow(headerColumns, rowColumns, pendingRow []string) 
 		return false
 	}
 	if index := storeTableColumnIndex(headerColumns, "current", "available", "version"); index >= 0 && index < len(rowColumns) {
-		if looksLikeVersion(rowColumns[index]) {
-			return false
-		}
-		return true
+		return !looksLikeVersion(rowColumns[index])
 	}
 	if index := storeTableColumnIndex(headerColumns, "id", "product id", "package id"); index >= 0 && index < len(rowColumns) {
 		return strings.TrimSpace(rowColumns[index]) == ""

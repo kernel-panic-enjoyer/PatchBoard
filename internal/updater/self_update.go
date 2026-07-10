@@ -35,6 +35,7 @@ const (
 )
 
 var sha256LinePattern = regexp.MustCompile(`(?i)\b[0-9a-f]{64}\b`)
+var gitCommitPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
 type appUpdateChecker interface {
 	Check(context.Context, string) (AppUpdateStatus, error)
@@ -54,6 +55,10 @@ type AppUpdateStatus struct {
 	MetadataURL    string `json:"-"`
 	SHA256URL      string `json:"-"`
 	ExecutableSize int64  `json:"-"`
+	// ReleaseTargetCommit is hidden from the public status response but is
+	// required during download verification so a release asset cannot claim to
+	// be built from a different source revision than the GitHub release target.
+	ReleaseTargetCommit string `json:"-"`
 }
 
 type GitHubReleaseChecker struct {
@@ -62,11 +67,12 @@ type GitHubReleaseChecker struct {
 }
 
 type githubReleaseResponse struct {
-	TagName    string               `json:"tag_name"`
-	Draft      bool                 `json:"draft"`
-	Prerelease bool                 `json:"prerelease"`
-	HTMLURL    string               `json:"html_url"`
-	Assets     []githubReleaseAsset `json:"assets"`
+	TagName         string               `json:"tag_name"`
+	TargetCommitish string               `json:"target_commitish"`
+	Draft           bool                 `json:"draft"`
+	Prerelease      bool                 `json:"prerelease"`
+	HTMLURL         string               `json:"html_url"`
+	Assets          []githubReleaseAsset `json:"assets"`
 }
 
 type githubReleaseAsset struct {
@@ -185,12 +191,26 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	if executableAsset.Size > maxSelfUpdateExecutableBytes {
 		return updateStatus, fmt.Errorf("release executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
 	}
+	targetCommit, ok := normalizeReleaseTargetCommit(latestRelease.TargetCommitish)
+	if !ok {
+		updateStatus.IncompatibleReason = "latest release does not identify an exact target commit"
+		return updateStatus, nil
+	}
 	updateStatus.Available = true
 	updateStatus.ExecutableURL = executableAsset.BrowserDownloadURL
 	updateStatus.MetadataURL = metadataAsset.BrowserDownloadURL
 	updateStatus.SHA256URL = checksumAsset.BrowserDownloadURL
 	updateStatus.ExecutableSize = executableAsset.Size
+	updateStatus.ReleaseTargetCommit = targetCommit
 	return updateStatus, nil
+}
+
+func normalizeReleaseTargetCommit(targetCommitish string) (string, bool) {
+	targetCommitish = strings.ToLower(strings.TrimSpace(targetCommitish))
+	if !gitCommitPattern.MatchString(targetCommitish) {
+		return "", false
+	}
+	return targetCommitish, true
 }
 
 func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset githubReleaseAsset) string {
@@ -223,7 +243,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if updateStatus.ExecutableSize > maxSelfUpdateExecutableBytes {
 		return selfUpdateArtifact{}, fmt.Errorf("release executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
 	}
-	if err := os.MkdirAll(downloadDir, 0o755); err != nil {
+	if err := ensureUserPrivateDir(downloadDir); err != nil {
 		return selfUpdateArtifact{}, err
 	}
 	expectedSHA256, err := downloadExpectedSHA256(ctx, client, updateStatus.SHA256URL)
@@ -259,7 +279,9 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if err := validateSelfUpdateMetadata(metadata, updateStatus, actualSHA256, actualBytes); err != nil {
 		return selfUpdateArtifact{}, err
 	}
-	_ = os.Chmod(artifactPath, 0o755)
+	if err := protectUserPrivateExecutable(artifactPath); err != nil {
+		return selfUpdateArtifact{}, err
+	}
 	removePartialDownload = false
 	return selfUpdateArtifact{Path: artifactPath, SHA256: strings.ToLower(actualSHA256), Version: updateStatus.LatestVersion}, nil
 }
@@ -290,6 +312,17 @@ func decodeSelfUpdateMetadata(metadataData []byte) (selfUpdateReleaseMetadata, e
 }
 
 func validateSelfUpdateMetadata(metadata selfUpdateReleaseMetadata, updateStatus AppUpdateStatus, actualSHA256 string, actualBytes int64) error {
+	releaseTargetCommit, ok := normalizeReleaseTargetCommit(updateStatus.ReleaseTargetCommit)
+	if !ok {
+		return errors.New("self-update release target commit is missing or invalid")
+	}
+	metadataCommit, ok := normalizeReleaseTargetCommit(metadata.Commit)
+	if !ok {
+		return errors.New("self-update metadata commit is missing or invalid")
+	}
+	if metadataCommit != releaseTargetCommit {
+		return fmt.Errorf("self-update metadata commit %s does not match release target commit %s", metadataCommit, releaseTargetCommit)
+	}
 	metadataSHA256 := strings.ToLower(strings.TrimSpace(metadata.SHA256))
 	if metadataSHA256 == "" || !sha256LinePattern.MatchString(metadataSHA256) {
 		return errors.New("self-update metadata has invalid SHA-256")

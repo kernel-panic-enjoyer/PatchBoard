@@ -127,6 +127,10 @@ func addTestSessionCookie(app *App, request *http.Request) {
 func authenticatedRequest(app *App, method, target string, body io.Reader) *http.Request {
 	request := httptest.NewRequest(method, target, body)
 	addTestSessionCookie(app, request)
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		request.Header.Set(trustedUIRequestHeader, "1")
+		request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	}
 	return request
 }
 

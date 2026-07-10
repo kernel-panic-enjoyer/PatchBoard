@@ -1,0 +1,10 @@
+{
+  "name": "patchboard-webui",
+  "private": true,
+  "scripts": {
+    "check:js": "tsc -p jsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

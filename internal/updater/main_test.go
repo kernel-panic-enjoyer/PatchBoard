@@ -140,6 +140,16 @@ func TestServerURLUsesBoundPort(t *testing.T) {
 	}
 }
 
+func TestLocalHTTPServerHasReadTimeout(t *testing.T) {
+	server := newLocalHTTPServer("127.0.0.1:0", http.NewServeMux())
+	if server.ReadTimeout != apiReadTimeout || server.ReadTimeout <= 0 {
+		t.Fatalf("ReadTimeout = %v, want %v", server.ReadTimeout, apiReadTimeout)
+	}
+	if server.ReadHeaderTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 {
+		t.Fatalf("expected all HTTP server timeouts to be configured: %#v", server)
+	}
+}
+
 func TestRunServerDoesNotStartTrayOrBrowserAfterBindFailure(t *testing.T) {
 	occupied := listenOnLocalhost(t, 0)
 	defer occupied.Close()

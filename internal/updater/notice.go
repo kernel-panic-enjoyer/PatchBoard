@@ -143,10 +143,7 @@ func noticeLineIsNoise(line string) bool {
 			return true
 		}
 	}
-	if strings.Contains(lower, " is the latest version available based on your source(s).") {
-		return true
-	}
-	return false
+	return strings.Contains(lower, " is the latest version available based on your source(s).")
 }
 
 func compactNoticeText(value string) string {

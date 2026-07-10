@@ -58,7 +58,7 @@ Development requirements:
 
 - Go version declared in [go.mod](go.mod).
 - PowerShell.
-- Node.js for `node --check internal/updater/assets/ui.js`.
+- Node.js and npm for the embedded WebUI syntax and TypeScript checks.
 
 ## Install
 
@@ -139,14 +139,17 @@ streams live output.
 
 ## Build from source
 
-Run the workspace build script from the repository root:
+Install the pinned frontend development dependency, then run the workspace
+build script from the repository root:
 
 ```powershell
+npm ci
 powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1
 ```
 
 The script checks formatting, runs tests, runs `go vet`, validates embedded
-JavaScript syntax, and builds the Windows GUI executable under `dist\`.
+JavaScript syntax and types, and builds the Windows GUI executable under
+`dist\`.
 
 For a versioned build:
 
@@ -178,10 +181,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Format-Workspa
 Common local checks:
 
 ```powershell
+npm ci
 gofmt -w <changed-go-files>
 go test -count=1 ./...
 go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 node --check internal/updater/assets/ui.js
+npm run check:js
 git diff --check
 powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1
 ```

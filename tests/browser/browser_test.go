@@ -828,6 +828,47 @@ func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
 	}
 }
 
+func TestBrowserPackageFieldsRenderAsInertText(t *testing.T) {
+	const injectedName = `Injected <img src=x onerror="window.__patchboardXSS=true"> Package`
+	app := updater.NewBrowserTestApp()
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/packages": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, updater.InventoryResponse{Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{
+				Packages: []updater.Package{{
+					Key:             "winget:Injected.Package",
+					Manager:         updater.ManagerWinget,
+					ID:              `Injected.<script>window.__patchboardXSS=true</script>`,
+					Name:            injectedName,
+					Installed:       true,
+					UpdateSupported: true,
+				}},
+			}}})
+		},
+	})
+
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#installed-section`, "Injected")
+	var renderedText string
+	var injectedElementCount int
+	var scriptExecuted bool
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`document.querySelector("#packages-body").textContent`, &renderedText),
+		chromedp.Evaluate(`document.querySelectorAll("#packages-body img, #packages-body script").length`, &injectedElementCount),
+		chromedp.Evaluate(`window.__patchboardXSS === true`, &scriptExecuted),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renderedText, `<img src=x onerror="window.__patchboardXSS=true">`) || !strings.Contains(renderedText, `<script>window.__patchboardXSS=true</script>`) {
+		t.Fatalf("package fields were not rendered as literal text:\n%s", renderedText)
+	}
+	if injectedElementCount != 0 || scriptExecuted {
+		t.Fatalf("package fields created executable markup: elements=%d executed=%v", injectedElementCount, scriptExecuted)
+	}
+}
+
 func TestBrowserManagerFilterUsesVisiblePackages(t *testing.T) {
 	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{

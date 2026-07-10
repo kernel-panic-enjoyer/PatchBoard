@@ -65,10 +65,17 @@ if (Test-Path -LiteralPath $bundledNode) {
         $node = $nodeCommand.Source
     }
 }
-if ($node) {
-    & $node --check internal/updater/assets/ui.js
-    Assert-NativeSuccess "node --check"
+if (-not $node) {
+    throw 'Node.js is required to validate the embedded WebUI.'
 }
+& $node --check internal/updater/assets/ui.js
+Assert-NativeSuccess "node --check"
+$typescriptCompiler = Join-Path $root 'node_modules\typescript\bin\tsc'
+if (-not (Test-Path -LiteralPath $typescriptCompiler)) {
+    throw 'TypeScript dependencies are missing. Run npm ci before building.'
+}
+& $node $typescriptCompiler -p jsconfig.json
+Assert-NativeSuccess "TypeScript check"
 
 if ($TimestampedOutput) {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'

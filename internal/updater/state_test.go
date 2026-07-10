@@ -19,6 +19,7 @@ func TestStateDirOverride(t *testing.T) {
 	if got != dir {
 		t.Fatalf("expected override %s, got %s", dir, got)
 	}
+	assertUserPrivatePermissions(t, got)
 }
 
 func TestStateDirOverrideIgnoredInHardenedMode(t *testing.T) {
@@ -72,6 +73,10 @@ func TestStateDirMigratesLegacyApplicationDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(want, "store-scans", "snapshot.json")); err != nil {
 		t.Fatalf("expected nested Store snapshot data to be copied: %v", err)
 	}
+	assertUserPrivatePermissions(t, want)
+	assertUserPrivatePermissions(t, filepath.Join(want, "store-scans"))
+	assertUserPrivatePermissions(t, filepath.Join(want, "state.json"))
+	assertUserPrivatePermissions(t, filepath.Join(want, "store-scans", "snapshot.json"))
 }
 
 func TestAppTempDirOverride(t *testing.T) {
@@ -84,6 +89,7 @@ func TestAppTempDirOverride(t *testing.T) {
 	if got != dir {
 		t.Fatalf("expected temp override %s, got %s", dir, got)
 	}
+	assertUserPrivatePermissions(t, got)
 }
 
 func TestAppTempDirOverrideIgnoredInHardenedMode(t *testing.T) {
@@ -123,6 +129,7 @@ func TestAppTempDirUsesSystemTempByDefault(t *testing.T) {
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("expected temp dir to be created: %v", err)
 	}
+	assertUserPrivatePermissions(t, want)
 }
 
 func TestLoadStateMigratesStoreAppsOutOfWingetBucket(t *testing.T) {
@@ -367,7 +374,8 @@ func TestSetAutoUpdateDoesNotPersistGlobalWhenTaskCreationFails(t *testing.T) {
 
 func TestSetAutoUpdatePassesCallerContextToScheduledTaskRunner(t *testing.T) {
 	oldCreate := createAutoUpdateTaskRunner
-	contextKey := struct{}{}
+	type requestContextKey struct{}
+	contextKey := requestContextKey{}
 	createAutoUpdateTaskRunner = func(ctx context.Context) CommandResult {
 		if got := ctx.Value(contextKey); got != "request-context" {
 			t.Fatalf("scheduled task runner received context value %v, want request-context", got)

@@ -95,10 +95,6 @@ func setGlobalAutoUpdateWithStore(ctx context.Context, store StateStore, globalE
 	return updatedState, taskResult
 }
 
-func applyAutoUpdateScheduledTask(enabled bool) CommandResult {
-	return applyAutoUpdateScheduledTaskContext(context.Background(), enabled)
-}
-
 func applyAutoUpdateScheduledTaskContext(ctx context.Context, enabled bool) CommandResult {
 	if enabled {
 		return createAutoUpdateTaskRunner(ctx)

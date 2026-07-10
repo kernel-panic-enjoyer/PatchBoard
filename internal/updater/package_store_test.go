@@ -49,6 +49,28 @@ func TestParseStoreSearchPipeTable(t *testing.T) {
 	}
 }
 
+func TestParseStoreSearchBoxDrawingContinuationTable(t *testing.T) {
+	output := `
+┌───────────────────┬──────────────┬───────────────────┬─────────────┐
+│ Name              │ Product ID   │ Publisher         │ Version     │
+├───────────────────┼──────────────┼───────────────────┼─────────────┤
+│ Windows-Rechner   │ 9WZDNCRFHVN5 │ Microsoft         │ 11.2508.4.0 │
+│                   │              │ Corporation       │             │
+│ Smartphone-Link   │ 9NMPJ99VJBWV │ Microsoft Windows │ 0.26042.99.0│
+└───────────────────┴──────────────┴───────────────────┴─────────────┘
+`
+	got := parseStoreSearch(output)
+	if len(got) != 2 {
+		t.Fatalf("expected two parsed Store rows, got %#v", got)
+	}
+	if got[0].Name != "Windows-Rechner" || got[0].ID != "9WZDNCRFHVN5" || got[0].Version != "11.2508.4.0" {
+		t.Fatalf("unexpected first box-drawing Store row: %#v", got[0])
+	}
+	if got[1].Name != "Smartphone-Link" || got[1].ID != "9NMPJ99VJBWV" || got[1].Version != "0.26042.99.0" {
+		t.Fatalf("unexpected second box-drawing Store row: %#v", got[1])
+	}
+}
+
 func TestParseStoreSearchSkipsBannerLines(t *testing.T) {
 	output := `
 Application Compatibility Enhancements

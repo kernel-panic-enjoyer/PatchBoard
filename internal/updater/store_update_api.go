@@ -50,7 +50,7 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 			policy.CannotUpdateReason = "No update available."
 			return policy
 		}
-		if pkg.UpdateSupported == false {
+		if !pkg.UpdateSupported {
 			policy.CannotUpdateReason = "Updates are not supported for this package."
 			return policy
 		}
@@ -85,7 +85,7 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 		policy.CannotUpdateReason = "Store update requires an exact verified action target."
 		return policy
 	}
-	if pkg.UpdateSupported == false {
+	if !pkg.UpdateSupported {
 		policy.CannotUpdateReason = "No supported executor is available for this Store target."
 		return policy
 	}
@@ -103,7 +103,7 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 
 func packagePreferenceEligible(pkg Package) bool {
 	if pkg.Manager != managerStore {
-		return pkg.UpdateSupported != false
+		return pkg.UpdateSupported
 	}
 	return storeInstalledPackageFamilyName(pkg) != "" && normalizedJobPackageKey(pkg) != ""
 }

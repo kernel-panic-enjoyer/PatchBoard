@@ -57,16 +57,6 @@ func cloneUpdateJobStatus(status UpdateJobStatus) UpdateJobStatus {
 	return cloneOperationJobStatus(status)
 }
 
-func updateJobNotice(status UpdateJobStatus) string {
-	if status.CancelRequested {
-		return "Update cancelled. Refreshing package status..."
-	}
-	if failureNotice := updateResultsFailureNotice(status.Results); failureNotice != "" {
-		return failureNotice
-	}
-	return "Update completed. Refreshing package status..."
-}
-
 func updateJobIncludesStorePackage(updatedPackages []Package) bool {
 	for _, updatedPackage := range updatedPackages {
 		if updatedPackage.Manager == managerStore {

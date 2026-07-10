@@ -3,7 +3,6 @@ package updater
 import (
 	"context"
 	"net/http"
-	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -66,7 +65,8 @@ func asyncSnapshot(loading bool, updatedAt time.Time, errorText string) AsyncSna
 // App lock order:
 // Prefer releasing one App lock before taking another. If a future change must
 // hold multiple locks at once, acquire them in this order to avoid deadlocks:
-// lifecycleMu -> mu -> jobsMu -> shutdownCleanupMu.
+// lifecycle.mu -> mu -> jobsMu. Lifecycle cleanup locking is private to the
+// lifecycle service and is never held while application callbacks run.
 type App struct {
 	token         string
 	sessionToken  string
@@ -107,110 +107,40 @@ type App struct {
 	jobSeq                     int64
 	jobQueue                   []string
 	jobActive                  bool
-	lifecycleMu                sync.Mutex
-	rootCtx                    context.Context
-	rootCancel                 context.CancelFunc
-	shuttingDown               bool
-	backgroundWg               sync.WaitGroup
-	shutdownOnce               sync.Once
-	shutdownCleanupMu          sync.Mutex
-	shutdownCleanups           []func()
-}
-
-func (app *App) ensureRootContextLocked() context.Context {
-	if app.rootCtx == nil {
-		app.rootCtx, app.rootCancel = context.WithCancel(context.Background())
-	}
-	return app.rootCtx
+	lifecycle                  appLifecycle
 }
 
 func (app *App) isShuttingDown() bool {
-	app.lifecycleMu.Lock()
-	defer app.lifecycleMu.Unlock()
-	return app.shuttingDown
+	return app.lifecycle.isShuttingDown()
 }
 
 func (app *App) startBackgroundWork(workName string, runWork func(context.Context)) bool {
-	app.lifecycleMu.Lock()
-	if app.shuttingDown {
-		app.lifecycleMu.Unlock()
-		appLog("Skipping %s because shutdown is in progress.", workName)
-		return false
-	}
-	rootCtx := app.ensureRootContextLocked()
-	app.backgroundWg.Add(1)
-	app.lifecycleMu.Unlock()
-
-	go func() {
-		defer app.backgroundWg.Done()
-		runWork(rootCtx)
-	}()
-	return true
+	return app.lifecycle.startBackgroundWork(workName, runWork)
 }
 
 func (app *App) rootContext() context.Context {
-	app.lifecycleMu.Lock()
-	defer app.lifecycleMu.Unlock()
-	return app.ensureRootContextLocked()
+	return app.lifecycle.rootContext()
 }
 
 func (app *App) beginShutdown() {
-	app.lifecycleMu.Lock()
-	app.shuttingDown = true
-	if app.rootCancel != nil {
-		app.rootCancel()
-	}
-	app.lifecycleMu.Unlock()
+	app.lifecycle.beginShutdown()
 	app.cancelOperationJobsForShutdown()
 }
 
 func (app *App) waitForBackgroundWork(timeout time.Duration) bool {
-	backgroundDone := make(chan struct{})
-	go func() {
-		app.backgroundWg.Wait()
-		close(backgroundDone)
-	}()
-	timeoutTimer := time.NewTimer(timeout)
-	defer timeoutTimer.Stop()
-	select {
-	case <-backgroundDone:
-		return true
-	case <-timeoutTimer.C:
-		return false
-	}
+	return app.lifecycle.waitForBackgroundWork(timeout)
 }
 
 func (app *App) addShutdownCleanup(cleanup func()) {
-	if cleanup == nil {
-		return
-	}
-	app.shutdownCleanupMu.Lock()
-	defer app.shutdownCleanupMu.Unlock()
-	app.shutdownCleanups = append(app.shutdownCleanups, cleanup)
+	app.lifecycle.addShutdownCleanup(cleanup)
 }
 
 func (app *App) runShutdownCleanups() {
-	app.shutdownCleanupMu.Lock()
-	pendingCleanups := append([]func(){}, app.shutdownCleanups...)
-	app.shutdownCleanups = nil
-	app.shutdownCleanupMu.Unlock()
-
-	runCleanup := func(cleanup func()) {
-		defer func() {
-			if panicValue := recover(); panicValue != nil {
-				appLog("Shutdown cleanup failed: %v\n%s", panicValue, debug.Stack())
-			}
-		}()
-		cleanup()
-	}
-
-	for cleanupIndex := len(pendingCleanups) - 1; cleanupIndex >= 0; cleanupIndex-- {
-		runCleanup(pendingCleanups[cleanupIndex])
-	}
+	app.lifecycle.runShutdownCleanups()
 }
 
 func (app *App) requestShutdown(requestSource string) {
-	app.shutdownOnce.Do(func() {
+	app.lifecycle.runShutdownOnce(func() {
 		appLog("%s quit requested.", requestSource)
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {

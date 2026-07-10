@@ -717,10 +717,6 @@ func (repo *StoreScanFileRepository) currentPointerPath(userSID string) string {
 	return filepath.Join(repo.userDir(userSID), storeScanCurrentPointerName)
 }
 
-func (repo *StoreScanFileRepository) oldSnapshotPath(snapshot StoreScanSnapshot) string {
-	return filepath.Join(repo.userDir(snapshot.Scan.UserSID), snapshotFileName(snapshot))
-}
-
 func (repo *StoreScanFileRepository) safeGenerationPath(userSID, filename string) (string, error) {
 	if filename != filepath.Base(filename) || filename == "" || strings.Contains(filename, string(filepath.Separator)) {
 		return "", storeScanRepositoryError{Kind: storeScanRepositoryErrorPointerGenerationMismatch, Err: errors.New("current pointer generation filename is not local")}

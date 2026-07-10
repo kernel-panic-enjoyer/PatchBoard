@@ -308,11 +308,14 @@ func (app *App) runOperationJobQueue(queueCtx context.Context) {
 		if operationJobComplete(nextJob.status) {
 			compactTerminalOperationJobStatus(&nextJob.status)
 		}
-		app.bumpOperationJobRevisionLocked(nextJob)
 		finishedStatus := cloneOperationJobStatus(nextJob.status)
+		// Publish the final correlated log entry before the terminal revision can
+		// be observed. Callers that see a completed job can then fetch a complete
+		// job log without racing this final write.
+		appLogContext(jobCtx, "Job %s finished with state %s.", finishedStatus.JobID, finishedStatus.State)
+		app.bumpOperationJobRevisionLocked(nextJob)
 		app.pruneOperationJobsLocked()
 		app.jobsMu.Unlock()
-		appLogContext(jobCtx, "Job %s finished with state %s.", finishedStatus.JobID, finishedStatus.State)
 	}
 }
 
@@ -453,18 +456,6 @@ func (app *App) operationJobsSnapshotWithRevision() ([]OperationJobStatus, int64
 		statuses = append(statuses, cloneOperationJobStatus(job.status))
 	}
 	return statuses, app.jobsRevision, app.pendingOperationJobCountLocked()
-}
-
-func (app *App) activeOperationJobsSnapshot() []OperationJobStatus {
-	allStatuses := app.operationJobsSnapshot()
-	activeStatuses := make([]OperationJobStatus, 0, len(allStatuses))
-	for _, status := range allStatuses {
-		if operationJobComplete(status) {
-			continue
-		}
-		activeStatuses = append(activeStatuses, status)
-	}
-	return activeStatuses
 }
 
 func operationJobComplete(status OperationJobStatus) bool {

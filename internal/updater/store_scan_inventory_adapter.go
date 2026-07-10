@@ -33,10 +33,6 @@ type StoreInventoryProjectionResult struct {
 	Error            error
 }
 
-func applyStoreTransactionalScanPipeline(ctx context.Context, state State, inventory Inventory) Inventory {
-	return applyStoreTransactionalScanPipelineResult(ctx, state, inventory, time.Time{}).Inventory
-}
-
 func applyStoreTransactionalScanPipelineResult(ctx context.Context, state State, inventory Inventory, freshAfter time.Time) StoreInventoryProjectionResult {
 	result, err := runStoreTransactionalScanForInventory(ctx)
 	projection := loadLatestPublishedStoreProjection(ctx, state, inventory, freshAfter)

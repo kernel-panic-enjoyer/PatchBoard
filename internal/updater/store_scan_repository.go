@@ -287,23 +287,3 @@ func sortStoreScanSnapshot(snapshot *StoreScanSnapshot) {
 		})
 	}
 }
-
-func targetFromPersistedObservation(identity StoreInstalledIdentity, provider StoreProviderIdentity, productID, updateID string, verified bool, verifiedAt time.Time) *ExactStoreUpdateTarget {
-	productID = strings.TrimSpace(productID)
-	updateID = strings.TrimSpace(updateID)
-	if !verified || (productID == "" && updateID == "") || (productID != "" && !looksLikeStoreProductID(productID)) {
-		return nil
-	}
-	if verifiedAt.IsZero() {
-		verifiedAt = time.Now().UTC()
-	}
-	return &ExactStoreUpdateTarget{
-		Identity:   identity,
-		Provider:   provider,
-		ProductID:  productID,
-		UpdateID:   updateID,
-		Verified:   true,
-		VerifiedBy: firstNonEmpty(provider.Key(), provider.Name),
-		VerifiedAt: verifiedAt,
-	}
-}

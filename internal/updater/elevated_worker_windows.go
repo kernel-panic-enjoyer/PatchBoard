@@ -639,10 +639,6 @@ func packageUpdateBatchIncludesManager(packages []Package, manager string) bool 
 	return false
 }
 
-func appendWorkerResultLogs(result CommandResult) {
-	appendWorkerResultLogsContext(context.Background(), result)
-}
-
 func appendWorkerResultLogsContext(ctx context.Context, result CommandResult) {
 	categories := logCategoriesForCommandLine(result.Command)
 	if result.Command != "" {

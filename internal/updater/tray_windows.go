@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -132,11 +134,19 @@ type trayIcon struct {
 }
 
 func startTray(app *App, url string) (*trayIcon, error) {
+	className, err := windows.UTF16FromString(fmt.Sprintf("PatchBoardTray-%d", os.Getpid()))
+	if err != nil {
+		return nil, fmt.Errorf("encode tray class name: %w", err)
+	}
+	windowName, err := windows.UTF16FromString(appName)
+	if err != nil {
+		return nil, fmt.Errorf("encode tray window name: %w", err)
+	}
 	tray := &trayIcon{
 		app:        app,
 		url:        url,
-		className:  syscall.StringToUTF16(fmt.Sprintf("PatchBoardTray-%d", os.Getpid())),
-		windowName: syscall.StringToUTF16(appName),
+		className:  className,
+		windowName: windowName,
 		ready:      make(chan error, 1),
 		done:       make(chan struct{}),
 	}
@@ -255,7 +265,11 @@ func (tray *trayIcon) addIcon() error {
 	data.Flags = nifMessage | nifIcon | nifTip
 	data.CallbackMessage = trayCallbackMsg
 	data.Icon = loadAppIcon(tray.instance)
-	copy(data.Tip[:], syscall.StringToUTF16(appName))
+	tip, err := windows.UTF16FromString(appName)
+	if err != nil {
+		return fmt.Errorf("encode tray tooltip: %w", err)
+	}
+	copy(data.Tip[:], tip)
 	if ret, _, err := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&data))); ret == 0 {
 		return fmt.Errorf("add tray icon: %v", err)
 	}
@@ -319,8 +333,8 @@ func (tray *trayIcon) showMenu(hwnd uintptr) {
 	}
 	defer procDestroyMenu.Call(menu)
 
-	openText := syscall.StringToUTF16("Open WebUI")
-	quitText := syscall.StringToUTF16("Quit")
+	openText, _ := windows.UTF16FromString("Open WebUI")
+	quitText, _ := windows.UTF16FromString("Quit")
 	_, _, _ = procAppendMenuW.Call(menu, mfString, trayMenuOpenWebUI, uintptr(unsafe.Pointer(&openText[0])))
 	_, _, _ = procAppendMenuW.Call(menu, mfSeparator, 0, 0)
 	_, _, _ = procAppendMenuW.Call(menu, mfString, trayMenuQuit, uintptr(unsafe.Pointer(&quitText[0])))

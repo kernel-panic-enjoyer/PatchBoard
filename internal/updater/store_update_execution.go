@@ -734,12 +734,6 @@ func (provider storePackagedSnapshotProvider) Snapshot(ctx context.Context, iden
 	return packageSnapshot, inventoryResult
 }
 
-type unsupportedStoreExactCatalogProvider struct{}
-
-func (unsupportedStoreExactCatalogProvider) QueryExact(context.Context, StoreExactUpdateRequest) (StoreExactCatalogResult, CommandResult) {
-	return StoreExactCatalogResult{}, CommandResult{Command: "targeted Store catalog query", Code: 1, Stderr: "exact Store catalog provider is not implemented in this build"}
-}
-
 type noStorePackageEvents struct{}
 
 func (noStorePackageEvents) Subscribe(context.Context, StoreInstalledIdentity) (<-chan StorePackageChangeEvent, func(), error) {

@@ -202,6 +202,24 @@ func TestStateStoreFailureDuringReplacementLeavesOriginalOrBackup(t *testing.T) 
 	}
 }
 
+func TestStateStoreWritesPrivateStateAndBackupFiles(t *testing.T) {
+	store := newTestFileStateStore(t)
+	first := defaultState()
+	first.Theme = "dark"
+	if err := saveStateToStore(t, store, first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.Theme = "light"
+	if err := saveStateToStore(t, store, second); err != nil {
+		t.Fatal(err)
+	}
+
+	assertUserPrivatePermissions(t, store.dir)
+	assertUserPrivatePermissions(t, filepath.Join(store.dir, "state.json"))
+	assertUserPrivatePermissions(t, filepath.Join(store.dir, "state.json.bak"))
+}
+
 func TestStateStoreCorruptPrimaryRecoversBackup(t *testing.T) {
 	store := newTestFileStateStore(t)
 	first := defaultState()

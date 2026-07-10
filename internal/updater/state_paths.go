@@ -11,6 +11,12 @@ import (
 
 const legacyAppDirName = "WindowsUpdaterWebUI"
 
+const (
+	userPrivateDirectoryMode  fs.FileMode = 0o700
+	userPrivateFileMode       fs.FileMode = 0o600
+	userPrivateExecutableMode fs.FileMode = 0o700
+)
+
 func appRoot() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -22,7 +28,7 @@ func appRoot() string {
 
 func stateDir() (string, error) {
 	if override := os.Getenv("UPDATER_STATE_DIR"); override != "" && userEnvironmentOverridesAllowed() {
-		if err := os.MkdirAll(override, 0o755); err != nil {
+		if err := ensureUserPrivateDir(override); err != nil {
 			return "", err
 		}
 		if !canWriteDir(override) {
@@ -41,7 +47,7 @@ func stateDir() (string, error) {
 
 	for _, candidate := range candidates {
 		migrateLegacyStateDirectory(candidate)
-		if err := os.MkdirAll(candidate, 0o755); err == nil && canWriteDir(candidate) {
+		if err := ensureUserPrivateDir(candidate); err == nil && canWriteDir(candidate) {
 			return candidate, nil
 		}
 	}
@@ -92,14 +98,14 @@ func copyDirectoryContents(sourceDirectory, targetDirectory string) error {
 			return err
 		}
 		if relativePath == "." {
-			return os.MkdirAll(targetDirectory, 0o755)
+			return ensureUserPrivateDir(targetDirectory)
 		}
 		if strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
 			return fmt.Errorf("legacy state path escaped source directory: %s", sourcePath)
 		}
 		targetPath := filepath.Join(targetDirectory, relativePath)
 		if entry.IsDir() {
-			return os.MkdirAll(targetPath, 0o755)
+			return ensureUserPrivateDir(targetPath)
 		}
 		if entry.Type()&os.ModeType != 0 {
 			return nil
@@ -113,15 +119,12 @@ func copyFile(sourcePath, targetPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(targetPath, data, 0o644)
+	return writeUserPrivateFile(targetPath, data)
 }
 
 func appTempDir() (string, error) {
 	if override := os.Getenv("UPDATER_TEMP_DIR"); override != "" && userEnvironmentOverridesAllowed() {
-		if err := os.MkdirAll(override, 0o755); err != nil {
+		if err := ensureUserPrivateDir(override); err != nil {
 			return "", err
 		}
 		if !canWriteDir(override) {
@@ -136,11 +139,45 @@ func appTempDir() (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if err := os.MkdirAll(candidate, 0o755); err == nil && canWriteDir(candidate) {
+		if err := ensureUserPrivateDir(candidate); err == nil && canWriteDir(candidate) {
 			return candidate, nil
 		}
 	}
 	return "", errors.New("could not create a temporary directory")
+}
+
+func ensureUserPrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, userPrivateDirectoryMode); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, userPrivateDirectoryMode); err != nil {
+		return err
+	}
+	return applyUserPrivatePathAccess(dir, true)
+}
+
+func writeUserPrivateFile(path string, data []byte) error {
+	if err := ensureUserPrivateDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, userPrivateFileMode); err != nil {
+		return err
+	}
+	return protectUserPrivateFile(path)
+}
+
+func protectUserPrivateFile(path string) error {
+	if err := os.Chmod(path, userPrivateFileMode); err != nil {
+		return err
+	}
+	return applyUserPrivatePathAccess(path, false)
+}
+
+func protectUserPrivateExecutable(path string) error {
+	if err := os.Chmod(path, userPrivateExecutableMode); err != nil {
+		return err
+	}
+	return applyUserPrivatePathAccess(path, false)
 }
 
 func canWriteDir(dir string) bool {

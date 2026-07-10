@@ -14,10 +14,6 @@ type applicationPreferenceSettings struct {
 	RemoveNewDesktopShortcuts   *bool `json:"remove_new_desktop_shortcuts"`
 }
 
-func setThemePreference(requestedTheme string) (State, error) {
-	return setThemePreferenceContext(context.Background(), requestedTheme)
-}
-
 func setThemePreferenceContext(ctx context.Context, requestedTheme string) (State, error) {
 	stateStore, err := defaultStateStore()
 	if err != nil {
@@ -37,10 +33,6 @@ func setThemePreferenceWithStore(ctx context.Context, stateStore StateStore, req
 	})
 }
 
-func setAppUpdatePromptDismissedVersion(dismissedVersion string) (State, error) {
-	return setAppUpdatePromptDismissedVersionContext(context.Background(), dismissedVersion)
-}
-
 func setAppUpdatePromptDismissedVersionContext(ctx context.Context, dismissedVersion string) (State, error) {
 	stateStore, err := defaultStateStore()
 	if err != nil {
@@ -55,10 +47,6 @@ func setAppUpdatePromptDismissedVersionWithStore(ctx context.Context, stateStore
 		state.AppUpdatePromptDismissedVersion = dismissedVersion
 		return nil
 	})
-}
-
-func setApplicationPreferences(preferences applicationPreferenceSettings) (State, error) {
-	return setApplicationPreferencesContext(context.Background(), preferences)
 }
 
 func setApplicationPreferencesContext(ctx context.Context, preferences applicationPreferenceSettings) (State, error) {

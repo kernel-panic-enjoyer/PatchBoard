@@ -24,116 +24,216 @@ func validatePackageKey(packageKey string) error {
 	return validateManagerAndID(manager, id)
 }
 
+type apiRoute struct {
+	Method       string
+	MaxBodyBytes int64
+	Handler      func(*App, http.ResponseWriter, *http.Request)
+}
+
+var apiRoutes = map[string]apiRoute{
+	"/api/store/diagnostics/export": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      handleStoreDiagnosticsExportAPI,
+	},
+	"/api/logs/export": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      handleLogsExportAPI,
+	},
+	"/api/status": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler: func(app *App, w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, app.statusSnapshotContext(r.Context()))
+		},
+	},
+	"/api/status/refresh": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler: func(app *App, w http.ResponseWriter, r *http.Request) {
+			app.refreshStatus(true)
+			writeJSON(w, http.StatusAccepted, app.statusSnapshotContext(r.Context()))
+		},
+	},
+	"/api/app-update/check": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler: func(app *App, w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, app.appUpdateStatusContext(r.Context(), true))
+		},
+	},
+	"/api/app-update/apply": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler: func(app *App, w http.ResponseWriter, r *http.Request) {
+			jobAcceptedResponse(w, app.startSelfUpdateJob())
+		},
+	},
+	"/api/application/install": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleApplicationInstallAPI,
+	},
+	"/api/application/restart-installed": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleApplicationRestartInstalledAPI,
+	},
+	"/api/packages": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler: func(app *App, w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, app.inventorySnapshotContext(r.Context()))
+		},
+	},
+	"/api/inventory/refresh": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleInventoryRefreshAPI,
+	},
+	"/api/jobs/status": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      (*App).handleJobStatusAPI,
+	},
+	"/api/jobs/log": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      (*App).handleJobLogAPI,
+	},
+	"/api/jobs": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      (*App).handleJobsAPI,
+	},
+	"/api/jobs/cancel": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleJobCancelAPI,
+	},
+	"/api/events": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      (*App).handleEventsAPI,
+	},
+	"/api/logs": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      handleLogsAPI,
+	},
+	"/api/search": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      handleSearchAPI,
+	},
+	"/api/install": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleInstallAPI,
+	},
+	"/api/managers/install": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleManagerInstallAPI,
+	},
+	"/api/scan": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleScanAPI,
+	},
+	"/api/update": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleUpdateAPI,
+	},
+	"/api/update-all/status": {
+		Method:       http.MethodGet,
+		MaxBodyBytes: 0,
+		Handler:      (*App).handleUpdateAllStatusAPI,
+	},
+	"/api/update-all/cancel": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleUpdateAllCancelAPI,
+	},
+	"/api/update-all": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxPackageListBodyBytes,
+		Handler:      (*App).handleUpdateAllAPI,
+	},
+	"/api/settings/startup": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleStartupSettingsAPI,
+	},
+	"/api/settings/auto-update": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleAutoUpdateSettingsAPI,
+	},
+	"/api/settings/theme": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleThemeSettingsAPI,
+	},
+	"/api/settings/app-update-prompt": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleAppUpdatePromptSettingsAPI,
+	},
+	"/api/settings/preferences": {
+		Method:       http.MethodPost,
+		MaxBodyBytes: maxSmallJSONBodyBytes,
+		Handler:      (*App).handleApplicationPreferencesSettingsAPI,
+	},
+}
+
 func (app *App) serveAPI(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/api/store/diagnostics/export":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		diagnosticsJSON, err := buildStoreDiagnosticsExport(r.Context(), loadState())
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeAttachmentResponse(w, "application/json", storeDiagnosticsExportFilename(time.Now()), diagnosticsJSON)
-	case "/api/logs/export":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		logArchive, err := buildLogArchiveFromSnapshot(sessionLogs.ExportSnapshot())
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeAttachmentResponse(w, "application/zip", logExportFilename(time.Now()), logArchive)
-	case "/api/status":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		writeJSON(w, http.StatusOK, app.statusSnapshotContext(r.Context()))
-	case "/api/status/refresh":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		app.refreshStatus(true)
-		writeJSON(w, http.StatusAccepted, app.statusSnapshotContext(r.Context()))
-	case "/api/app-update/check":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		writeJSON(w, http.StatusOK, app.appUpdateStatusContext(r.Context(), true))
-	case "/api/app-update/apply":
-		if !requireMethod(w, r, http.MethodPost) {
-			return
-		}
-		jobAcceptedResponse(w, app.startSelfUpdateJob())
-	case "/api/application/install":
-		app.handleApplicationInstallAPI(w, r)
-	case "/api/application/restart-installed":
-		app.handleApplicationRestartInstalledAPI(w, r)
-	case "/api/packages":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		writeJSON(w, http.StatusOK, app.inventorySnapshotContext(r.Context()))
-	case "/api/inventory/refresh":
-		app.handleInventoryRefreshAPI(w, r)
-	case "/api/jobs/status":
-		app.handleJobStatusAPI(w, r)
-	case "/api/jobs/log":
-		app.handleJobLogAPI(w, r)
-	case "/api/jobs":
-		app.handleJobsAPI(w, r)
-	case "/api/jobs/cancel":
-		app.handleJobCancelAPI(w, r)
-	case "/api/events":
-		app.handleEventsAPI(w, r)
-	case "/api/logs":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		since, ok := parseLogSince(w, r)
-		if !ok {
-			return
-		}
-		writeJSON(w, http.StatusOK, logsAPIResponseFromQuery(sessionLogs.Query(since)))
-	case "/api/search":
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		searchResults, err := searchPackages(r.URL.Query().Get("q"))
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, searchResults)
-	case "/api/install":
-		app.handleInstallAPI(w, r)
-	case "/api/managers/install":
-		app.handleManagerInstallAPI(w, r)
-	case "/api/scan":
-		app.handleScanAPI(w, r)
-	case "/api/update":
-		app.handleUpdateAPI(w, r)
-	case "/api/update-all/status":
-		app.handleUpdateAllStatusAPI(w, r)
-	case "/api/update-all/cancel":
-		app.handleUpdateAllCancelAPI(w, r)
-	case "/api/update-all":
-		app.handleUpdateAllAPI(w, r)
-	case "/api/settings/startup":
-		app.handleStartupSettingsAPI(w, r)
-	case "/api/settings/auto-update":
-		app.handleAutoUpdateSettingsAPI(w, r)
-	case "/api/settings/theme":
-		app.handleThemeSettingsAPI(w, r)
-	case "/api/settings/app-update-prompt":
-		app.handleAppUpdatePromptSettingsAPI(w, r)
-	case "/api/settings/preferences":
-		app.handleApplicationPreferencesSettingsAPI(w, r)
-	default:
+	route, ok := apiRoutes[r.URL.Path]
+	if !ok {
 		http.NotFound(w, r)
+		return
 	}
+	if !requireMethod(w, r, route.Method) {
+		return
+	}
+	route.Handler(app, w, r)
+}
+
+func handleStoreDiagnosticsExportAPI(app *App, w http.ResponseWriter, r *http.Request) {
+	diagnosticsJSON, err := buildStoreDiagnosticsExport(r.Context(), loadState())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAttachmentResponse(w, "application/json", storeDiagnosticsExportFilename(time.Now()), diagnosticsJSON)
+}
+
+func handleLogsExportAPI(app *App, w http.ResponseWriter, _ *http.Request) {
+	logArchive, err := buildLogArchiveFromSnapshot(sessionLogs.ExportSnapshot())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeAttachmentResponse(w, "application/zip", logExportFilename(time.Now()), logArchive)
+}
+
+func handleLogsAPI(_ *App, w http.ResponseWriter, r *http.Request) {
+	since, ok := parseLogSince(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, logsAPIResponseFromQuery(sessionLogs.Query(since)))
+}
+
+func handleSearchAPI(_ *App, w http.ResponseWriter, r *http.Request) {
+	searchResults, err := searchPackages(r.URL.Query().Get("q"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, searchResults)
 }
 
 func writeAttachmentResponse(w http.ResponseWriter, contentType, filename string, body []byte) {
@@ -157,14 +257,7 @@ func parseLogSince(w http.ResponseWriter, r *http.Request) (int64, bool) {
 }
 
 func logsAPIResponseFromQuery(result LogQueryResult) logsAPIResponse {
-	return logsAPIResponse{
-		Entries:      result.Entries,
-		OldestID:     result.OldestID,
-		LatestID:     result.LatestID,
-		DroppedCount: result.DroppedCount,
-		DroppedBytes: result.DroppedBytes,
-		GapDetected:  result.GapDetected,
-	}
+	return logsAPIResponse(result)
 }
 
 func logExportFilename(now time.Time) string {
@@ -176,6 +269,7 @@ func storeDiagnosticsExportFilename(now time.Time) string {
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	app.registerSessionSecretsForLogRedaction()
 	setSecurityHeaders(w)
 	if !app.trustedHost(r) {
 		writeAPIError(w, http.StatusMisdirectedRequest, "untrusted host")
@@ -245,30 +339,10 @@ func limitAPIRequestBody(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func apiRequestBodyLimit(path string) int64 {
-	switch path {
-	case "/api/update-all":
-		return maxPackageListBodyBytes
-	case "/api/install",
-		"/api/managers/install",
-		"/api/update",
-		"/api/jobs/cancel",
-		"/api/status/refresh",
-		"/api/app-update/check",
-		"/api/app-update/apply",
-		"/api/application/install",
-		"/api/application/restart-installed",
-		"/api/inventory/refresh",
-		"/api/scan",
-		"/api/update-all/cancel",
-		"/api/settings/startup",
-		"/api/settings/auto-update",
-		"/api/settings/theme",
-		"/api/settings/app-update-prompt",
-		"/api/settings/preferences":
-		return maxSmallJSONBodyBytes
-	default:
-		return maxJSONBodyBytes
+	if route, ok := apiRoutes[path]; ok && route.MaxBodyBytes > 0 {
+		return route.MaxBodyBytes
 	}
+	return maxJSONBodyBytes
 }
 
 func (app *App) render(w http.ResponseWriter, r *http.Request, pageData PageData) {
@@ -278,6 +352,7 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, pageData PageData
 	pageData.Theme = savedState.Theme
 	pageData.IconVersion = appIconVersion()
 	pageData.AssetVersion = frontendAssetVersion()
+	pageData.CSRFToken = csrfTokenForSession(app.sessionToken)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pageTemplate.Execute(w, pageData); err != nil {

@@ -1,5 +1,6 @@
 ﻿// Embedded PatchBoard frontend.
 
+// @ts-check
 (function(){
   var packages = [];
   var updateBusy = false;
@@ -107,11 +108,39 @@
   var spinnerPeriodMs = 900;
   var spinnerObserver = null;
   var reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  /** @param {string} id @returns {HTMLElement|null} */
   function $(id){ return document.getElementById(id); }
+  /** @param {string} id @returns {HTMLButtonElement|HTMLInputElement|HTMLSelectElement|null} */
+  function control(id){
+    var element = $(id);
+    return element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement ? element : null;
+  }
+  /** @param {string} id @returns {HTMLInputElement|null} */
+  function input(id){
+    var element = $(id);
+    return element instanceof HTMLInputElement ? element : null;
+  }
+  /** @param {string} id @returns {HTMLSelectElement|null} */
+  function select(id){
+    var element = $(id);
+    return element instanceof HTMLSelectElement ? element : null;
+  }
+  /** @param {EventTarget|null} target @returns {Element|null} */
+  function eventTargetElement(target){ return target instanceof Element ? target : null; }
+  /** @param {Element} element @returns {HTMLButtonElement|HTMLInputElement|HTMLSelectElement|null} */
+  function actionControl(element){
+    return element instanceof HTMLButtonElement || element instanceof HTMLInputElement || element instanceof HTMLSelectElement ? element : null;
+  }
   function api(path, params){
     var url = new URL(path, window.location.origin);
     Object.keys(params || {}).forEach(function(key){ url.searchParams.set(key, params[key]); });
     return url.toString();
+  }
+  /** @param {HTMLFormElement} form @returns {URLSearchParams} */
+  function formParams(form){
+    var params = new URLSearchParams();
+    new FormData(form).forEach(function(value, key){ params.append(key, String(value)); });
+    return params;
   }
   function html(value){
     return String(value == null ? "" : value).replace(/[&<>"']/g, function(ch){
@@ -288,7 +317,7 @@
         var elapsed = Date.now() - toast.startedAt;
         var currentRemaining = Math.max(0, toast.remaining - elapsed);
         var element = document.querySelector('.toast[data-toast-id="' + toast.id + '"]');
-        if(element){ element.style.setProperty("--toast-progress", String(Math.max(0, Math.min(1, currentRemaining / Math.max(1, toast.totalDuration))))); }
+        if(element instanceof HTMLElement){ element.style.setProperty("--toast-progress", String(Math.max(0, Math.min(1, currentRemaining / Math.max(1, toast.totalDuration))))); }
       }
     });
   }
@@ -402,7 +431,7 @@
       categoriesForLogEntry(prepared).forEach(function(category){ rememberLogEntryInCategory(category, prepared); });
     });
     trimBrowserLogs();
-    var auto = $("log-autoscroll");
+    var auto = input("log-autoscroll");
     scheduleLogRender(!auto || auto.checked);
   }
   function appendLogGapNotice(oldestID){
@@ -451,7 +480,9 @@
   function applyBackendAvailabilityState(){
     var connected = backendIsConnected();
     document.documentElement.classList.toggle("backend-disconnected", !connected);
-    document.querySelectorAll(backendActionControlSelector).forEach(function(control){
+    document.querySelectorAll(backendActionControlSelector).forEach(function(element){
+      var control = actionControl(element);
+      if(!control){ return; }
       if(connected){
         if(control.dataset.backendDisabled === "true"){
           control.disabled = false;
@@ -468,10 +499,11 @@
     });
   }
   function backendActionControlFromTarget(target){
-    return target && target.closest ? target.closest(backendActionControlSelector) : null;
+    var element = eventTargetElement(target);
+    return element ? element.closest(backendActionControlSelector) : null;
   }
   function backendFormRequiresConnection(form){
-    if(!form || !form.matches){ return false; }
+    if(!(form instanceof HTMLFormElement)){ return false; }
     return form.id === "search-form" ||
       form.id === "shutdown-form" ||
       form.id === "update-selected-form" ||
@@ -667,6 +699,7 @@
   function setActiveLogCategory(category){
     activeLogCategory = category || "all";
     document.querySelectorAll(".log-tab").forEach(function(button){
+      if(!(button instanceof HTMLElement)){ return; }
       var active = button.dataset.logCategory === activeLogCategory;
       button.classList.toggle("active", active);
       button.setAttribute("aria-selected", active ? "true" : "false");
@@ -733,7 +766,7 @@
       bar.setAttribute("aria-label", message || "Updating packages");
       bar.setAttribute("aria-valuetext", show ? "In progress" : "Idle");
     }
-    var cancel = $("cancel-updates-button");
+    var cancel = control("cancel-updates-button");
     if(cancel){
       cancel.classList.toggle("hidden", !cancelVisible);
       cancel.disabled = !cancelVisible;
@@ -758,8 +791,9 @@
     updateBusy = busy;
     var keySet = {};
     (keys || []).forEach(function(key){ keySet[key] = true; });
-    document.querySelectorAll("button,input").forEach(function(control){
-      if(control.closest("#session-log-panel")){ return; }
+    document.querySelectorAll("button,input").forEach(function(element){
+      var control = actionControl(element);
+      if(!control || control.closest("#session-log-panel")){ return; }
       if(control.id === "theme-toggle" || control.closest(".header-actions form")){ return; }
       if(control.classList.contains("auto-package")){ control.disabled = busy; return; }
       if(control.name === "package_key" || control.closest(".update-form") || control.id === "update-all-button" || control.id === "update-selected-button" || control.id === "refresh-packages" || control.id === "update-allow-unknown" || control.id === "update-allow-pinned"){
@@ -767,6 +801,7 @@
       }
     });
     document.querySelectorAll(".update-form").forEach(function(form){
+      if(!(form instanceof HTMLFormElement)){ return; }
       var active = busy && (keys == null || keySet[form.dataset.key]);
       var progress = form.querySelector(".row-progress");
       if(progress){ progress.classList.toggle("hidden", !active); }
@@ -776,6 +811,7 @@
       }
     });
     document.querySelectorAll("tr[data-key]").forEach(function(row){
+      if(!(row instanceof HTMLElement)){ return; }
       row.classList.toggle("updating-current", !!currentKey && row.dataset.key === currentKey);
     });
     updateSelectedActionState();
@@ -836,9 +872,13 @@
     }
     return failed.length + " update command(s) finished with errors. " + commandText(failed[0].result);
   }
+  function csrfToken(){
+    var meta = document.querySelector('meta[name="patchboard-csrf-token"]');
+    return meta ? (meta.getAttribute("content") || "") : "";
+  }
   function postForm(path, params, options){
     var body = params instanceof URLSearchParams ? params : new URLSearchParams(params || {});
-    var request = {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-PatchBoard":"1"}, body:body};
+    var request = {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded","X-PatchBoard":"1","X-PatchBoard-CSRF":csrfToken()}, body:body};
     if(options && options.keepalive){ request.keepalive = true; }
     return fetch(api(path), request);
   }
@@ -921,11 +961,11 @@
     return "Installs through " + managerLabel(pkg.manager) + ".";
   }
   function allowUnknownVersionUpdates(){
-    var control = $("update-allow-unknown");
+    var control = input("update-allow-unknown");
     return !!control && !!control.checked;
   }
   function allowPinnedUpdates(){
-    var control = $("update-allow-pinned");
+    var control = input("update-allow-pinned");
     return !!control && !!control.checked;
   }
   function appendGlobalUpdateOptions(params){
@@ -938,8 +978,8 @@
   function packageCanUseAutoUpdatePreference(pkg){
     return !!(pkg && pkg.preference_eligible) && !pkg.unknown_version && !pkg.pinned;
   }
-  function packageCanBeIncludedInBulkUpdate(pkg){
-    var options = arguments.length > 1 && arguments[1] ? arguments[1] : {allowUnknown:allowUnknownVersionUpdates(), allowPinned:allowPinnedUpdates()};
+  function packageCanBeIncludedInBulkUpdate(pkg, options){
+    options = options || {allowUnknown:allowUnknownVersionUpdates(), allowPinned:allowPinnedUpdates()};
     if(!pkg){ return false; }
     if(pkg.can_update_now){ return true; }
     return packageHasUpdateCandidate(pkg) &&
@@ -1049,7 +1089,7 @@
     return keys;
   }
   function updateSelectedActionState(){
-    var button = $("update-selected-button");
+    var button = control("update-selected-button");
     if(!button){ return; }
     button.disabled = updateBusy || activeUpdateJobRunning() || selectedUpdatePackageKeys().length === 0;
   }
@@ -1353,7 +1393,7 @@
     return !!statusSettings().app_update_auto_install_enabled;
   }
   function renderPreferenceToggle(id, enabled, label, loading){
-    var button = $(id);
+    var button = control(id);
     if(!button){ return; }
     button.disabled = !!loading;
     button.dataset.enabled = enabled ? "true" : "false";
@@ -1373,14 +1413,14 @@
     renderAppUpdateStatus(data.app_update || {});
     renderApplicationInfo(data.application || {});
     renderApplicationInstallStatus(data.application_install || {});
-    var startup = $("startup-toggle");
+    var startup = control("startup-toggle");
     if(startup){
       startup.disabled = !!data.loading;
       startup.dataset.enabled = data.startup_enabled ? "true" : "false";
       startup.setAttribute("aria-pressed", data.startup_enabled ? "true" : "false");
       startup.innerHTML = data.loading ? loadingText("Checking startup...") : icon("refresh") + '<span>' + (data.startup_enabled ? "Disable Start With Windows" : "Enable Start With Windows") + '</span>';
     }
-    var auto = $("auto-global-toggle");
+    var auto = control("auto-global-toggle");
     var globalEnabled = !!(data.settings && data.settings.auto_update_global);
     var autoTaskHealthy = !!data.auto_task_enabled;
     var autoEffectiveEnabled = globalEnabled && autoTaskHealthy;
@@ -1460,7 +1500,7 @@
     update = update || {};
     var modal = $("app-update-modal");
     var body = $("app-update-modal-body");
-    var checkbox = $("app-update-dismiss-version");
+    var checkbox = input("app-update-dismiss-version");
     if(!modal || !body){ return; }
     var version = appUpdatePromptVersion(update);
     var current = update.current_version || "0.0.0-dev";
@@ -1514,7 +1554,7 @@
     var modal = $("app-update-modal");
     if(!modal){ return; }
     var version = activeAppUpdatePrompt && activeAppUpdatePrompt.version;
-    var checkbox = $("app-update-dismiss-version");
+    var checkbox = input("app-update-dismiss-version");
     var shouldPersist = persistDismissal && checkbox && checkbox.checked;
     modal.classList.add("hidden");
     updateModalOpenState();
@@ -1525,8 +1565,8 @@
   function renderAppUpdateStatus(update){
     update = update || {};
     var status = $("app-update-status");
-    var check = $("app-update-check");
-    var apply = $("app-update-apply");
+    var check = control("app-update-check");
+    var apply = control("app-update-apply");
     var current = update.current_version || "0.0.0-dev";
     if(status){
       if(!appUpdateCheckingEnabled() && !update.checked_at && !update.available && !update.error){
@@ -1559,8 +1599,8 @@
   function renderApplicationInstallStatus(install){
     install = install || {};
     var status = $("application-install-status");
-    var installButton = $("application-install-button");
-    var restartButton = $("application-restart-installed");
+    var installButton = control("application-install-button");
+    var restartButton = control("application-restart-installed");
     var targetPath = String(install.target_path || "").trim();
     var busy = !!(latestStatus && latestStatus.loading) || updateBusy || activeServerJobs().length > 0;
     if(status){
@@ -1786,8 +1826,10 @@
     var autoPreferencePackages = packages.filter(packageCanUseAutoUpdatePreference);
     var updateJobRunning = activeUpdateJobRunning();
     pruneSelectedUpdateKeys();
-    $("auto-all").disabled = updateBusy || autoPreferencePackages.length === 0;
-    $("auto-none").disabled = updateBusy || autoPreferencePackages.length === 0;
+    var autoAllButton = control("auto-all");
+    var autoNoneButton = control("auto-none");
+    if(autoAllButton){ autoAllButton.disabled = updateBusy || autoPreferencePackages.length === 0; }
+    if(autoNoneButton){ autoNoneButton.disabled = updateBusy || autoPreferencePackages.length === 0; }
     var storeOnlyUpdatesLoading = !latestPackagesLoading && latestStoreLoading && updatesManagerFilter === "all";
     var updatesLoading = latestPackagesLoading || storeOnlyUpdatesLoading;
     renderUpdatesTable(
@@ -1798,7 +1840,8 @@
     );
     renderInstalledTable(latestPackagesLoading);
     var bulkUpdatePackages = updateQueuePackages.filter(packageCanBeIncludedInBulkUpdate);
-    $("update-all-button").disabled = updateBusy || updateJobRunning || bulkUpdatePackages.length === 0;
+    var updateAllButton = control("update-all-button");
+    if(updateAllButton){ updateAllButton.disabled = updateBusy || updateJobRunning || bulkUpdatePackages.length === 0; }
     updateSelectedActionState();
     renderDashboardSummary();
     applyBackendAvailabilityState();
@@ -1811,15 +1854,15 @@
   }
   function syncManagerFilterOptions(data){
     [["updates-manager-filter", "updates"], ["installed-manager-filter", "installed"]].forEach(function(spec){
-      var select = $(spec[0]);
-      if(!select){ return; }
+      var managerSelect = select(spec[0]);
+      if(!managerSelect){ return; }
       var current = spec[1] === "updates" ? updatesManagerFilter : installedManagerFilter;
       var present = {};
       var sourcePackages = spec[1] === "updates" ? packages.filter(packageShouldAppearInUpdateQueue) : packages;
       sourcePackages.forEach(function(pkg){
         if(pkg && pkg.manager){ present[pkg.manager] = true; }
       });
-      Array.prototype.forEach.call(select.options, function(opt){
+      Array.prototype.forEach.call(managerSelect.options, function(opt){
         if(opt.value === "all"){ return; }
         var visible = !!present[opt.value];
         opt.hidden = !visible;
@@ -1829,7 +1872,7 @@
         current = "all";
         if(spec[1] === "updates"){ updatesManagerFilter = "all"; } else { installedManagerFilter = "all"; }
       }
-      select.value = current;
+      managerSelect.value = current;
     });
   }
   function renderPackages(data){
@@ -2077,7 +2120,7 @@
     }
   }
   async function checkAppUpdate(){
-    var button = $("app-update-check");
+    var button = control("app-update-check");
     if(button){ button.disabled = true; }
     var status = $("app-update-status");
     if(status){ status.innerHTML = loadingText("Checking GitHub releases..."); }
@@ -2106,7 +2149,7 @@
     }
   }
   async function startAppSelfUpdate(){
-    var button = $("app-update-apply");
+    var button = control("app-update-apply");
     if(button){ button.disabled = true; }
     showNotice("Preparing application update...", true);
     try{
@@ -2138,7 +2181,7 @@
     }
   }
   async function installApplication(){
-    var button = $("application-install-button");
+    var button = control("application-install-button");
     if(button){ button.disabled = true; }
     showNotice("Preparing PatchBoard installation...", true);
     var completed = false;
@@ -2157,7 +2200,7 @@
     }
   }
   async function restartInstalledApplication(){
-    var button = $("application-restart-installed");
+    var button = control("application-restart-installed");
     if(button){ button.disabled = true; }
     showNotice("Starting installed PatchBoard...", true);
     try{
@@ -2237,7 +2280,7 @@
       function onVisible(){
         if(document.hidden){ return; }
         document.removeEventListener("visibilitychange", onVisible);
-        resolve();
+        resolve(undefined);
       }
       document.addEventListener("visibilitychange", onVisible);
     });
@@ -2453,7 +2496,7 @@
       return;
     }
     try{
-      var response = await postForm("/api/update", appendGlobalUpdateOptions(new URLSearchParams(new FormData(form))));
+      var response = await postForm("/api/update", appendGlobalUpdateOptions(formParams(form)));
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Update failed"); }
       upsertServerJob(payload);
@@ -2742,12 +2785,12 @@
       var notes = packageRiskNotes(pkg, {allowUnknown:!!status.allow_unknown_version, allowPinned:!!status.allow_pinned});
       return '<tr><td><span class="result-status ' + attr(row.state) + '">' + html(row.state.charAt(0).toUpperCase() + row.state.slice(1)) + '</span></td><td><strong>' + html(pkg.name || pkg.id || row.key) + '</strong><br><span class="muted">' + html(pkg.id || row.key) + '</span></td><td>' + html(packageUpdateSource(pkg)) + '</td><td>' + html(pkg.version || "Unknown") + '</td><td>' + html(packageUpdateTarget(pkg)) + '</td><td>' + html(updateResultText(row.result, row.state)) + (notes ? '<br><span class="muted">' + html(notes) + '</span>' : '') + '</td></tr>';
     }).join("");
-    var retry = $("retry-failed-updates");
+    var retry = control("retry-failed-updates");
     if(retry){
       retry.disabled = counts.failed === 0;
       retry.dataset.jobId = status.job_id || "";
     }
-    var jobLog = $("view-update-job-log");
+    var jobLog = control("view-update-job-log");
     if(jobLog){
       jobLog.disabled = !status.job_id;
       jobLog.dataset.jobId = status.job_id || "";
@@ -2778,7 +2821,7 @@
     renderUpdatePreflight(buildUpdatePreflight("selected", rows.map(function(row){ return row.key; }), params, "Retrying failed packages..."));
   }
   async function viewUpdateJobLog(){
-    var button = $("view-update-job-log");
+    var button = control("view-update-job-log");
     var jobID = button ? button.dataset.jobId || "" : "";
     if(!jobID){
       showNotice("No completed update job log is available.");
@@ -2841,7 +2884,7 @@
     }catch(e){}
   }
   async function cancelUpdateJob(){
-    var button = $("cancel-updates-button");
+    var button = control("cancel-updates-button");
     if(button){ button.disabled = true; }
     setGlobalProgress(true, "Cancelling after current command stops...", false);
     showNotice("");
@@ -2871,8 +2914,8 @@
     searchResults = [];
     searchPage = 1;
     setText("search-page-status", "Searching...");
-    var prev = $("search-prev");
-    var next = $("search-next");
+    var prev = control("search-prev");
+    var next = control("search-next");
     if(prev){ prev.disabled = true; }
     if(next){ next.disabled = true; }
     body.innerHTML = loadingTableRow(6, "Searching...");
@@ -2885,6 +2928,7 @@
       body.innerHTML = '<tr><td colspan="6">' + html(e.message) + '</td></tr>';
     }
   }
+  /** @param {HTMLFormElement} form */
   async function installFromForm(form){
     var button = form.querySelector("button");
     var installSucceeded = false;
@@ -2893,7 +2937,7 @@
     var baseMessage = backend ? "Installing package through " + backend + "..." : "Installing package...";
     setInstallProgress(true, baseMessage);
     try{
-      var response = await postForm("/api/install", new URLSearchParams(new FormData(form)));
+      var response = await postForm("/api/install", formParams(form));
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Install failed"); }
       markJobCompletionHandledByCaller(payload.job_id);
@@ -2918,12 +2962,13 @@
       applyBackendAvailabilityState();
     }
   }
+  /** @param {HTMLFormElement} form */
   async function installManagerFromForm(form){
     var button = form.querySelector("button");
     if(button){ button.disabled = true; }
     showNotice("Opening package manager install action...", true);
     try{
-      var response = await postForm("/api/managers/install", new URLSearchParams(new FormData(form)));
+      var response = await postForm("/api/managers/install", formParams(form));
       var payload = await response.json();
       if(!response.ok){ throw new Error(payload.error || "Package manager install failed"); }
       markJobCompletionHandledByCaller(payload.job_id);
@@ -3000,59 +3045,61 @@
     blockBackendFormWhenDisconnected(event);
   }, true);
   document.addEventListener("click", function(event){
-    var openSettings = event.target.closest("[data-settings-open]");
+    var target = eventTargetElement(event.target);
+    if(!target){ return; }
+    var openSettings = target.closest("[data-settings-open]");
     if(openSettings){
       openSettingsModal();
       return;
     }
-    var closeSettings = event.target.closest("[data-settings-close]");
+    var closeSettings = target.closest("[data-settings-close]");
     if(closeSettings){
       closeSettingsModal();
       return;
     }
-    var openStoreStatus = event.target.closest("[data-store-status-open]");
+    var openStoreStatus = target.closest("[data-store-status-open]");
     if(openStoreStatus){
       openStoreStatusModal();
       return;
     }
-    var closeStoreStatus = event.target.closest("[data-store-status-close]");
+    var closeStoreStatus = target.closest("[data-store-status-close]");
     if(closeStoreStatus){
       closeStoreStatusModal();
       return;
     }
-    var openPackageDiagnostics = event.target.closest("[data-package-diagnostics-open]");
-    if(openPackageDiagnostics){
+    var openPackageDiagnostics = target.closest("[data-package-diagnostics-open]");
+    if(openPackageDiagnostics instanceof HTMLElement){
       openPackageDiagnosticsModal(openPackageDiagnostics.dataset.key);
       return;
     }
-    var closePackageDiagnostics = event.target.closest("[data-package-diagnostics-close]");
+    var closePackageDiagnostics = target.closest("[data-package-diagnostics-close]");
     if(closePackageDiagnostics){
       closePackageDiagnosticsModal();
       return;
     }
-    var closeAppUpdate = event.target.closest("[data-app-update-close]");
+    var closeAppUpdate = target.closest("[data-app-update-close]");
     if(closeAppUpdate){
       closeAppUpdateModal(true);
       return;
     }
-    var appUpdateApply = event.target.closest("#app-update-modal-apply");
+    var appUpdateApply = target.closest("#app-update-modal-apply");
     if(appUpdateApply){
       closeAppUpdateModal(false);
       startAppSelfUpdate();
       return;
     }
-    var toastClose = event.target.closest(".toast-close");
+    var toastClose = target.closest(".toast-close");
     if(toastClose){
       var toast = toastClose.closest(".toast");
-      if(toast){ removeToast(Number(toast.dataset.toastId || 0)); }
+      if(toast instanceof HTMLElement){ removeToast(Number(toast.dataset.toastId || 0)); }
       return;
     }
-    var autoButton = event.target.closest(".auto-package");
-    if(autoButton){
+    var autoButton = target.closest(".auto-package");
+    if(autoButton instanceof HTMLElement){
       setPackageAuto(autoButton.dataset.key, autoButton.dataset.enabled !== "true", autoButton);
     }
-    var logTab = event.target.closest(".log-tab");
-    if(logTab){
+    var logTab = target.closest(".log-tab");
+    if(logTab instanceof HTMLElement){
       setActiveLogCategory(logTab.dataset.logCategory || "all");
       return;
     }
@@ -3078,7 +3125,8 @@
       closeStoreStatusModal();
       return;
     }
-    var tab = event.target.closest(".log-tab");
+    var target = eventTargetElement(event.target);
+    var tab = target ? target.closest(".log-tab") : null;
     if(!tab){ return; }
     switch(event.key){
     case "ArrowRight":
@@ -3102,10 +3150,12 @@
     }
   });
   document.addEventListener("submit", function(event){
+    if(!(event.target instanceof HTMLFormElement)){ return; }
     var form = event.target;
     if(form.id === "search-form"){
       event.preventDefault();
-      var query = String($("search-input").value || "").trim();
+      var searchInput = input("search-input");
+      var query = String((searchInput && searchInput.value) || "").trim();
       if(!query){
         showNotice("Enter a package name to search.");
         return;
@@ -3118,7 +3168,7 @@
     }
     if(form.id === "shutdown-form"){
       event.preventDefault();
-      var button = $("shutdown-button");
+      var button = control("shutdown-button");
       if(button){ button.disabled = true; }
       showNotice("Stopping application...", true);
       postForm("/shutdown", {}).then(function(response){
@@ -3172,10 +3222,10 @@
     if(form.matches(".update-all-form")){
       event.preventDefault();
       var allKeys = bulkUpdatePackageKeys();
-      renderUpdatePreflight(buildUpdatePreflight("all", allKeys, appendGlobalUpdateOptions(new URLSearchParams(new FormData(form))), "Updating all packages..."));
+      renderUpdatePreflight(buildUpdatePreflight("all", allKeys, appendGlobalUpdateOptions(formParams(form)), "Updating all packages..."));
     }
   });
-  $("theme-toggle").addEventListener("click", function(){
+  control("theme-toggle").addEventListener("click", function(){
     var next = currentTheme() === "dark" ? "light" : "dark";
     setTheme(next);
     postForm("/api/settings/theme", {theme:next}).catch(function(){});
@@ -3192,7 +3242,7 @@
       if(latestPackagesLoading){ loadPackages(false); }
     }
   });
-  $("scan-button").addEventListener("click", async function(){
+  control("scan-button").addEventListener("click", async function(){
     var button = this;
     button.disabled = true;
     showNotice("Scanning applications...", true);
@@ -3218,68 +3268,69 @@
     button.disabled = false;
     applyBackendAvailabilityState();
   });
-  $("refresh-packages").addEventListener("click", function(){
+  control("refresh-packages").addEventListener("click", function(){
     startInventoryRefresh().catch(function(e){
       showNotice("Could not refresh package status: " + e.message);
       showToast("Could not refresh package status: " + e.message, "error");
     });
   });
-  $("store-rescan-button").addEventListener("click", function(){
+  control("store-rescan-button").addEventListener("click", function(){
     startInventoryRefresh().catch(function(e){
       showNotice("Could not rescan Store status: " + e.message);
       showToast("Could not rescan Store status: " + e.message, "error");
     });
   });
-  $("store-diagnostics-export-button").addEventListener("click", function(){
+  control("store-diagnostics-export-button").addEventListener("click", function(){
     exportStoreDiagnostics();
   });
-  $("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
-  $("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
+  input("update-allow-unknown").addEventListener("change", function(){ renderPackageTables(); });
+  input("update-allow-pinned").addEventListener("change", function(){ renderPackageTables(); });
   document.addEventListener("change", function(event){
+    if(!(event.target instanceof HTMLInputElement)){ return; }
     var control = event.target;
-    if(!control || control.name !== "package_key" || !control.form || control.form.id !== "update-selected-form"){ return; }
+    if(control.name !== "package_key" || !control.form || control.form.id !== "update-selected-form"){ return; }
     var key = control.value || "";
     if(!key){ return; }
     if(control.checked){ selectedUpdateKeys.add(key); }
     else{ selectedUpdateKeys.delete(key); }
     updateSelectedActionState();
   });
-  $("updates-prev").addEventListener("click", function(){
+  control("updates-prev").addEventListener("click", function(){
     updatePage--;
     renderUpdatesTable(visibleUpdates(), latestPackagesLoading);
   });
-  $("updates-next").addEventListener("click", function(){
+  control("updates-next").addEventListener("click", function(){
     updatePage++;
     renderUpdatesTable(visibleUpdates(), latestPackagesLoading);
   });
-  $("updates-manager-filter").addEventListener("change", function(){
+  select("updates-manager-filter").addEventListener("change", function(){
     updatesManagerFilter = this.value || "all";
     updatePage = 1;
     renderPackageTables();
   });
-  $("installed-manager-filter").addEventListener("change", function(){
+  select("installed-manager-filter").addEventListener("change", function(){
     installedManagerFilter = this.value || "all";
     installedPage = 1;
     renderInstalledTable(latestPackagesLoading);
   });
-  $("search-prev").addEventListener("click", function(){
+  control("search-prev").addEventListener("click", function(){
     searchPage--;
     renderSearchTable();
   });
-  $("search-next").addEventListener("click", function(){
+  control("search-next").addEventListener("click", function(){
     searchPage++;
     renderSearchTable();
   });
-  $("installed-search").addEventListener("input", function(){
+  input("installed-search").addEventListener("input", function(){
     installedSearchQuery = this.value || "";
     installedPage = 1;
     renderInstalledTable(false);
   });
-  $("installed-prev").addEventListener("click", function(){
+  control("installed-prev").addEventListener("click", function(){
     installedPage--;
     renderInstalledTable(false);
   });
-  $("installed-next").addEventListener("click", function(){
+  control("installed-next").addEventListener("click", function(){
     installedPage++;
     renderInstalledTable(false);
   });
@@ -3323,41 +3374,41 @@
       loadStatus(true);
     }
   }
-  $("startup-toggle").addEventListener("click", function(){
+  control("startup-toggle").addEventListener("click", function(){
     toggleBooleanSetting(this, "/api/settings/startup", "enabled", "Startup setting updated.", "Could not update startup setting");
   });
-  $("auto-global-toggle").addEventListener("click", function(){
+  control("auto-global-toggle").addEventListener("click", function(){
     toggleBooleanSetting(this, "/api/settings/auto-update", "global", "Auto-update setting updated.", "Could not update auto-update setting");
   });
-  $("app-update-checking-toggle").addEventListener("click", function(){
+  control("app-update-checking-toggle").addEventListener("click", function(){
     toggleApplicationPreference(this, "app_update_checking_enabled", "Application update check preference updated.", "Could not update application update check preference");
   });
-  $("app-update-auto-install-toggle").addEventListener("click", function(){
+  control("app-update-auto-install-toggle").addEventListener("click", function(){
     toggleApplicationPreference(this, "app_update_auto_install_enabled", "Automatic application self update preference updated.", "Could not update automatic application self update preference");
   });
-  $("desktop-shortcut-cleanup-toggle").addEventListener("click", function(){
+  control("desktop-shortcut-cleanup-toggle").addEventListener("click", function(){
     toggleApplicationPreference(this, "remove_new_desktop_shortcuts", "Desktop shortcut cleanup preference updated.", "Could not update Desktop shortcut cleanup preference");
   });
-  $("app-update-check").addEventListener("click", function(){ checkAppUpdate(); });
-  $("app-update-apply").addEventListener("click", function(){ startAppSelfUpdate(); });
-  $("application-install-button").addEventListener("click", function(){ installApplication(); });
-  $("application-restart-installed").addEventListener("click", function(){ restartInstalledApplication(); });
-  $("auto-all").addEventListener("click", function(){ setAllAuto(true); });
-  $("auto-none").addEventListener("click", function(){ setAllAuto(false); });
-  $("clear-log-view").addEventListener("click", function(){
+  control("app-update-check").addEventListener("click", function(){ checkAppUpdate(); });
+  control("app-update-apply").addEventListener("click", function(){ startAppSelfUpdate(); });
+  control("application-install-button").addEventListener("click", function(){ installApplication(); });
+  control("application-restart-installed").addEventListener("click", function(){ restartInstalledApplication(); });
+  control("auto-all").addEventListener("click", function(){ setAllAuto(true); });
+  control("auto-none").addEventListener("click", function(){ setAllAuto(false); });
+  control("clear-log-view").addEventListener("click", function(){
     clearCurrentLogView();
   });
-  $("log-search").addEventListener("input", function(){
+  input("log-search").addEventListener("input", function(){
     logSearchQuery = this.value || "";
     renderLogLines(false);
   });
-  $("copy-log-view").addEventListener("click", function(){ copyLogView(); });
-  $("export-log-view").addEventListener("click", function(){ exportLogs(); });
-  $("cancel-updates-button").addEventListener("click", function(){ cancelUpdateJob(); });
-  $("confirm-update-job").addEventListener("click", function(){ confirmPendingUpdateJob(); });
-  $("cancel-update-preflight").addEventListener("click", function(){ hideUpdatePreflight(); });
-  $("retry-failed-updates").addEventListener("click", function(){ retryFailedUpdateResults(); });
-  $("view-update-job-log").addEventListener("click", function(){ viewUpdateJobLog(); });
+  control("copy-log-view").addEventListener("click", function(){ copyLogView(); });
+  control("export-log-view").addEventListener("click", function(){ exportLogs(); });
+  control("cancel-updates-button").addEventListener("click", function(){ cancelUpdateJob(); });
+  control("confirm-update-job").addEventListener("click", function(){ confirmPendingUpdateJob(); });
+  control("cancel-update-preflight").addEventListener("click", function(){ hideUpdatePreflight(); });
+  control("retry-failed-updates").addEventListener("click", function(){ retryFailedUpdateResults(); });
+  control("view-update-job-log").addEventListener("click", function(){ viewUpdateJobLog(); });
 
 
   setTheme(currentTheme());
@@ -3383,7 +3434,8 @@
   loadLogs();
   var query = new URLSearchParams(window.location.search).get("q");
   if(query){
-    $("search-input").value = query;
+    var searchInput = input("search-input");
+    if(searchInput){ searchInput.value = query; }
     loadSearch(query);
   }
 })();

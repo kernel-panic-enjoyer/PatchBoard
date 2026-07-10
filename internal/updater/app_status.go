@@ -77,19 +77,9 @@ func (app *App) startQueuedStatusRefresh() {
 	}
 }
 
-func buildStatusResponseContext(ctx context.Context, forceRefresh bool) StatusResponse {
-	persistedState := loadStateContext(ctx)
-	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, AppUpdateStatus{CurrentVersion: currentAppVersion()})
-}
-
 func (app *App) buildStatusResponseContext(ctx context.Context, forceRefresh bool) StatusResponse {
 	persistedState := loadStateContext(ctx)
 	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, app.appUpdateStatusForStatus(ctx, persistedState))
-}
-
-func buildStatusResponseContextWithUpdate(ctx context.Context, forceRefresh bool, appUpdateStatus AppUpdateStatus) StatusResponse {
-	persistedState := loadStateContext(ctx)
-	return buildStatusResponseContextWithStateAndUpdate(ctx, forceRefresh, persistedState, appUpdateStatus)
 }
 
 func buildStatusResponseContextWithStateAndUpdate(ctx context.Context, forceRefresh bool, persistedState State, appUpdateStatus AppUpdateStatus) StatusResponse {

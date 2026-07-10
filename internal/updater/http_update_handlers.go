@@ -128,7 +128,7 @@ func parseUpdateAllRequest(r *http.Request) ([]string, UpdateOptions, *UpdateRes
 			AllowPinned:         jsonPayload.AllowPinned,
 		}, nil
 	}
-	if err := parseFormRequest(r); err != nil {
+	if err := parsePackageListFormRequest(r); err != nil {
 		result := UpdateResult{Result: validationCommandResult("update-all", err)}
 		return nil, UpdateOptions{}, &result
 	}

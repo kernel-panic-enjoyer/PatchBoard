@@ -23,10 +23,6 @@ func storeActionUnavailableResult(action string) CommandResult {
 	return CommandResult{Code: 1, Command: "store " + action, Stderr: storeActionUnavailableMessage}
 }
 
-func runStoreInstallWithFallback(storeIDOrQuery string) CommandResult {
-	return runStoreInstallWithFallbackContext(context.Background(), storeIDOrQuery)
-}
-
 func runStoreInstallWithFallbackContext(ctx context.Context, storeIDOrQuery string) CommandResult {
 	if packageActionManagerAvailable(managerStore) {
 		storeInstallResult := runPackageActionCommand(ctx, managerStore, packageActionTimeout, managerCommand(managerStore, "install", storeIDOrQuery)...)

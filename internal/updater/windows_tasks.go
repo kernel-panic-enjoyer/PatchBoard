@@ -37,10 +37,6 @@ type scheduledTaskExec struct {
 	Arguments string `xml:"Arguments"`
 }
 
-func taskExists(name string) bool {
-	return taskExistsContext(context.Background(), name)
-}
-
 func taskExistsContext(ctx context.Context, name string) bool {
 	return runCommandContext(ctx, 30*time.Second, "schtasks.exe", "/Query", "/TN", name, "/FO", "LIST").OK
 }
@@ -225,10 +221,6 @@ func deleteStartupRunEntryDirect() CommandResult {
 	return CommandResult{OK: true, Command: startupRunRegistryCommand, Stdout: "Start with Windows disabled for the current user."}
 }
 
-func createAutoUpdateTask() CommandResult {
-	return createAutoUpdateTaskContext(context.Background())
-}
-
 func createAutoUpdateTaskContext(ctx context.Context) CommandResult {
 	if !isAdmin() {
 		return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
@@ -237,10 +229,6 @@ func createAutoUpdateTaskContext(ctx context.Context) CommandResult {
 		})
 	}
 	return createAutoUpdateTaskDirectContext(ctx)
-}
-
-func createAutoUpdateTaskDirect() CommandResult {
-	return createAutoUpdateTaskDirectContext(context.Background())
 }
 
 func createAutoUpdateTaskDirectContext(ctx context.Context) CommandResult {
@@ -302,10 +290,6 @@ func pathWithinAnyRoot(path string, roots []string) bool {
 	return false
 }
 
-func deleteTask(name string) CommandResult {
-	return deleteTaskContext(context.Background(), name)
-}
-
 func deleteTaskContext(ctx context.Context, name string) CommandResult {
 	if name == taskAutoUpdate && !isAdmin() {
 		return runElevatedWorkerOperation(ctx, elevatedWorkerInvocation{
@@ -314,10 +298,6 @@ func deleteTaskContext(ctx context.Context, name string) CommandResult {
 		})
 	}
 	return deleteTaskDirectContext(ctx, name)
-}
-
-func deleteTaskDirect(name string) CommandResult {
-	return deleteTaskDirectContext(context.Background(), name)
 }
 
 func deleteTaskDirectContext(ctx context.Context, name string) CommandResult {

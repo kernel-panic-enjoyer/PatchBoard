@@ -203,7 +203,7 @@ func degradedInventoryManagers(commandResults map[string]CommandResult) map[stri
 func isExplicitUpdateCandidate(pkg Package) bool {
 	return pkg.Manager != managerStore &&
 		pkg.UpdateAvailable &&
-		pkg.UpdateSupported != false &&
+		pkg.UpdateSupported &&
 		(pkg.UnknownVersion || pkg.Pinned)
 }
 
@@ -211,7 +211,7 @@ func canPreserveExplicitUpdateCandidate(previousPackage, refreshedPackage Packag
 	if !isExplicitUpdateCandidate(previousPackage) || refreshedPackage.Manager != previousPackage.Manager || !refreshedPackage.Installed {
 		return false
 	}
-	if refreshedPackage.UpdateSupported == false || refreshedPackage.Manager == managerStore {
+	if !refreshedPackage.UpdateSupported || refreshedPackage.Manager == managerStore {
 		return false
 	}
 	if refreshedPackage.Version != "" && previousPackage.Version != "" && refreshedPackage.Version != previousPackage.Version {

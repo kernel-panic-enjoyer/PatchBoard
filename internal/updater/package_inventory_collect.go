@@ -108,10 +108,6 @@ func collectInventoryInputs(ctx context.Context, managers map[string]ManagerStat
 	return inputs
 }
 
-func collectNativeStorePackagedInventory() (StorePackagedAppInventory, CommandResult) {
-	return collectNativeStorePackagedInventoryContext(context.Background())
-}
-
 func collectNativeStorePackagedInventoryContext(ctx context.Context) (StorePackagedAppInventory, CommandResult) {
 	userSID, err := currentUserSID()
 	if err != nil {

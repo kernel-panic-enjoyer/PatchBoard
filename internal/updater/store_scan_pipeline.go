@@ -95,10 +95,6 @@ type StoreScanResult struct {
 	Inventory    StorePackagedAppInventory
 }
 
-func defaultStoreScanPipeline(repository StoreScanRepository) *StoreScanPipeline {
-	return defaultStoreScanPipelineContext(context.Background(), repository)
-}
-
 func defaultStoreScanPipelineContext(ctx context.Context, repository StoreScanRepository) *StoreScanPipeline {
 	managers := detectManagersContext(ctx)
 	storeVersion := managers[managerStore].Version
@@ -207,7 +203,6 @@ func (pipeline *StoreScanPipeline) Run(ctx context.Context) (StoreScanResult, er
 		winRTStarted := pipeline.now()
 		winRTRuns := pipeline.runCatalogProviders(ctx, scan, inventory.Families, winRTProviders)
 		aggregateDuration += pipeline.now().Sub(winRTStarted)
-		aggregateRuns = append(aggregateRuns, winRTRuns...)
 		providerRuns = append(providerRuns, winRTRuns...)
 	}
 	scan.CompletedAt = pipeline.now()
@@ -867,14 +862,6 @@ func scanShouldPublish(scan StoreScanGeneration, inventory StorePackagedAppInven
 		return false
 	}
 	return len(inventory.Families) > 0 || scan.CompletionStatus == StoreScanCompleted
-}
-
-func (pipeline *StoreScanPipeline) previousAssessments(ctx context.Context, userSID string) (map[StoreInstalledIdentity]StorePublishedAssessment, error) {
-	snapshot, ok, err := pipeline.Repository.LoadLatestPublishedSnapshot(ctx, userSID)
-	if err != nil || !ok {
-		return nil, err
-	}
-	return previousAssessmentsFromSnapshot(snapshot), nil
 }
 
 func (pipeline *StoreScanPipeline) previousSnapshot(ctx context.Context, userSID string) (StoreScanSnapshot, bool, error) {

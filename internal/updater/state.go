@@ -316,7 +316,7 @@ func (store *FileStateStore) writeBytesLocked(ctx context.Context, stateDirector
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(stateDirectory, 0o755); err != nil {
+	if err := ensureUserPrivateDir(stateDirectory); err != nil {
 		return err
 	}
 	tempFile, err := os.CreateTemp(stateDirectory, tempPattern)
@@ -341,6 +341,9 @@ func (store *FileStateStore) writeBytesLocked(ctx context.Context, stateDirector
 	if err := tempFile.Close(); err != nil {
 		return err
 	}
+	if err := protectUserPrivateFile(tempPath); err != nil {
+		return err
+	}
 	replaceStateFile := replaceFileKeepingBackup
 	if store != nil && store.replaceFile != nil {
 		replaceStateFile = store.replaceFile
@@ -349,8 +352,21 @@ func (store *FileStateStore) writeBytesLocked(ctx context.Context, stateDirector
 	if backupName != "" {
 		backupPath = filepath.Join(stateDirectory, backupName)
 	}
-	if err := replaceStateFile(tempPath, filepath.Join(stateDirectory, "state.json"), backupPath); err != nil {
+	targetPath := filepath.Join(stateDirectory, "state.json")
+	if err := replaceStateFile(tempPath, targetPath, backupPath); err != nil {
 		return err
+	}
+	if err := protectUserPrivateFile(targetPath); err != nil {
+		return err
+	}
+	if backupPath != "" {
+		if _, statErr := os.Stat(backupPath); statErr == nil {
+			if err := protectUserPrivateFile(backupPath); err != nil {
+				return err
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
 	}
 	removeTempFile = false
 	return nil
@@ -535,7 +551,7 @@ func truncateUTF8String(value string, limit int) string {
 
 func (store *FileStateStore) stateDir() (string, error) {
 	if store != nil && store.dir != "" {
-		if err := os.MkdirAll(store.dir, 0o755); err != nil {
+		if err := ensureUserPrivateDir(store.dir); err != nil {
 			return "", err
 		}
 		return store.dir, nil

@@ -25,6 +25,7 @@ the Windows Runtime ABI while remaining in the interactive user's session.
 
 - `Current` requires a fresh complete scan in the correct user context with required providers healthy and authoritative negative evidence.
 - Provider failure, parser rejection, stale evidence, unresolved identity, incomplete coverage, or user mismatch produces `Unknown`.
+- Unknown never becomes Current because a provider failed, a parser rejected data, or coverage was incomplete. Absence of fresh authoritative evidence is diagnostic-only.
 - Stale or incomplete negative evidence cannot clear a fresh positive update observation.
 - Store update execution requires a fresh `Available` assessment and exact verified action target.
 - Store command success means accepted. Final success requires post-action verification.
@@ -66,6 +67,55 @@ file to a timestamped `.legacy-cache.*` filename and starts from file snapshots
 only. Durable preferences, including Store auto-update keys, remain in
 `state.json`. Old cache rows are never imported as fresh Store truth, so the UI
 reports Unknown until a fresh current-user scan publishes a new snapshot.
+
+## Inventory Ownership and Projection
+
+The cached base inventory is manager/native inventory only. Published Store
+assessments are overlays applied to a deep-copied inventory snapshot when the API,
+update selection, or automation needs the effective view. Read-only projection
+must not write through shared package slices, provider summaries, command-result
+maps, or Store health structures.
+
+Recovered, stale, or incomplete evidence is retained for diagnostics so the UI can
+explain why Store status is not authoritative. That evidence is never actionable:
+it cannot set `UpdateAvailable`, cannot provide an exact target, and cannot
+authorize execution. A fresh targeted or full Store scan must replace stale or
+recovered evidence before an update can run.
+
+## Worker Isolation
+
+WinRT inventory and Store update discovery may block inside synchronous
+COM/WinRT calls. Those operations run through a hidden same-binary worker launched
+as the interactive current user in the same session, not through an elevated
+alternate administrator account. The parent owns the worker lifetime with a
+kill-on-close job object, bounded request/response pipes, strict schema
+validation, scan-ID checks, user-SID checks, PFN/full-name validation, duplicate
+rejection, and response-size limits.
+
+The worker protocol accepts only the specific Store enumeration or discovery
+operation. It never accepts arbitrary executable paths, package operations, file
+writes, or generic COM activation. Wrong-user, malformed, oversized, duplicate,
+or protocol-mismatched responses make the Store evidence incomplete and
+non-actionable.
+
+## Execution and Verification
+
+Store execution is deliberately stricter than winget or Chocolatey because Store
+identity, offer discovery, installation, and verification are split across
+multiple Windows APIs and command surfaces. Before running a Store update, the
+coordinator re-enumerates the exact current-user PFN and rejects the assessment
+when the installed version no longer matches the version that was assessed.
+
+PackageCatalog events do not prove that an update was offered and do not prove
+that an update succeeded. They are only an acceleration signal that triggers
+immediate exact inventory and catalog rechecks. Polling remains the fallback, and
+post-action verification remains authoritative.
+
+Successful verification requires a strict installed version increase, respecting
+the offered version when it is known, or an authoritative exact catalog result
+showing that the offer disappeared while the package remains installed and did
+not downgrade. A package-full-name-only change is not sufficient without the
+authoritative exact catalog result.
 
 ## Distribution
 

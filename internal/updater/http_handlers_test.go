@@ -71,6 +71,12 @@ func TestAPILogsReportsGapMetadata(t *testing.T) {
 
 func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
 	app := testSessionApp()
+	t.Cleanup(func() {
+		app.beginShutdown()
+		if !app.waitForBackgroundWork(2 * time.Second) {
+			t.Error("operation job queue did not stop during test cleanup")
+		}
+	})
 	status := app.startOperationJob(jobTypeInventoryRefresh, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			status.State = jobStateSucceeded
@@ -123,6 +129,12 @@ func TestAPIJobLogReturnsCorrelatedEntries(t *testing.T) {
 	defer func() { sessionLogs = oldLogs }()
 
 	app := testSessionApp()
+	t.Cleanup(func() {
+		app.beginShutdown()
+		if !app.waitForBackgroundWork(2 * time.Second) {
+			t.Error("operation job queue did not stop during test cleanup")
+		}
+	})
 	status := app.startOperationJob(jobTypeUpdate, "", 1, []string{"winget|Git.Git"}, func(ctx context.Context, job *OperationJob) {
 		ctx = withLogMetadata(ctx, logMetadata{JobID: job.status.JobID, JobType: job.status.Type, PackageKey: "winget|Git.Git", Manager: managerWinget})
 		sessionLogs.AppendContext(ctx, "command", "winget upgrade --id Git.Git --exact", logCategoriesForCommand([]string{"winget", "upgrade", "--id", "Git.Git", "--exact"}))
@@ -320,6 +332,71 @@ func TestBrowserSecurityHeadersAndNoTokenInRenderedHTML(t *testing.T) {
 			t.Fatalf("rendered page leaked %q", leaked)
 		}
 	}
+	if !strings.Contains(body, csrfTokenForSession(app.sessionToken)) {
+		t.Fatal("rendered page should include the derived CSRF token")
+	}
+}
+
+func TestLogExportDoesNotLeakBootstrapOrSessionTokens(t *testing.T) {
+	oldLogs := sessionLogs
+	sessionLogs = &LogBuffer{}
+	defer func() { sessionLogs = oldLogs }()
+
+	app := &App{token: "bootstrap-token-export-route", sessionToken: "session-token-export-route", listenHost: defaultHost, listenPort: 4183}
+	sessionLogs.Append("app", "bootstrap-token-export-route session-token-export-route")
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs/export", nil)
+	addTestSessionCookie(app, request)
+	response := httptest.NewRecorder()
+
+	app.serveHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected log export, got %d: %s", response.Code, response.Body.String())
+	}
+	for fileName, contents := range readZipTextFiles(t, response.Body.Bytes()) {
+		for _, leaked := range []string{app.token, app.sessionToken} {
+			if strings.Contains(contents, leaked) {
+				t.Fatalf("export %s leaked %q: %q", fileName, leaked, contents)
+			}
+		}
+	}
+}
+
+func TestAPIRoutesDeclareMethodHandlerAndBodyLimitPolicy(t *testing.T) {
+	if len(apiRoutes) == 0 {
+		t.Fatal("expected API route registry to be populated")
+	}
+	for path, route := range apiRoutes {
+		if !strings.HasPrefix(path, "/api/") {
+			t.Fatalf("API route path %q must stay under /api/", path)
+		}
+		if route.Handler == nil {
+			t.Fatalf("API route %q has no handler", path)
+		}
+		switch route.Method {
+		case http.MethodGet:
+			if route.MaxBodyBytes != 0 {
+				t.Fatalf("GET route %q should reject bodies instead of declaring a body limit, got %d", path, route.MaxBodyBytes)
+			}
+		case http.MethodPost:
+			if route.MaxBodyBytes <= 0 {
+				t.Fatalf("mutating route %q must declare an explicit body limit", path)
+			}
+		default:
+			t.Fatalf("API route %q declares unsupported method %q", path, route.Method)
+		}
+	}
+}
+
+func TestAPIRequestBodyLimitUsesRouteMetadata(t *testing.T) {
+	if got := apiRequestBodyLimit("/api/update-all"); got != maxPackageListBodyBytes {
+		t.Fatalf("expected update-all package-list cap, got %d", got)
+	}
+	if got := apiRequestBodyLimit("/api/settings/theme"); got != maxSmallJSONBodyBytes {
+		t.Fatalf("expected settings small-body cap, got %d", got)
+	}
+	if got := apiRequestBodyLimit("/api/unknown"); got != maxJSONBodyBytes {
+		t.Fatalf("expected default cap for unknown API route, got %d", got)
+	}
 }
 
 func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
@@ -360,10 +437,38 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected null origin without UI header rejection, got %d", nullOriginWithoutUIHeaderResponse.Code)
 	}
 
+	missingUIHeader := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	addTestSessionCookie(app, missingUIHeader)
+	missingUIHeaderResponse := httptest.NewRecorder()
+	app.serveHTTP(missingUIHeaderResponse, missingUIHeader)
+	if missingUIHeaderResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected mutating request without UI header rejection, got %d", missingUIHeaderResponse.Code)
+	}
+
+	missingCSRFToken := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	addTestSessionCookie(app, missingCSRFToken)
+	missingCSRFToken.Header.Set(trustedUIRequestHeader, "1")
+	missingCSRFTokenResponse := httptest.NewRecorder()
+	app.serveHTTP(missingCSRFTokenResponse, missingCSRFToken)
+	if missingCSRFTokenResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected mutating request without CSRF token rejection, got %d", missingCSRFTokenResponse.Code)
+	}
+
+	badCSRFToken := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	addTestSessionCookie(app, badCSRFToken)
+	badCSRFToken.Header.Set(trustedUIRequestHeader, "1")
+	badCSRFToken.Header.Set(csrfRequestHeader, "wrong-token")
+	badCSRFTokenResponse := httptest.NewRecorder()
+	app.serveHTTP(badCSRFTokenResponse, badCSRFToken)
+	if badCSRFTokenResponse.Code != http.StatusForbidden {
+		t.Fatalf("expected mutating request with wrong CSRF token rejection, got %d", badCSRFTokenResponse.Code)
+	}
+
 	nullOriginUIRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/shutdown", nil)
 	addTestSessionCookie(app, nullOriginUIRequest)
 	nullOriginUIRequest.Header.Set("Origin", "null")
 	nullOriginUIRequest.Header.Set(trustedUIRequestHeader, "1")
+	nullOriginUIRequest.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
 	nullOriginUIRequestResponse := httptest.NewRecorder()
 	app.serveHTTP(nullOriginUIRequestResponse, nullOriginUIRequest)
 	if nullOriginUIRequestResponse.Code != http.StatusOK {
@@ -374,6 +479,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 	addTestSessionCookie(app, badOriginWithUIHeader)
 	badOriginWithUIHeader.Header.Set("Origin", "http://evil.test:4183")
 	badOriginWithUIHeader.Header.Set(trustedUIRequestHeader, "1")
+	badOriginWithUIHeader.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
 	badOriginWithUIHeaderResponse := httptest.NewRecorder()
 	app.serveHTTP(badOriginWithUIHeaderResponse, badOriginWithUIHeader)
 	if badOriginWithUIHeaderResponse.Code != http.StatusForbidden {
@@ -382,6 +488,8 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 
 	badFetch := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badFetch)
+	badFetch.Header.Set(trustedUIRequestHeader, "1")
+	badFetch.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
 	badFetch.Header.Set("Sec-Fetch-Site", "cross-site")
 	badFetchResponse := httptest.NewRecorder()
 	app.serveHTTP(badFetchResponse, badFetch)
@@ -413,6 +521,8 @@ func TestShutdownRouteStopsServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	addTestSessionCookie(app, request)
+	request.Header.Set(trustedUIRequestHeader, "1")
+	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -470,7 +580,9 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 	cancel()
 	request := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader("manager=winget&package_id=Git.Git")).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set(trustedUIRequestHeader, "1")
 	addTestSessionCookie(app, request)
+	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
 	response := httptest.NewRecorder()
 
 	app.serveHTTP(response, request)
@@ -726,6 +838,40 @@ func TestAPIRejectsOversizedRequestBodies(t *testing.T) {
 	}
 }
 
+func TestParseFormRequestIsBoundedWithoutServerWrapper(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader("enabled=true&padding="+strings.Repeat("x", int(maxSmallJSONBodyBytes))))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if err := parseFormRequest(request); err == nil || !strings.Contains(err.Error(), "request body too large") {
+		t.Fatalf("expected standalone form parser to enforce limit, got %v", err)
+	}
+}
+
+func TestParsePackageListFormRequestUsesPackageListLimit(t *testing.T) {
+	body := "package_key=winget:Git.Git&padding=" + strings.Repeat("x", int(maxSmallJSONBodyBytes))
+	request := httptest.NewRequest(http.MethodPost, "/api/update-all", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if err := parsePackageListFormRequest(request); err != nil {
+		t.Fatalf("package-list form parser should allow larger bulk body: %v", err)
+	}
+	if got := request.Form.Get("package_key"); got != "winget:Git.Git" {
+		t.Fatalf("unexpected parsed package key %q", got)
+	}
+}
+
+func TestParseFormRequestPreservesBodyBeforeQueryOrdering(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/settings/startup?enabled=false", strings.NewReader("enabled=true"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	if err := parseFormRequest(request); err != nil {
+		t.Fatalf("parse form: %v", err)
+	}
+	if got := request.Form.Get("enabled"); got != "true" {
+		t.Fatalf("body form value should take precedence over query value, got %q", got)
+	}
+}
+
 func TestAPIRejectsGETRequestBodies(t *testing.T) {
 	app := testSessionApp()
 	request := authenticatedRequest(app, http.MethodGet, "/api/status", strings.NewReader("unexpected"))
@@ -906,6 +1052,9 @@ func TestApplicationInstallEndpointRunsInstallOperation(t *testing.T) {
 	}
 	if decoded.Result == nil || !decoded.Result.OK || decoded.Result.Command != applicationInstallCommand {
 		t.Fatalf("unexpected install response: %#v", decoded.Result)
+	}
+	if !app.waitForBackgroundWork(2 * time.Second) {
+		t.Fatal("application install status refresh did not finish")
 	}
 }
 

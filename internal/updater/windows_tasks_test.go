@@ -145,7 +145,8 @@ func TestSetStartupUsesRunEntryForEnableAndDisable(t *testing.T) {
 
 func TestSetStartupContextPassesCallerContextToRunner(t *testing.T) {
 	oldRunner := startupRunEntryRunner
-	contextKey := struct{}{}
+	type requestContextKey struct{}
+	contextKey := requestContextKey{}
 	startupRunEntryRunner = func(ctx context.Context, enabled bool) CommandResult {
 		if got := ctx.Value(contextKey); got != "request-context" {
 			t.Fatalf("startup runner received context value %v, want request-context", got)

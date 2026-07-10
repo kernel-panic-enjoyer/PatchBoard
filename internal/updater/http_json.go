@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -86,10 +87,6 @@ func commandResponse(result CommandResult) commandAPIResponse {
 	return commandAPIResponse{Result: &result}
 }
 
-func refreshedCommandResponse(result CommandResult) commandAPIResponse {
-	return commandAPIResponse{Result: &result, RefreshStarted: true}
-}
-
 func settingsResponse(state State) commandAPIResponse {
 	settings := statusSettingsFromState(state)
 	return commandAPIResponse{Settings: &settings}
@@ -102,10 +99,6 @@ func settingsCommandResponse(state State, result CommandResult) commandAPIRespon
 
 func requestIsJSON(r *http.Request) bool {
 	return strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json")
-}
-
-func decodeJSONRequest(r *http.Request, target any) error {
-	return decodeJSONRequestBounded(r, target, maxJSONBodyBytes)
 }
 
 func decodeSmallJSONRequest(r *http.Request, target any) error {
@@ -174,8 +167,43 @@ func readBoundedRequestBody(r *http.Request, maxBytes int64) ([]byte, error) {
 }
 
 func parseFormRequest(r *http.Request) error {
-	if err := r.ParseForm(); err != nil {
+	return parseFormRequestBounded(r, maxSmallJSONBodyBytes)
+}
+
+func parsePackageListFormRequest(r *http.Request) error {
+	return parseFormRequestBounded(r, maxPackageListBodyBytes)
+}
+
+func parseFormRequestBounded(r *http.Request, maxBytes int64) error {
+	formValues := make(url.Values)
+	postValues := make(url.Values)
+	body, err := readBoundedRequestBody(r, maxBytes)
+	if err != nil {
 		return fmt.Errorf("invalid form body: %w", err)
 	}
+	if len(body) > 0 && requestContentTypeIsForm(r) {
+		parsedBody, err := url.ParseQuery(string(body))
+		if err != nil {
+			return fmt.Errorf("invalid form body: %w", err)
+		}
+		for key, values := range parsedBody {
+			copiedValues := append([]string(nil), values...)
+			postValues[key] = copiedValues
+			formValues[key] = append(formValues[key], copiedValues...)
+		}
+	}
+	for key, values := range r.URL.Query() {
+		formValues[key] = append(formValues[key], values...)
+	}
+	r.PostForm = postValues
+	r.Form = formValues
 	return nil
+}
+
+func requestContentTypeIsForm(r *http.Request) bool {
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if semicolon := strings.IndexByte(contentType, ';'); semicolon >= 0 {
+		contentType = contentType[:semicolon]
+	}
+	return strings.TrimSpace(contentType) == "application/x-www-form-urlencoded"
 }

@@ -187,7 +187,7 @@ func managerSortRank(manager string) int {
 	return len(managedPackageManagers)
 }
 
-func versionGreater(candidate, current string) bool {
+func numericVersionLooksNewer(candidate, current string) bool {
 	candidateVersionParts := versionParts(candidate)
 	currentVersionParts := versionParts(current)
 	if len(candidateVersionParts) == 0 || len(currentVersionParts) == 0 {

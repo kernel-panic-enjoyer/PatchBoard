@@ -1,0 +1,35 @@
+name: Parser Fuzzing
+
+on:
+  schedule:
+    - cron: '41 2 * * 6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        target:
+          - FuzzParseWingetTable
+          - FuzzParseStorePackageRows
+          - FuzzNormalizePackageIdentity
+          - FuzzSplitPackageKey
+          - FuzzNumericVersionLooksNewer
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fuzz ${{ matrix.target }}
+        run: go test -run=^$ -fuzz='^${{ matrix.target }}$' -fuzztime=30s ./internal/updater

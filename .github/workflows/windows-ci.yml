@@ -41,8 +41,31 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Static analysis
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          & (Join-Path $tools 'staticcheck.exe') ./...
+
+      - name: Go vulnerability scan
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'go-security-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $env:GOBIN = $tools
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+          & (Join-Path $tools 'govulncheck.exe') ./...
+
       - name: JavaScript syntax
         run: node --check internal/updater/assets/ui.js
+
+      - name: JavaScript type check
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run check:js
 
       - name: Windows process-tree helper test
         run: go test -count=1 ./internal/updater -run TestWindowsCommandProcessOwnerTerminatesGrandchild

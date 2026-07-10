@@ -155,10 +155,6 @@ func commandHasApplyFalse(args []string) bool {
 	return false
 }
 
-func lockMutexContext(ctx context.Context, mu *sync.Mutex) bool {
-	return lockMutexContextWithWait(ctx, mu, nil)
-}
-
 func lockMutexContextWithWait(ctx context.Context, mu *sync.Mutex, onWait func()) bool {
 	select {
 	case <-ctx.Done():

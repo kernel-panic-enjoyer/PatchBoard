@@ -73,6 +73,32 @@ func TestManagerCommandIgnoresEnvironmentOverridesInHardenedModes(t *testing.T) 
 	}
 }
 
+func TestUnresolvedManagerCommandDoesNotUseShellFallback(t *testing.T) {
+	setProcessExecutionModeForTest(t, processModeInteractive)
+
+	for _, managerName := range []string{managerWinget, managerStore} {
+		got := unresolvedManagerCommand(managerName, "--version")
+		if len(got) != 2 || got[0] != managerName || got[1] != "--version" {
+			t.Fatalf("%s unresolved command should execute manager directly, got %#v", managerName, got)
+		}
+		if packageManagerNameFromArg(got[0]) == commandProcessorExecutable {
+			t.Fatalf("%s unresolved command used shell fallback: %#v", managerName, got)
+		}
+	}
+}
+
+func TestUnresolvedManagerCommandFailsClosedInHardenedMode(t *testing.T) {
+	setProcessExecutionModeForTest(t, processModeScheduledAutoUpdate)
+
+	got := unresolvedManagerCommand(managerWinget, "--version")
+	if len(got) != 2 || !strings.Contains(strings.ToLower(got[0]), "patchboard-winget-not-resolved.exe") || got[1] != "--version" {
+		t.Fatalf("hardened unresolved command should use explicit not-resolved path, got %#v", got)
+	}
+	if packageManagerNameFromArg(got[0]) == commandProcessorExecutable {
+		t.Fatalf("hardened unresolved command used shell fallback: %#v", got)
+	}
+}
+
 func TestAutoUpdateTaskCLIIgnoresManagerPathOverride(t *testing.T) {
 	setProcessExecutionModeForTest(t, processModeInteractive)
 	fakeDirectory := t.TempDir()
@@ -392,6 +418,29 @@ func TestLogArchiveUsesSegmentedBuffersAfterStoreFlood(t *testing.T) {
 		for _, leaked := range []string{`C:\Users\User`, "token=secret", "S-1-5-21-1000"} {
 			if strings.Contains(files[file], leaked) {
 				t.Fatalf("export %s leaked %q: %q", file, leaked, files[file])
+			}
+		}
+	}
+}
+
+func TestLogArchiveRedactsRegisteredSessionSecrets(t *testing.T) {
+	const (
+		bootstrapToken = "bootstrap-token-export-secret"
+		sessionToken   = "session-token-export-secret"
+	)
+	registerSensitiveLogValue(bootstrapToken)
+	registerSensitiveLogValue(sessionToken)
+
+	buffer := &LogBuffer{}
+	buffer.Append("app", "bootstrap "+bootstrapToken+" session "+sessionToken)
+	data, err := buildLogArchiveFromSnapshot(buffer.ExportSnapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for fileName, contents := range readZipTextFiles(t, data) {
+		for _, leaked := range []string{bootstrapToken, sessionToken} {
+			if strings.Contains(contents, leaked) {
+				t.Fatalf("export %s leaked registered secret %q: %q", fileName, leaked, contents)
 			}
 		}
 	}
@@ -727,7 +776,9 @@ $err = 'e' * 4096
 for ($i = 0; $i -lt 540; $i++) { [Console]::Out.Write($out) }
 for ($i = 0; $i -lt 540; $i++) { [Console]::Error.Write($err) }
 `
-	result := runCommandContext(context.Background(), 30*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	// Race instrumentation substantially slows the concurrent stream readers on
+	// Windows. This test exercises retention, so keep timeout behavior out of it.
+	result := runCommandContext(context.Background(), 2*time.Minute, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
 	if !result.OK {
 		t.Fatalf("expected command to succeed, got %#v", result)
 	}

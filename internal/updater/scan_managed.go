@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-func readWingetApps() ([]ScannedApp, *CommandResult, error) {
-	return readWingetAppsContext(context.Background())
-}
-
 func readWingetAppsContext(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
 	if !detectManagerContext(ctx, "winget").Available {
 		return nil, nil, nil
@@ -32,10 +28,6 @@ func readWingetAppsContext(ctx context.Context) ([]ScannedApp, *CommandResult, e
 		})
 	}
 	return apps, &result, nil
-}
-
-func readAppxApps() ([]ScannedApp, *CommandResult, error) {
-	return readAppxAppsContext(context.Background())
 }
 
 func readAppxAppsContext(ctx context.Context) ([]ScannedApp, *CommandResult, error) {

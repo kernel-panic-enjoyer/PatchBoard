@@ -24,6 +24,8 @@ const (
 	defaultHost = "127.0.0.1"
 	defaultPort = 4183
 
+	apiReadTimeout = 30 * time.Second
+
 	flagHelp            = "--help"
 	flagNoBrowser       = "--no-browser"
 	flagPort            = "--port"
@@ -304,15 +306,6 @@ func serverURL(host string, port int, token string) string {
 	return fmt.Sprintf("http://%s/?token=%s", net.JoinHostPort(host, strconv.Itoa(port)), token)
 }
 
-func runServer(noBrowser bool) error {
-	options, err := parseCLI(os.Args[1:])
-	if err != nil {
-		return err
-	}
-	options.NoBrowser = noBrowser
-	return runServerWithOptions(options, productionServerHooks)
-}
-
 func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 	token := options.Token
 	if token == "" {
@@ -364,13 +357,7 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.serveHTTP)
-	server := &http.Server{
-		Addr:              listener.Addr().String(),
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Minute,
-		IdleTimeout:       2 * time.Minute,
-	}
+	server := newLocalHTTPServer(listener.Addr().String(), mux)
 	app.server = server
 	app.refreshStatus(true)
 	app.refreshInventory(true)
@@ -393,6 +380,17 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 		fmt.Println(url)
 	}
 	return server.Serve(listener)
+}
+
+func newLocalHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadTimeout:       apiReadTimeout,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
 }
 
 func (app *App) startShutdownSignalWatcher() func() {
@@ -423,15 +421,6 @@ func (app *App) watchShutdownSignals(signals <-chan os.Signal) func() {
 			close(done)
 		})
 	}
-}
-
-func hasArg(name string) bool {
-	for _, arg := range os.Args[1:] {
-		if arg == name {
-			return true
-		}
-	}
-	return false
 }
 
 func argValue(name string) (string, bool) {
