@@ -13,13 +13,13 @@ import (
 // refreshes, and always allowed for forced refreshes.
 func TestBeginStoreScanLockedGating(t *testing.T) {
 	app := &App{}
-	app.mu.Lock()
-	defer app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	defer app.inventoryService.mu.Unlock()
 
 	if app.beginStoreScanLocked(true) {
 		t.Fatal("a scan must not start when background scanning is disabled")
 	}
-	app.storeBackgroundScanEnabled = true
+	app.inventoryService.storeBackgroundScanEnabled = true
 	if !app.beginStoreScanLocked(true) {
 		t.Fatal("a forced scan should start when enabled and idle")
 	}
@@ -27,8 +27,8 @@ func TestBeginStoreScanLockedGating(t *testing.T) {
 		t.Fatal("a second scan must not start while one is already in flight (single-flight)")
 	}
 
-	app.storeScanLoading = false
-	app.storeScanLastPublishedAt = time.Now()
+	app.inventoryService.storeScanLoading = false
+	app.inventoryService.storeScanLastPublishedAt = time.Now()
 	if app.beginStoreScanLocked(false) {
 		t.Fatal("a non-forced scan within the cooldown window must be skipped")
 	}
@@ -36,24 +36,24 @@ func TestBeginStoreScanLockedGating(t *testing.T) {
 		t.Fatal("a forced scan must bypass the cooldown window")
 	}
 
-	app.storeScanLoading = false
-	app.storeScanLastPublishedAt = time.Now().Add(-2 * storeScanCooldown)
+	app.inventoryService.storeScanLoading = false
+	app.inventoryService.storeScanLastPublishedAt = time.Now().Add(-2 * storeScanCooldown)
 	if !app.beginStoreScanLocked(false) {
 		t.Fatal("a non-forced scan after the cooldown window should start")
 	}
 }
 
 func TestBeginStoreScanLockedFailureRetryBackoff(t *testing.T) {
-	app := &App{storeBackgroundScanEnabled: true}
-	app.mu.Lock()
-	defer app.mu.Unlock()
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
+	app.inventoryService.mu.Lock()
+	defer app.inventoryService.mu.Unlock()
 
-	app.storeScanLastFailureAt = time.Now()
+	app.inventoryService.storeScanLastFailureAt = time.Now()
 	if app.beginStoreScanLocked(false) {
 		t.Fatal("a non-forced scan inside the failure retry backoff must be skipped")
 	}
 
-	app.storeScanLastFailureAt = time.Now().Add(-2 * storeScanFailureRetryBackoff)
+	app.inventoryService.storeScanLastFailureAt = time.Now().Add(-2 * storeScanFailureRetryBackoff)
 	if !app.beginStoreScanLocked(false) {
 		t.Fatal("a non-forced scan after the failure retry backoff should start")
 	}
@@ -65,43 +65,43 @@ func TestBackgroundStoreScanTimestamps(t *testing.T) {
 	oldScan := runStoreTransactionalScanForInventory
 	defer func() { runStoreTransactionalScanForInventory = oldScan }()
 
-	app := &App{storeBackgroundScanEnabled: true, storeScanLoading: true}
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true, storeScanLoading: true}}
 	runStoreTransactionalScanForInventory = func(ctx context.Context) (StoreScanResult, error) {
 		return StoreScanResult{Published: true, Scan: StoreScanGeneration{ScanID: "published"}}, nil
 	}
 	app.runStoreScan(context.Background())
-	if app.storeScanLastAttemptAt.IsZero() {
+	if app.inventoryService.storeScanLastAttemptAt.IsZero() {
 		t.Fatal("successful scan should record an attempt timestamp")
 	}
-	if app.storeScanLastPublishedAt.IsZero() {
+	if app.inventoryService.storeScanLastPublishedAt.IsZero() {
 		t.Fatal("successful published scan should record a publication timestamp")
 	}
-	if !app.storeScanLastFailureAt.IsZero() {
-		t.Fatalf("successful published scan should clear failure timestamp, got %s", app.storeScanLastFailureAt)
+	if !app.inventoryService.storeScanLastFailureAt.IsZero() {
+		t.Fatalf("successful published scan should clear failure timestamp, got %s", app.inventoryService.storeScanLastFailureAt)
 	}
 
-	app = &App{storeBackgroundScanEnabled: true, storeScanLoading: true}
+	app = &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true, storeScanLoading: true}}
 	runStoreTransactionalScanForInventory = func(ctx context.Context) (StoreScanResult, error) {
 		return StoreScanResult{Scan: StoreScanGeneration{ScanID: "unpublished"}}, nil
 	}
 	app.runStoreScan(context.Background())
-	if app.storeScanLastFailureAt.IsZero() {
+	if app.inventoryService.storeScanLastFailureAt.IsZero() {
 		t.Fatal("unpublished scan should record a failure retry timestamp")
 	}
-	if !app.storeScanLastPublishedAt.IsZero() {
+	if !app.inventoryService.storeScanLastPublishedAt.IsZero() {
 		t.Fatal("unpublished scan must not record a publication timestamp")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	app = &App{storeBackgroundScanEnabled: true, storeScanLoading: true}
+	app = &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true, storeScanLoading: true}}
 	runStoreTransactionalScanForInventory = func(ctx context.Context) (StoreScanResult, error) {
 		t.Fatal("cancelled scan should not invoke the Store pipeline")
 		return StoreScanResult{}, nil
 	}
 	app.runStoreScan(ctx)
-	if !app.storeScanLastFailureAt.IsZero() || !app.storeScanLastPublishedAt.IsZero() {
-		t.Fatalf("shutdown cancellation should not schedule retry or publication timestamps: failure=%s published=%s", app.storeScanLastFailureAt, app.storeScanLastPublishedAt)
+	if !app.inventoryService.storeScanLastFailureAt.IsZero() || !app.inventoryService.storeScanLastPublishedAt.IsZero() {
+		t.Fatalf("shutdown cancellation should not schedule retry or publication timestamps: failure=%s published=%s", app.inventoryService.storeScanLastFailureAt, app.inventoryService.storeScanLastPublishedAt)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestBackgroundStoreScanRunsOffCriticalPath(t *testing.T) {
 		return StoreScanResult{Published: true, Scan: StoreScanGeneration{ScanID: "test-scan"}}, nil
 	}
 
-	app := &App{storeBackgroundScanEnabled: true}
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
 
 	done := make(chan Inventory, 1)
 	go func() { done <- app.refreshInventorySync("test") }()
@@ -198,7 +198,7 @@ func TestForcedRefreshDuringScanQueuesFollowupScan(t *testing.T) {
 		return StoreScanResult{Published: true, Scan: StoreScanGeneration{ScanID: "s"}}, nil
 	}
 
-	app := &App{storeBackgroundScanEnabled: true}
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
 
 	app.refreshInventorySync("first")
 	select {
@@ -209,9 +209,9 @@ func TestForcedRefreshDuringScanQueuesFollowupScan(t *testing.T) {
 
 	// Forced refresh while the first scan is in flight must queue a follow-up.
 	app.refreshInventorySync("second-forced")
-	app.mu.Lock()
-	queued := app.storeScanQueued
-	app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	queued := app.inventoryService.storeScanQueued
+	app.inventoryService.mu.Unlock()
 	if !queued {
 		t.Fatal("forced refresh during an in-flight scan should queue a follow-up scan")
 	}

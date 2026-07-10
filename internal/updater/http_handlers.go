@@ -352,7 +352,7 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, pageData PageData
 	pageData.Theme = savedState.Theme
 	pageData.IconVersion = appIconVersion()
 	pageData.AssetVersion = frontendAssetVersion()
-	pageData.CSRFToken = csrfTokenForSession(app.sessionToken)
+	pageData.CSRFToken = csrfTokenForSession(app.webSession.sessionToken)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := pageTemplate.Execute(w, pageData); err != nil {

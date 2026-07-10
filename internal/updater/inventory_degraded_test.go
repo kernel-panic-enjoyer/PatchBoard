@@ -12,7 +12,7 @@ func TestRefreshInventoryPreservesExplicitUpdateCandidateWhenManagerListIsDegrad
 
 	const key = "winget:PokeMMO.PokeMMO"
 	app := &App{
-		inventory: Inventory{PackageLookup: PackageLookup{
+		inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{
 			Packages: []Package{{
 				Key:              key,
 				Manager:          managerWinget,
@@ -27,7 +27,7 @@ func TestRefreshInventoryPreservesExplicitUpdateCandidateWhenManagerListIsDegrad
 				Source:           sourceWinget,
 			}},
 		}},
-		inventoryFetchedAt: time.Now(),
+			fetchedAt: time.Now()},
 	}
 
 	inventoryGetter = func(ctx context.Context) Inventory {
@@ -65,7 +65,7 @@ func TestRefreshInventoryDoesNotPreserveNormalUpdateCandidateWhenManagerListIsDe
 
 	const key = "winget:DenoLand.Deno"
 	app := &App{
-		inventory: Inventory{PackageLookup: PackageLookup{
+		inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{
 			Packages: []Package{{
 				Key:              key,
 				Manager:          managerWinget,
@@ -79,7 +79,7 @@ func TestRefreshInventoryDoesNotPreserveNormalUpdateCandidateWhenManagerListIsDe
 				Source:           sourceWinget,
 			}},
 		}},
-		inventoryFetchedAt: time.Now(),
+			fetchedAt: time.Now()},
 	}
 
 	inventoryGetter = func(ctx context.Context) Inventory {

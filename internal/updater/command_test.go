@@ -461,9 +461,7 @@ func TestLogQueryReportsGapWhenClientFallsBehind(t *testing.T) {
 }
 
 func TestStoreDetectionSummaryOmitsMarketingOutput(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	result := CommandResult{
 		Command: strings.Join(managerCommand(managerStore, "show", "OpenAI.Codex_2p2nqsd0c76g0"), " "),
@@ -486,9 +484,7 @@ func TestRunCommandContextLogsSuccessfulStoreNoUpdatesAsCurrent(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows command summary test")
 	}
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	bin := t.TempDir()
 	helperSource := filepath.Join(bin, "main.go")
@@ -682,9 +678,7 @@ func TestLogArchiveDuplicatesOverlappingCategories(t *testing.T) {
 }
 
 func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	pending := appendLogChunkCategorized("stdout", "", "Downloading\r|\r/\r-\r", nil)
 	pending = appendLogChunkCategorized("stdout", pending, `\`+"\rDone\n", nil)
@@ -699,9 +693,7 @@ func TestAppendLogChunkDropsCarriageReturnSpinnerFrames(t *testing.T) {
 }
 
 func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	raw := "Downloading\r|\r/\r-\rDone\n"
 	var output bytes.Buffer
@@ -720,9 +712,7 @@ func TestStreamCommandOutputKeepsRawOutputWhileDroppingSpinnerLog(t *testing.T) 
 }
 
 func TestStreamCommandOutputNormalizesWindowsTextToUTF8(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	raw := []byte("Gefunden f\xfcr App\nSchon installiert: f\xc3\xbcr Benutzer\n")
 	var output bytes.Buffer
@@ -796,9 +786,7 @@ for ($i = 0; $i -lt 540; $i++) { [Console]::Error.Write($err) }
 }
 
 func TestAppendLogChunkPreservesNormalLines(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	pending := appendLogChunkCategorized("stdout", "", "first\r", nil)
 	pending = appendLogChunkCategorized("stdout", pending, "\nsecond\nthird", nil)
@@ -875,9 +863,7 @@ func TestRunCommandContextTimeoutWhileWaitingForMutationLock(t *testing.T) {
 }
 
 func TestRunCommandContextLogsWhileWaitingForMutationLock(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	defaultPackageMutationCoordinator.mu.Lock()
 	defer defaultPackageMutationCoordinator.mu.Unlock()

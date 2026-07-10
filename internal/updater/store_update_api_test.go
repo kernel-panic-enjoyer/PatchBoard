@@ -171,7 +171,7 @@ func TestPackageCapabilitiesAllowUpdateIDOnlyStoreTarget(t *testing.T) {
 
 func TestUpdateSelectionUsesSharedPackagePolicy(t *testing.T) {
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
-	app := testSessionApp()
+	app := testSessionApp(t)
 	actionable := applyPackageCapabilities(Package{
 		Key:                        packageKey(managerStore, "OpenAI.Codex_abc123"),
 		Manager:                    managerStore,
@@ -200,8 +200,8 @@ func TestUpdateSelectionUsesSharedPackagePolicy(t *testing.T) {
 		InstalledPackageFamilyName: "Blocked.App_abc123",
 		UpdateState:                string(StoreUpdateConflict),
 	})
-	app.inventory = Inventory{PackageLookup: PackageLookup{Packages: []Package{actionable, blocked}}}
-	app.inventoryFetchedAt = time.Now()
+	app.inventoryService.cache = Inventory{PackageLookup: PackageLookup{Packages: []Package{actionable, blocked}}}
+	app.inventoryService.fetchedAt = time.Now()
 
 	if !packageAllowedInBulkUpdate(actionable, UpdateOptions{}) {
 		t.Fatal("bulk policy rejected actionable update-ID-only Store package")
@@ -339,10 +339,10 @@ func transactionalPackagesResponse(t *testing.T, providers []StoreCatalogProvide
 	}
 	_ = store.Close()
 
-	app := testSessionApp()
-	app.inventory = Inventory{PackageLookup: PackageLookup{Packages: []Package{transactionalStoreAPIPackage(pfn)}}}
-	app.inventoryFetchedAt = time.Now()
-	app.inventoryLoading = loading
+	app := testSessionApp(t)
+	app.inventoryService.cache = Inventory{PackageLookup: PackageLookup{Packages: []Package{transactionalStoreAPIPackage(pfn)}}}
+	app.inventoryService.fetchedAt = time.Now()
+	app.inventoryService.loading = loading
 	return requestPackages(t, app)
 }
 

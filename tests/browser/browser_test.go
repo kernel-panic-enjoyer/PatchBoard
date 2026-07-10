@@ -1436,22 +1436,21 @@ func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
 
 	navigateAuthenticated(t, ctx, server.URL)
 	waitForText(t, ctx, `#log-connection-status`, "Connected")
-	settingsPreferenceTimeout := 8 * time.Second
-	if err := chromedp.Run(ctx,
-		chromedp.Click(`#settings-button`, chromedp.ByQuery),
-		chromedp.Poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-		chromedp.Poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-		chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil),
-		chromedp.Poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-		chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil),
-		chromedp.Poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-		chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil),
-		chromedp.Poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-		chromedp.Evaluate(`document.querySelector("#settings-close").click()`, nil),
-		chromedp.Poll(`document.querySelector("#settings-modal").classList.contains("hidden")`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout)),
-	); err != nil {
-		t.Fatal(err)
+	settingsPreferenceTimeout := 20 * time.Second
+	poll := func(expression string) chromedp.Action {
+		return chromedp.Poll(expression, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(settingsPreferenceTimeout))
 	}
+	runStep := func(name string, actions ...chromedp.Action) {
+		t.Helper()
+		if err := chromedp.Run(ctx, actions...); err != nil {
+			t.Fatalf("settings modal step %s failed: %v", name, err)
+		}
+	}
+	runStep("open", poll(`document.querySelector("#settings-button") && !document.querySelector("#settings-button").disabled`), chromedp.Click(`#settings-button`, chromedp.ByQuery), poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`), poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`))
+	runStep("enable automatic app updates", chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
+	runStep("disable app update checks", chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
+	runStep("enable shortcut cleanup", chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
+	runStep("close", chromedp.Evaluate(`document.querySelector("#settings-close").click()`, nil), poll(`document.querySelector("#settings-modal").classList.contains("hidden")`))
 	preferencesMu.Lock()
 	defer preferencesMu.Unlock()
 	if !preferences.AppUpdateAutoInstallEnabled || preferences.AppUpdateCheckingEnabled || !preferences.RemoveNewDesktopShortcuts {

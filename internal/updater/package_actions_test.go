@@ -630,14 +630,14 @@ func TestPackageActionCommandDoesNotResetWingetSourceForNonSourceRepairFailure(t
 }
 
 func TestPackageForUpdateUsesExactStoreInventoryMetadata(t *testing.T) {
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             packageKey(managerStore, "Vendor.App_abc123"),
 		Manager:         managerStore,
 		ID:              "Vendor.App_abc123",
 		Name:            "Vendor App",
 		Match:           "Vendor.App",
 		UpdateSupported: true,
-	}}}}}
+	}}}}}}
 
 	got := app.packageForUpdate(managerStore, "Vendor.App_abc123")
 

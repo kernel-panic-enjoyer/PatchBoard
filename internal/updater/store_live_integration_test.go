@@ -375,7 +375,7 @@ func TestLiveVP9ExactUpdateExecution(t *testing.T) {
 // live acceptance harness performs a fresh Store scan (the server-only flag is
 // otherwise off for test apps).
 func liveAcceptanceApp() *App {
-	return &App{token: "test-token", sessionToken: "test-session", storeBackgroundScanEnabled: true}
+	return &App{webSession: webSession{bootstrapToken: "test-token", sessionToken: "test-session"}, inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
 }
 
 // awaitBackgroundStoreScan blocks until the in-flight background Store scan has

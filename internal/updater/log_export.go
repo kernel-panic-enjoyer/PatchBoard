@@ -208,8 +208,8 @@ func (app *App) registerSessionSecretsForLogRedaction() {
 	if app == nil {
 		return
 	}
-	registerSensitiveLogValue(app.token)
-	registerSensitiveLogValue(app.sessionToken)
+	registerSensitiveLogValue(app.webSession.bootstrapToken)
+	registerSensitiveLogValue(app.webSession.sessionToken)
 }
 
 func registerSensitiveLogValue(value string) {

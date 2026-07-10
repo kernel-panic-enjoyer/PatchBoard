@@ -55,6 +55,9 @@ func validateSelfUpdateLaunchTarget(targetPath string) error {
 }
 
 func runSelfUpdateApply(request selfUpdateApplyRequest) error {
+	if err := validateSelfUpdateLaunchTarget(request.TargetPath); err != nil {
+		return err
+	}
 	if err := validateSelfUpdateApplyRequest(request); err != nil {
 		return err
 	}

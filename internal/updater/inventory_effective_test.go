@@ -13,7 +13,7 @@ import (
 func TestInventoryAPIReadDoesNotMutateCachedBaseInventory(t *testing.T) {
 	pfn := "OpenAI.Codex_abc123"
 	app := effectiveInventoryTestApp(t, pfn, freshStoreAssessment)
-	original := app.inventory.DeepCopy()
+	original := app.inventoryService.cache.DeepCopy()
 
 	response := requestPackages(t, app)
 	got := findStorePackageByPFN(t, response.Packages, pfn)
@@ -21,9 +21,9 @@ func TestInventoryAPIReadDoesNotMutateCachedBaseInventory(t *testing.T) {
 		t.Fatalf("expected API projection to include fresh Store overlay, got %#v", got)
 	}
 
-	app.mu.RLock()
-	cached := app.inventory.DeepCopy()
-	app.mu.RUnlock()
+	app.inventoryService.mu.RLock()
+	cached := app.inventoryService.cache.DeepCopy()
+	app.inventoryService.mu.RUnlock()
 	if !reflect.DeepEqual(cached, original) {
 		t.Fatalf("API projection mutated cached base inventory:\noriginal=%#v\ncached=%#v", original, cached)
 	}
@@ -49,9 +49,9 @@ func TestEffectiveInventorySelectionUsesPublishedStoreOverlayWithoutAPIPoll(t *t
 		t.Fatalf("bulk Store update did not include effective overlay: mode=%q packages=%#v", mode, bulk)
 	}
 
-	app.mu.RLock()
-	cached := app.inventory.DeepCopy()
-	app.mu.RUnlock()
+	app.inventoryService.mu.RLock()
+	cached := app.inventoryService.cache.DeepCopy()
+	app.inventoryService.mu.RUnlock()
 	if cached.Packages[0].UpdateAvailable || cached.Packages[0].UpdateState != "" {
 		t.Fatalf("update selection mutated cached base inventory: %#v", cached.Packages[0])
 	}
@@ -88,7 +88,7 @@ func TestPackageForUpdateMatchesInventorySnapshotStoreOverlay(t *testing.T) {
 func TestConcurrentEffectiveInventorySnapshotsDoNotMutateCache(t *testing.T) {
 	pfn := "OpenAI.Codex_abc123"
 	app := effectiveInventoryTestApp(t, pfn, freshStoreAssessment)
-	original := app.inventory.DeepCopy()
+	original := app.inventoryService.cache.DeepCopy()
 
 	var wg sync.WaitGroup
 	errs := make(chan string, 80)
@@ -112,9 +112,9 @@ func TestConcurrentEffectiveInventorySnapshotsDoNotMutateCache(t *testing.T) {
 		t.Fatal(errText)
 	}
 
-	app.mu.RLock()
-	cached := app.inventory.DeepCopy()
-	app.mu.RUnlock()
+	app.inventoryService.mu.RLock()
+	cached := app.inventoryService.cache.DeepCopy()
+	app.inventoryService.mu.RUnlock()
 	if !reflect.DeepEqual(cached, original) {
 		t.Fatalf("concurrent snapshots mutated cached base inventory:\noriginal=%#v\ncached=%#v", original, cached)
 	}
@@ -161,8 +161,8 @@ func TestEffectiveInventoryDoesNotAliasCacheMapsOrProviderSummaries(t *testing.T
 	restoreSID := replaceStoreScanSID("S-1-5-21-no-snapshot")
 	defer restoreSID()
 
-	app := testSessionApp()
-	app.inventory = Inventory{
+	app := testSessionApp(t)
+	app.inventoryService.cache = Inventory{
 		PackageLookup: PackageLookup{
 			Packages: []Package{{
 				Key:       "winget:Git.Git",
@@ -188,7 +188,7 @@ func TestEffectiveInventoryDoesNotAliasCacheMapsOrProviderSummaries(t *testing.T
 			Providers: []StorePackageProviderSummary{{Name: "health-provider", Health: string(StoreProviderHealthy), Kind: "base"}},
 		},
 	}
-	original := app.inventory.DeepCopy()
+	original := app.inventoryService.cache.DeepCopy()
 
 	got, err := app.effectiveInventorySnapshot(context.Background())
 	if err != nil {
@@ -201,9 +201,9 @@ func TestEffectiveInventoryDoesNotAliasCacheMapsOrProviderSummaries(t *testing.T
 	cacheCopy.StoreScanHealth.Counts[string(StoreUpdateUnknown)] = 99
 	cacheCopy.StoreScanHealth.Providers[0].Name = "mutated-health-provider"
 
-	app.mu.RLock()
-	cached := app.inventory.DeepCopy()
-	app.mu.RUnlock()
+	app.inventoryService.mu.RLock()
+	cached := app.inventoryService.cache.DeepCopy()
+	app.inventoryService.mu.RUnlock()
 	if !reflect.DeepEqual(cached, original) {
 		t.Fatalf("effective inventory aliased cached mutable fields:\noriginal=%#v\ncached=%#v", original, cached)
 	}
@@ -306,8 +306,8 @@ func effectiveInventoryTestApp(t *testing.T, pfn string, kind storeAssessmentFix
 		basePackage.Match = pfn + "_2.0.0_x64__abc123"
 	}
 
-	app := testSessionApp()
-	app.inventory = Inventory{
+	app := testSessionApp(t)
+	app.inventoryService.cache = Inventory{
 		PackageLookup: PackageLookup{
 			Packages: []Package{basePackage},
 			Managers: map[string]ManagerStatus{
@@ -319,7 +319,7 @@ func effectiveInventoryTestApp(t *testing.T, pfn string, kind storeAssessmentFix
 		},
 		Scan: InventoryScanSummary{StoreCount: 1, TrackedCount: 1},
 	}
-	app.inventoryFetchedAt = time.Now()
+	app.inventoryService.fetchedAt = time.Now()
 	return app
 }
 

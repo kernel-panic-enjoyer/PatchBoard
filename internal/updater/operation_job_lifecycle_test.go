@@ -10,7 +10,7 @@ import (
 )
 
 func TestOperationJobPanicDoesNotBlockQueue(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		panic("fixture panic")
 	})
@@ -41,7 +41,7 @@ func TestOperationJobPanicDoesNotBlockQueue(t *testing.T) {
 }
 
 func TestOperationJobRetentionBoundsCompletedHistory(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	var latest OperationJobStatus
 	for i := 0; i < 80; i++ {
 		index := i
@@ -69,7 +69,7 @@ func TestOperationJobRetentionBoundsCompletedHistory(t *testing.T) {
 }
 
 func TestOperationJobListRevisionIncreasesForNewJobsAfterOlderJobMutations(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		for i := 0; i < 5; i++ {
 			app.mutateOperationJob(job, func(status *OperationJobStatus) {
@@ -97,7 +97,7 @@ func TestOperationJobListRevisionIncreasesForNewJobsAfterOlderJobMutations(t *te
 }
 
 func TestOperationJobRejectsDuplicateSingletonJob(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
@@ -129,7 +129,7 @@ func TestOperationJobRejectsDuplicateSingletonJob(t *testing.T) {
 }
 
 func TestOperationJobRejectsDuplicatePackageMutation(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	first := app.startOperationJob(jobTypeUpdate, updateJobModeSelected, 1, []string{"winget:Git.Git"}, func(ctx context.Context, job *OperationJob) {
@@ -161,7 +161,7 @@ func TestOperationJobRejectsDuplicatePackageMutation(t *testing.T) {
 }
 
 func TestOperationJobRejectsWhenPendingQueueIsFull(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	running := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
@@ -208,11 +208,9 @@ func TestOperationJobRejectsWhenPendingQueueIsFull(t *testing.T) {
 }
 
 func TestOperationJobRetentionPrunesPerJobLogRings(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	var latest OperationJobStatus
 	for i := 0; i < 80; i++ {
 		latest = app.startOperationJob(jobTypeUpdate, "", 1, nil, func(ctx context.Context, job *OperationJob) {
@@ -241,7 +239,7 @@ func TestOperationJobRetentionPrunesPerJobLogRings(t *testing.T) {
 }
 
 func TestShutdownCancelsRunningAndQueuedJobs(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	started := make(chan struct{})
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		close(started)
@@ -292,7 +290,7 @@ func TestShutdownCancelsStoreScanInProgress(t *testing.T) {
 	}
 	defer func() { runStoreTransactionalScanForInventory = oldScan }()
 
-	app := &App{storeBackgroundScanEnabled: true}
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
 	app.refreshInventorySync("test")
 	select {
 	case <-started:

@@ -3,7 +3,6 @@ package updater
 import (
 	"context"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -62,52 +61,20 @@ func asyncSnapshot(loading bool, updatedAt time.Time, errorText string) AsyncSna
 	return snapshot
 }
 
-// App lock order:
-// Prefer releasing one App lock before taking another. If a future change must
-// hold multiple locks at once, acquire them in this order to avoid deadlocks:
-// lifecycle.mu -> mu -> jobsMu. Lifecycle cleanup locking is private to the
-// lifecycle service and is never held while application callbacks run.
+// App service lock order:
+// Prefer releasing one service lock before taking another. If a future change
+// must hold multiple locks at once, acquire them in this order to avoid
+// deadlocks: lifecycle.mu -> inventoryService.mu -> statusCache.mu ->
+// jobScheduler.mu. webSession's bootstrap lock is never held with another
+// service lock, and lifecycle cleanup locks are private to appLifecycle.
 type App struct {
-	token         string
-	sessionToken  string
-	listenHost    string
-	listenPort    int
-	bootstrapUsed bool
-	server        *http.Server
-	mu            sync.RWMutex
-	// inventory is the immutable manager/native cache. Published Store
-	// assessments are overlaid only onto deep-copied effective snapshots.
-	inventory          Inventory
-	inventoryLoading   bool
-	inventoryQueued    bool
-	inventoryRefreshID int64
-	inventoryFetchedAt time.Time
-	inventoryErr       string
-	// Microsoft Store update scan runs in the background so it never blocks the
-	// fast managers. storeScanLoading reports an in-flight background scan;
-	// scan timestamps are split so successful publications use the normal
-	// cooldown while failed/unpublished scans use a shorter retry backoff.
-	// storeBackgroundScanEnabled is set only on the production App so unit tests
-	// (which stub inventoryGetter) never spawn real Store scans.
-	storeScanLoading           bool
-	storeScanQueued            bool
-	storeScanLastAttemptAt     time.Time
-	storeScanLastPublishedAt   time.Time
-	storeScanLastFailureAt     time.Time
-	storeBackgroundScanEnabled bool
-	status                     StatusResponse
-	statusLoading              bool
-	statusQueued               bool
-	statusFetchedAt            time.Time
-	statusErr                  string
-	appUpdateChecker           appUpdateChecker
-	jobsMu                     sync.Mutex
-	jobs                       map[string]*OperationJob
-	jobsRevision               int64
-	jobSeq                     int64
-	jobQueue                   []string
-	jobActive                  bool
-	lifecycle                  appLifecycle
+	webSession       webSession
+	server           *http.Server
+	inventoryService inventoryService
+	statusCache      appStatusCache
+	appUpdateChecker appUpdateChecker
+	jobScheduler     operationJobScheduler
+	lifecycle        appLifecycle
 }
 
 func (app *App) isShuttingDown() bool {

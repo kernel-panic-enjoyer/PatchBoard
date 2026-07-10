@@ -275,8 +275,8 @@ func (app *App) nextUpdateResultIndex(job *OperationJob) int {
 }
 
 func (app *App) operationJobStatusSnapshot(job *OperationJob) OperationJobStatus {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
 	return cloneOperationJobStatus(job.status)
 }
 

@@ -82,29 +82,29 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 			FinishedAt:  utcNow(),
 		}
 	}
-	app.jobsMu.Lock()
-	if app.jobs == nil {
-		app.jobs = map[string]*OperationJob{}
+	app.jobScheduler.mu.Lock()
+	if app.jobScheduler.jobs == nil {
+		app.jobScheduler.jobs = map[string]*OperationJob{}
 	}
-	if duplicateStatus, duplicate := app.duplicateOperationJobStatusLocked(jobType, mode, total, packageKeys); duplicate {
-		app.jobsMu.Unlock()
+	if duplicateStatus, duplicate := app.jobScheduler.duplicateStatusLocked(jobType, mode, total, packageKeys); duplicate {
+		app.jobScheduler.mu.Unlock()
 		return duplicateStatus
 	}
-	if pendingJobs := app.pendingOperationJobCountLocked(); pendingJobs >= maxPendingOperationJobs {
-		app.jobsMu.Unlock()
+	if pendingJobs := app.jobScheduler.pendingCountLocked(); pendingJobs >= maxPendingOperationJobs {
+		app.jobScheduler.mu.Unlock()
 		return rejectedOperationJobStatus(jobType, mode, total, packageKeys, "", "operation job queue is full")
 	}
 	allowsUnknownVersion, allowsPinnedVersion := packageSnapshotUpdateAllowances(packages)
-	app.jobSeq++
+	app.jobScheduler.sequence++
 	operationJob := &OperationJob{
 		execute: execute,
 		status: OperationJobStatus{
-			JobID:               fmt.Sprintf("job-%d", app.jobSeq),
+			JobID:               fmt.Sprintf("job-%d", app.jobScheduler.sequence),
 			Revision:            1,
 			Type:                jobType,
 			Mode:                mode,
 			State:               jobStateQueued,
-			QueueDepth:          len(app.jobQueue) + 1,
+			QueueDepth:          len(app.jobScheduler.queue) + 1,
 			Total:               total,
 			PackageKeys:         append([]string(nil), packageKeys...),
 			Packages:            append([]Package(nil), packages...),
@@ -112,24 +112,24 @@ func (app *App) startOperationJobWithPackageSnapshot(jobType, mode string, total
 			AllowPinned:         allowsPinnedVersion,
 		},
 	}
-	app.jobs[operationJob.status.JobID] = operationJob
-	app.jobQueue = append(app.jobQueue, operationJob.status.JobID)
-	app.bumpJobsRevisionLocked()
+	app.jobScheduler.jobs[operationJob.status.JobID] = operationJob
+	app.jobScheduler.queue = append(app.jobScheduler.queue, operationJob.status.JobID)
+	app.jobScheduler.bumpRevisionLocked()
 	queuedStatus := cloneOperationJobStatus(operationJob.status)
 	appLog("Job %s queued for %s.", operationJob.status.JobID, jobType)
-	shouldStartQueueRunner := !app.jobActive
+	shouldStartQueueRunner := !app.jobScheduler.active
 	if shouldStartQueueRunner {
-		app.jobActive = true
+		app.jobScheduler.active = true
 	}
-	app.jobsMu.Unlock()
+	app.jobScheduler.mu.Unlock()
 	if shouldStartQueueRunner {
 		if !app.startBackgroundWork("operation job queue", app.runOperationJobQueue) {
-			app.jobsMu.Lock()
-			app.jobActive = false
+			app.jobScheduler.mu.Lock()
+			app.jobScheduler.active = false
 			operationJob.status.CancelRequested = true
 			finishQueuedOperationJobCancellation(&operationJob.status, "Job cancelled by shutdown.")
-			app.bumpOperationJobRevisionLocked(operationJob)
-			app.jobsMu.Unlock()
+			app.jobScheduler.bumpJobRevisionLocked(operationJob)
+			app.jobScheduler.mu.Unlock()
 		}
 	}
 	return queuedStatus
@@ -150,10 +150,10 @@ func rejectedOperationJobStatus(jobType, mode string, total int, packageKeys []s
 	}
 }
 
-func (app *App) duplicateOperationJobStatusLocked(jobType, mode string, total int, packageKeys []string) (OperationJobStatus, bool) {
-	for i := app.jobSeq; i >= 1; i-- {
+func (scheduler *operationJobScheduler) duplicateStatusLocked(jobType, mode string, total int, packageKeys []string) (OperationJobStatus, bool) {
+	for i := scheduler.sequence; i >= 1; i-- {
 		jobID := fmt.Sprintf("job-%d", i)
-		job := app.jobs[jobID]
+		job := scheduler.jobs[jobID]
 		if job == nil || operationJobComplete(job.status) {
 			continue
 		}
@@ -206,10 +206,10 @@ func packageKeysOverlap(left, right []string) bool {
 	return false
 }
 
-func (app *App) pendingOperationJobCountLocked() int {
+func (scheduler *operationJobScheduler) pendingCountLocked() int {
 	pendingJobs := 0
-	for _, jobID := range app.jobQueue {
-		job := app.jobs[jobID]
+	for _, jobID := range scheduler.queue {
+		job := scheduler.jobs[jobID]
 		if job == nil || operationJobComplete(job.status) {
 			continue
 		}
@@ -218,15 +218,15 @@ func (app *App) pendingOperationJobCountLocked() int {
 	return pendingJobs
 }
 
-func (app *App) bumpJobsRevisionLocked() {
-	app.jobsRevision++
+func (scheduler *operationJobScheduler) bumpRevisionLocked() {
+	scheduler.revision++
 }
 
-func (app *App) bumpOperationJobRevisionLocked(job *OperationJob) {
+func (scheduler *operationJobScheduler) bumpJobRevisionLocked(job *OperationJob) {
 	if job != nil {
 		job.status.Revision++
 	}
-	app.bumpJobsRevisionLocked()
+	scheduler.bumpRevisionLocked()
 }
 
 func packageSnapshotUpdateAllowances(packages []Package) (allowsUnknownVersion, allowsPinnedVersion bool) {
@@ -239,32 +239,32 @@ func packageSnapshotUpdateAllowances(packages []Package) (allowsUnknownVersion, 
 
 func (app *App) runOperationJobQueue(queueCtx context.Context) {
 	for {
-		app.jobsMu.Lock()
+		app.jobScheduler.mu.Lock()
 		var nextJob *OperationJob
-		for len(app.jobQueue) > 0 {
-			queuedJobID := app.jobQueue[0]
-			app.jobQueue = app.jobQueue[1:]
-			queuedJob := app.jobs[queuedJobID]
+		for len(app.jobScheduler.queue) > 0 {
+			queuedJobID := app.jobScheduler.queue[0]
+			app.jobScheduler.queue = app.jobScheduler.queue[1:]
+			queuedJob := app.jobScheduler.jobs[queuedJobID]
 			if queuedJob == nil {
 				continue
 			}
 			if queuedJob.status.CancelRequested {
 				finishQueuedOperationJobCancellation(&queuedJob.status, "")
-				app.bumpOperationJobRevisionLocked(queuedJob)
+				app.jobScheduler.bumpJobRevisionLocked(queuedJob)
 				continue
 			}
 			if queueCtx.Err() != nil {
 				queuedJob.status.CancelRequested = true
 				finishQueuedOperationJobCancellation(&queuedJob.status, "Job cancelled by shutdown.")
-				app.bumpOperationJobRevisionLocked(queuedJob)
+				app.jobScheduler.bumpJobRevisionLocked(queuedJob)
 				continue
 			}
 			nextJob = queuedJob
 			break
 		}
 		if nextJob == nil {
-			app.jobActive = false
-			app.jobsMu.Unlock()
+			app.jobScheduler.active = false
+			app.jobScheduler.mu.Unlock()
 			return
 		}
 		jobCtx, cancelJob := context.WithCancel(queueCtx)
@@ -272,9 +272,9 @@ func (app *App) runOperationJobQueue(queueCtx context.Context) {
 		nextJob.status.State = jobStateRunning
 		nextJob.status.Running = true
 		nextJob.status.StartedAt = utcNow()
-		app.bumpOperationJobRevisionLocked(nextJob)
+		app.jobScheduler.bumpJobRevisionLocked(nextJob)
 		startedStatus := cloneOperationJobStatus(nextJob.status)
-		app.jobsMu.Unlock()
+		app.jobScheduler.mu.Unlock()
 
 		jobCtx = withLogMetadata(jobCtx, logMetadata{JobID: startedStatus.JobID, JobType: startedStatus.Type})
 		appLogContext(jobCtx, "Job %s started for %s.", startedStatus.JobID, startedStatus.Type)
@@ -290,7 +290,7 @@ func (app *App) runOperationJobQueue(queueCtx context.Context) {
 			})
 		}
 
-		app.jobsMu.Lock()
+		app.jobScheduler.mu.Lock()
 		if nextJob.status.State == jobStateRunning || nextJob.status.State == jobStateRefreshing {
 			if nextJob.status.CancelRequested {
 				nextJob.status.State = jobStateCancelled
@@ -313,9 +313,9 @@ func (app *App) runOperationJobQueue(queueCtx context.Context) {
 		// be observed. Callers that see a completed job can then fetch a complete
 		// job log without racing this final write.
 		appLogContext(jobCtx, "Job %s finished with state %s.", finishedStatus.JobID, finishedStatus.State)
-		app.bumpOperationJobRevisionLocked(nextJob)
-		app.pruneOperationJobsLocked()
-		app.jobsMu.Unlock()
+		app.jobScheduler.bumpJobRevisionLocked(nextJob)
+		app.jobScheduler.pruneLocked()
+		app.jobScheduler.mu.Unlock()
 	}
 }
 
@@ -400,17 +400,17 @@ func cloneOperationJobStatus(status OperationJobStatus) OperationJobStatus {
 }
 
 func (app *App) mutateOperationJob(job *OperationJob, mutate func(*OperationJobStatus)) OperationJobStatus {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
 	mutate(&job.status)
-	app.bumpOperationJobRevisionLocked(job)
+	app.jobScheduler.bumpJobRevisionLocked(job)
 	return cloneOperationJobStatus(job.status)
 }
 
 func (app *App) operationJobStatus(id string) (OperationJobStatus, bool) {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
-	job := app.jobs[id]
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
+	job := app.jobScheduler.jobs[id]
 	if job == nil {
 		return OperationJobStatus{}, false
 	}
@@ -418,15 +418,15 @@ func (app *App) operationJobStatus(id string) (OperationJobStatus, bool) {
 }
 
 func (app *App) latestOperationJobStatus(jobTypes ...string) OperationJobStatus {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
 	requestedTypes := map[string]bool{}
 	for _, jobType := range jobTypes {
 		requestedTypes[jobType] = true
 	}
-	for i := app.jobSeq; i >= 1; i-- {
+	for i := app.jobScheduler.sequence; i >= 1; i-- {
 		jobID := fmt.Sprintf("job-%d", i)
-		job := app.jobs[jobID]
+		job := app.jobScheduler.jobs[jobID]
 		if job == nil {
 			continue
 		}
@@ -443,19 +443,19 @@ func (app *App) operationJobsSnapshot() []OperationJobStatus {
 }
 
 func (app *App) operationJobsSnapshotWithRevision() ([]OperationJobStatus, int64, int) {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
-	app.pruneOperationJobsLocked()
-	statuses := make([]OperationJobStatus, 0, len(app.jobs))
-	for i := int64(1); i <= app.jobSeq; i++ {
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
+	app.jobScheduler.pruneLocked()
+	statuses := make([]OperationJobStatus, 0, len(app.jobScheduler.jobs))
+	for i := int64(1); i <= app.jobScheduler.sequence; i++ {
 		jobID := fmt.Sprintf("job-%d", i)
-		job := app.jobs[jobID]
+		job := app.jobScheduler.jobs[jobID]
 		if job == nil {
 			continue
 		}
 		statuses = append(statuses, cloneOperationJobStatus(job.status))
 	}
-	return statuses, app.jobsRevision, app.pendingOperationJobCountLocked()
+	return statuses, app.jobScheduler.revision, app.jobScheduler.pendingCountLocked()
 }
 
 func operationJobComplete(status OperationJobStatus) bool {
@@ -464,9 +464,9 @@ func operationJobComplete(status OperationJobStatus) bool {
 }
 
 func (app *App) cancelOperationJob(id string) (OperationJobStatus, bool) {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
-	job := app.jobs[id]
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
+	job := app.jobScheduler.jobs[id]
 	if job == nil {
 		return OperationJobStatus{}, false
 	}
@@ -479,17 +479,17 @@ func (app *App) cancelOperationJob(id string) (OperationJobStatus, bool) {
 		if job.status.State == jobStateQueued {
 			finishQueuedOperationJobCancellation(&job.status, "Job cancelled.")
 		}
-		app.bumpOperationJobRevisionLocked(job)
+		app.jobScheduler.bumpJobRevisionLocked(job)
 		appLog("Job %s cancellation requested.", job.status.JobID)
 	}
-	app.pruneOperationJobsLocked()
+	app.jobScheduler.pruneLocked()
 	return cloneOperationJobStatus(job.status), true
 }
 
 func (app *App) cancelOperationJobsForShutdown() {
-	app.jobsMu.Lock()
-	defer app.jobsMu.Unlock()
-	for _, job := range app.jobs {
+	app.jobScheduler.mu.Lock()
+	defer app.jobScheduler.mu.Unlock()
+	for _, job := range app.jobScheduler.jobs {
 		if job == nil || operationJobComplete(job.status) {
 			continue
 		}
@@ -501,20 +501,20 @@ func (app *App) cancelOperationJobsForShutdown() {
 		if job.status.State == jobStateQueued {
 			finishQueuedOperationJobCancellation(&job.status, "Job cancelled by shutdown.")
 		}
-		app.bumpOperationJobRevisionLocked(job)
+		app.jobScheduler.bumpJobRevisionLocked(job)
 	}
-	app.pruneOperationJobsLocked()
+	app.jobScheduler.pruneLocked()
 }
 
-func (app *App) pruneOperationJobsLocked() {
-	if len(app.jobs) <= operationJobRecentHistoryLimit {
+func (scheduler *operationJobScheduler) pruneLocked() {
+	if len(scheduler.jobs) <= operationJobRecentHistoryLimit {
 		return
 	}
 	retainedJobIDs := map[string]bool{}
 	latestCompletedTypeRetained := map[string]bool{}
-	for i := app.jobSeq; i >= 1; i-- {
+	for i := scheduler.sequence; i >= 1; i-- {
 		jobID := fmt.Sprintf("job-%d", i)
-		job := app.jobs[jobID]
+		job := scheduler.jobs[jobID]
 		if job == nil {
 			continue
 		}
@@ -528,9 +528,9 @@ func (app *App) pruneOperationJobsLocked() {
 		}
 	}
 	recentCompletedRetained := 0
-	for i := app.jobSeq; i >= 1 && recentCompletedRetained < operationJobRecentHistoryLimit; i-- {
+	for i := scheduler.sequence; i >= 1 && recentCompletedRetained < operationJobRecentHistoryLimit; i-- {
 		jobID := fmt.Sprintf("job-%d", i)
-		job := app.jobs[jobID]
+		job := scheduler.jobs[jobID]
 		if job == nil || !operationJobComplete(job.status) {
 			continue
 		}
@@ -538,19 +538,19 @@ func (app *App) pruneOperationJobsLocked() {
 		recentCompletedRetained++
 	}
 	prunedAny := false
-	for jobID, job := range app.jobs {
+	for jobID, job := range scheduler.jobs {
 		if retainedJobIDs[jobID] {
 			continue
 		}
 		if job != nil && operationJobComplete(job.status) {
-			delete(app.jobs, jobID)
+			delete(scheduler.jobs, jobID)
 			prunedAny = true
 		}
 	}
-	previousQueueLen := len(app.jobQueue)
-	app.jobQueue = filterExistingOperationJobQueueIDs(app.jobQueue, app.jobs)
-	if prunedAny || len(app.jobQueue) != previousQueueLen {
-		app.bumpJobsRevisionLocked()
+	previousQueueLen := len(scheduler.queue)
+	scheduler.queue = filterExistingOperationJobQueueIDs(scheduler.queue, scheduler.jobs)
+	if prunedAny || len(scheduler.queue) != previousQueueLen {
+		scheduler.bumpRevisionLocked()
 		sessionLogs.RetainJobRings(retainedJobIDs)
 	}
 }

@@ -9,59 +9,34 @@ import (
 const statusCacheTTL = 30 * time.Second
 
 func (app *App) refreshStatus(forceRefresh bool) {
-	app.mu.Lock()
-	cacheExpired := app.statusFetchedAt.IsZero() || time.Since(app.statusFetchedAt) > statusCacheTTL
-	if app.statusLoading {
-		if forceRefresh {
-			app.statusQueued = true
-			appLog("Status refresh queued.")
-		}
-		app.mu.Unlock()
+	request := app.statusCache.beginBackgroundRefresh(forceRefresh, time.Now())
+	if request.queued {
+		appLog("Status refresh queued.")
 		return
 	}
-	if !forceRefresh && !cacheExpired {
-		app.mu.Unlock()
+	if !request.started {
 		return
 	}
-	app.statusLoading = true
-	app.statusErr = ""
-	app.mu.Unlock()
 	appLog("Status refresh started.")
 
 	if !app.startBackgroundWork("status refresh", func(ctx context.Context) {
 		app.runStatusRefresh(ctx, forceRefresh)
 	}) {
-		app.mu.Lock()
-		app.statusLoading = false
-		app.statusErr = "shutdown in progress"
-		app.mu.Unlock()
+		app.statusCache.failToStart("shutdown in progress")
 	}
 }
 
 func (app *App) runStatusRefresh(ctx context.Context, forceRefresh bool) {
 	refreshedStatus := app.buildStatusResponseContext(ctx, forceRefresh)
 	if ctx.Err() != nil {
-		app.mu.Lock()
-		app.statusLoading = false
-		app.statusQueued = false
-		app.statusErr = "status refresh cancelled: " + ctx.Err().Error()
-		app.mu.Unlock()
+		app.statusCache.cancelRefresh("status refresh cancelled: " + ctx.Err().Error())
 		appLog("Status refresh cancelled.")
 		return
 	}
-	app.mu.Lock()
-	app.status = refreshedStatus
-	app.statusFetchedAt = time.Now()
-	app.statusErr = ""
-	if app.statusQueued {
-		app.statusQueued = false
-		app.statusLoading = true
-		app.mu.Unlock()
+	if app.statusCache.finishRefresh(refreshedStatus, time.Now()) {
 		app.startQueuedStatusRefresh()
 		return
 	}
-	app.statusLoading = false
-	app.mu.Unlock()
 	appLog("Status refresh completed.")
 }
 
@@ -70,10 +45,7 @@ func (app *App) startQueuedStatusRefresh() {
 	if !app.startBackgroundWork("queued status refresh", func(ctx context.Context) {
 		app.runStatusRefresh(ctx, true)
 	}) {
-		app.mu.Lock()
-		app.statusLoading = false
-		app.statusErr = "shutdown in progress"
-		app.mu.Unlock()
+		app.statusCache.failToStart("shutdown in progress")
 	}
 }
 
@@ -127,37 +99,19 @@ func buildStatusResponseContextWithStateAndUpdate(ctx context.Context, forceRefr
 
 func (app *App) refreshStatusSyncContext(ctx context.Context, reason string) StatusResponse {
 	appLog("Status refresh started for %s.", reason)
-	app.mu.Lock()
-	app.statusLoading = true
-	app.statusQueued = false
-	app.statusErr = ""
-	app.mu.Unlock()
+	app.statusCache.beginSynchronousRefresh()
 
 	refreshedStatus := app.buildStatusResponseContext(ctx, true)
 	if ctx.Err() != nil {
-		app.mu.Lock()
-		cachedStatus := app.status
-		app.statusLoading = false
-		app.statusQueued = false
-		app.statusErr = "status refresh cancelled: " + ctx.Err().Error()
-		app.mu.Unlock()
+		cachedStatus := app.statusCache.cancelRefresh("status refresh cancelled: " + ctx.Err().Error())
 		appLog("Status refresh cancelled for %s.", reason)
 		return cachedStatus
 	}
 
-	app.mu.Lock()
-	app.status = refreshedStatus
-	app.statusFetchedAt = time.Now()
-	app.statusErr = ""
-	if app.statusQueued {
-		app.statusQueued = false
-		app.statusLoading = true
-		app.mu.Unlock()
+	if app.statusCache.finishRefresh(refreshedStatus, time.Now()) {
 		app.startQueuedStatusRefresh()
 		return refreshedStatus
 	}
-	app.statusLoading = false
-	app.mu.Unlock()
 	appLog("Status refresh completed for %s.", reason)
 	return refreshedStatus
 }
@@ -167,13 +121,10 @@ func (app *App) statusSnapshot() StatusResponse {
 }
 
 func (app *App) statusSnapshotContext(ctx context.Context) StatusResponse {
-	app.mu.RLock()
-	snapshot := app.status
-	statusLoading := app.statusLoading
-	fetchedAt := app.statusFetchedAt
-	refreshErr := app.statusErr
-	inventoryManagerStatuses := cloneManagerStatuses(app.inventory.Managers)
-	app.mu.RUnlock()
+	snapshot, statusLoading, fetchedAt, refreshErr := app.statusCache.snapshot()
+	app.inventoryService.mu.RLock()
+	inventoryManagerStatuses := cloneManagerStatuses(app.inventoryService.cache.Managers)
+	app.inventoryService.mu.RUnlock()
 
 	persistedState := loadStateContext(ctx)
 	snapshot.Settings = statusSettingsFromState(persistedState)

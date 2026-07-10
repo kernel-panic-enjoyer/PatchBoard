@@ -13,12 +13,10 @@ import (
 )
 
 func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	sessionLogs.Append("app", "hello")
-	app := testSessionApp()
+	app := testSessionApp(t)
 
 	badRequest := httptest.NewRequest(http.MethodGet, "/api/logs", nil)
 	badResponse := httptest.NewRecorder()
@@ -47,13 +45,11 @@ func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 }
 
 func TestAPILogsReportsGapMetadata(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{maxEntries: 3, maxBytes: 64 * 1024}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{maxEntries: 3, maxBytes: 64 * 1024})
 	for _, message := range []string{"one", "two", "three", "four", "five"} {
 		sessionLogs.Append("app", message)
 	}
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodGet, "/api/logs?since=1", nil)
 	response := httptest.NewRecorder()
 	app.serveHTTP(response, request)
@@ -70,7 +66,7 @@ func TestAPILogsReportsGapMetadata(t *testing.T) {
 }
 
 func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	t.Cleanup(func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(2 * time.Second) {
@@ -106,7 +102,7 @@ func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
 }
 
 func TestAPIJobLogRequiresTokenAndRejectsUnknownJob(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 
 	badRequest := httptest.NewRequest(http.MethodGet, "/api/jobs/log?job_id=missing", nil)
 	badResponse := httptest.NewRecorder()
@@ -124,11 +120,9 @@ func TestAPIJobLogRequiresTokenAndRejectsUnknownJob(t *testing.T) {
 }
 
 func TestAPIJobLogReturnsCorrelatedEntries(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	t.Cleanup(func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(2 * time.Second) {
@@ -164,14 +158,12 @@ func TestAPIJobLogReturnsCorrelatedEntries(t *testing.T) {
 }
 
 func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	sessionLogs.Append("app", "app started")
 	sessionLogs.AppendCategorized("command", "winget search gh", logCategoriesForCommand([]string{"winget", "search", "gh"}))
 	sessionLogs.AppendCategorized("stdout", "GitHub CLI", logCategoriesForCommand([]string{"winget", "search", "gh"}))
-	app := testSessionApp()
+	app := testSessionApp(t)
 
 	badRequest := httptest.NewRequest(http.MethodGet, "/api/logs/export", nil)
 	badResponse := httptest.NewRecorder()
@@ -219,7 +211,7 @@ func TestLogExportFilenameUsesTimestampPrefix(t *testing.T) {
 }
 
 func TestFaviconServesEmbeddedAppIconWithoutToken(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
 	response := httptest.NewRecorder()
 
@@ -257,7 +249,7 @@ func TestRequestShutdownRunsRegisteredCleanupsOnce(t *testing.T) {
 }
 
 func TestBootstrapTokenCreatesHttpOnlySessionAndRedirectsClean(t *testing.T) {
-	app := &App{token: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}
+	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/?token=bootstrap-token", nil)
 	response := httptest.NewRecorder()
 
@@ -300,8 +292,28 @@ func TestBootstrapTokenCreatesHttpOnlySessionAndRedirectsClean(t *testing.T) {
 	}
 }
 
+func TestBootstrapTokenDoesNotWaitForInventoryCacheLock(t *testing.T) {
+	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token"}}
+	app.inventoryService.mu.Lock()
+	defer app.inventoryService.mu.Unlock()
+
+	consumed := make(chan bool, 1)
+	go func() {
+		consumed <- app.consumeBootstrapToken("bootstrap-token")
+	}()
+
+	select {
+	case ok := <-consumed:
+		if !ok {
+			t.Fatal("expected bootstrap token to be consumed")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("bootstrap token consumption waited on the inventory cache lock")
+	}
+}
+
 func TestBrowserSecurityHeadersAndNoTokenInRenderedHTML(t *testing.T) {
-	app := &App{token: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}
+	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/", nil)
 	addTestSessionCookie(app, request)
 	response := httptest.NewRecorder()
@@ -332,17 +344,15 @@ func TestBrowserSecurityHeadersAndNoTokenInRenderedHTML(t *testing.T) {
 			t.Fatalf("rendered page leaked %q", leaked)
 		}
 	}
-	if !strings.Contains(body, csrfTokenForSession(app.sessionToken)) {
+	if !strings.Contains(body, csrfTokenForSession(app.webSession.sessionToken)) {
 		t.Fatal("rendered page should include the derived CSRF token")
 	}
 }
 
 func TestLogExportDoesNotLeakBootstrapOrSessionTokens(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
-	app := &App{token: "bootstrap-token-export-route", sessionToken: "session-token-export-route", listenHost: defaultHost, listenPort: 4183}
+	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token-export-route", sessionToken: "session-token-export-route", listenHost: defaultHost, listenPort: 4183}}
 	sessionLogs.Append("app", "bootstrap-token-export-route session-token-export-route")
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs/export", nil)
 	addTestSessionCookie(app, request)
@@ -353,7 +363,7 @@ func TestLogExportDoesNotLeakBootstrapOrSessionTokens(t *testing.T) {
 		t.Fatalf("expected log export, got %d: %s", response.Code, response.Body.String())
 	}
 	for fileName, contents := range readZipTextFiles(t, response.Body.Bytes()) {
-		for _, leaked := range []string{app.token, app.sessionToken} {
+		for _, leaked := range []string{app.webSession.bootstrapToken, app.webSession.sessionToken} {
 			if strings.Contains(contents, leaked) {
 				t.Fatalf("export %s leaked %q: %q", fileName, leaked, contents)
 			}
@@ -400,7 +410,7 @@ func TestAPIRequestBodyLimitUsesRouteMetadata(t *testing.T) {
 }
 
 func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
-	app := &App{token: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}
+	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
 
 	badHost := httptest.NewRequest(http.MethodGet, "http://evil.test:4183/", nil)
 	addTestSessionCookie(app, badHost)
@@ -468,7 +478,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 	addTestSessionCookie(app, nullOriginUIRequest)
 	nullOriginUIRequest.Header.Set("Origin", "null")
 	nullOriginUIRequest.Header.Set(trustedUIRequestHeader, "1")
-	nullOriginUIRequest.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	nullOriginUIRequest.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	nullOriginUIRequestResponse := httptest.NewRecorder()
 	app.serveHTTP(nullOriginUIRequestResponse, nullOriginUIRequest)
 	if nullOriginUIRequestResponse.Code != http.StatusOK {
@@ -479,7 +489,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 	addTestSessionCookie(app, badOriginWithUIHeader)
 	badOriginWithUIHeader.Header.Set("Origin", "http://evil.test:4183")
 	badOriginWithUIHeader.Header.Set(trustedUIRequestHeader, "1")
-	badOriginWithUIHeader.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	badOriginWithUIHeader.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	badOriginWithUIHeaderResponse := httptest.NewRecorder()
 	app.serveHTTP(badOriginWithUIHeaderResponse, badOriginWithUIHeader)
 	if badOriginWithUIHeaderResponse.Code != http.StatusForbidden {
@@ -489,7 +499,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 	badFetch := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badFetch)
 	badFetch.Header.Set(trustedUIRequestHeader, "1")
-	badFetch.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	badFetch.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	badFetch.Header.Set("Sec-Fetch-Site", "cross-site")
 	badFetchResponse := httptest.NewRecorder()
 	app.serveHTTP(badFetchResponse, badFetch)
@@ -507,7 +517,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 }
 
 func TestShutdownRouteStopsServer(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	cleanupDone := make(chan struct{})
 	app.addShutdownCleanup(func() {
 		close(cleanupDone)
@@ -522,7 +532,7 @@ func TestShutdownRouteStopsServer(t *testing.T) {
 	}
 	addTestSessionCookie(app, request)
 	request.Header.Set(trustedUIRequestHeader, "1")
-	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -566,15 +576,15 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 	}()
 
 	app := &App{
-		sessionToken: "test-session",
-		inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
+		webSession: webSession{sessionToken: "test-session"},
+		inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 			Key:             "winget:Git.Git",
 			Manager:         managerWinget,
 			ID:              "Git.Git",
 			Name:            "Git",
 			UpdateAvailable: true,
 			UpdateSupported: true,
-		}}}},
+		}}}}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -582,7 +592,7 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set(trustedUIRequestHeader, "1")
 	addTestSessionCookie(app, request)
-	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+	request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	response := httptest.NewRecorder()
 
 	app.serveHTTP(response, request)
@@ -631,7 +641,7 @@ func TestAPIRejectsInvalidRequests(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			app := testSessionApp()
+			app := testSessionApp(t)
 			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
 			request.Header.Set("Content-Type", tc.content)
 			response := httptest.NewRecorder()
@@ -757,7 +767,7 @@ func TestAPIRejectsUnknownJSONFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			app := testSessionApp()
+			app := testSessionApp(t)
 			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -822,7 +832,7 @@ func TestAPIRejectsOversizedRequestBodies(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			app := testSessionApp()
+			app := testSessionApp(t)
 			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
 			request.Header.Set("Content-Type", tc.content)
 			response := httptest.NewRecorder()
@@ -873,7 +883,7 @@ func TestParseFormRequestPreservesBodyBeforeQueryOrdering(t *testing.T) {
 }
 
 func TestAPIRejectsGETRequestBodies(t *testing.T) {
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodGet, "/api/status", strings.NewReader("unexpected"))
 	response := httptest.NewRecorder()
 
@@ -935,7 +945,7 @@ func TestSettingsAPIsRejectMalformedJSONBeforeSideEffects(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			app := testSessionApp()
+			app := testSessionApp(t)
 			request := authenticatedRequest(app, http.MethodPost, tc.path, strings.NewReader(tc.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -975,7 +985,7 @@ func TestAppUpdatePromptSettingsEndpointPersistsDismissedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodPost, "/api/settings/app-update-prompt", strings.NewReader(`{"version":"1.2.3"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -1007,7 +1017,7 @@ func TestApplicationPreferencesEndpointPersistsStatePreferences(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_auto_install_enabled":true,"app_update_checking_enabled":false,"remove_new_desktop_shortcuts":true}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -1038,7 +1048,7 @@ func TestApplicationInstallEndpointRunsInstallOperation(t *testing.T) {
 	}
 	t.Cleanup(func() { applicationInstallRunner = originalRunner })
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodPost, "/api/application/install", nil)
 	response := httptest.NewRecorder()
 
@@ -1067,7 +1077,7 @@ func TestApplicationRestartInstalledEndpointReportsValidationFailure(t *testing.
 	}
 	t.Cleanup(func() { applicationRestartInstalledRunner = originalRunner })
 
-	app := testSessionApp()
+	app := testSessionApp(t)
 	request := authenticatedRequest(app, http.MethodPost, "/api/application/restart-installed", nil)
 	response := httptest.NewRecorder()
 

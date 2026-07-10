@@ -344,7 +344,16 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 		return err
 	}
 	checker := defaultGitHubReleaseChecker()
-	app := &App{token: token, sessionToken: sessionToken, listenHost: defaultHost, listenPort: actualPort, storeBackgroundScanEnabled: true, appUpdateChecker: checker}
+	app := &App{
+		webSession: webSession{
+			bootstrapToken: token,
+			sessionToken:   sessionToken,
+			listenHost:     defaultHost,
+			listenPort:     actualPort,
+		},
+		inventoryService: inventoryService{storeBackgroundScanEnabled: true},
+		appUpdateChecker: checker,
+	}
 	defer func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {

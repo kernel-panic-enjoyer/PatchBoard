@@ -52,20 +52,24 @@ func TestStatusSnapshotPreservesStoreInventoryManagerDetails(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", dir)
 	app := &App{
-		status: StatusResponse{
-			Managers: map[string]ManagerStatus{
-				managerStore: {Available: true, ActionBackend: backendStoreCLI},
-			},
-		},
-		statusFetchedAt: time.Now(),
-		inventory: Inventory{
-			PackageLookup: PackageLookup{
+		statusCache: appStatusCache{
+			response: StatusResponse{
 				Managers: map[string]ManagerStatus{
-					managerStore: {
-						Available:          true,
-						ActionBackend:      backendStoreCLI,
-						InventoryAvailable: true,
-						InventoryBackend:   inventoryBackendAppX,
+					managerStore: {Available: true, ActionBackend: backendStoreCLI},
+				},
+			},
+			fetchedAt: time.Now(),
+		},
+		inventoryService: inventoryService{
+			cache: Inventory{
+				PackageLookup: PackageLookup{
+					Managers: map[string]ManagerStatus{
+						managerStore: {
+							Available:          true,
+							ActionBackend:      backendStoreCLI,
+							InventoryAvailable: true,
+							InventoryBackend:   inventoryBackendAppX,
+						},
 					},
 				},
 			},
@@ -77,25 +81,50 @@ func TestStatusSnapshotPreservesStoreInventoryManagerDetails(t *testing.T) {
 	if !store.InventoryAvailable || store.InventoryBackend != inventoryBackendAppX {
 		t.Fatalf("expected status snapshot to keep Store inventory details, got %#v", store)
 	}
-	if app.status.Managers[managerStore].InventoryAvailable {
+	cachedStatus, _, _, _ := app.statusCache.snapshot()
+	if cachedStatus.Managers[managerStore].InventoryAvailable {
 		t.Fatal("status snapshot should not mutate cached status managers in place")
 	}
 }
 
 func TestRefreshStatusQueuesForcedRefreshWhileLoading(t *testing.T) {
-	app := &App{statusLoading: true}
+	app := &App{statusCache: appStatusCache{loading: true}}
 
 	app.refreshStatus(false)
-	if app.statusQueued {
+	loading, queued := app.statusCache.refreshState()
+	if queued {
 		t.Fatal("non-forced status refresh should not queue while loading")
+	}
+	if !loading {
+		t.Fatal("status should remain loading after non-forced refresh")
 	}
 
 	app.refreshStatus(true)
-	if !app.statusQueued {
+	loading, queued = app.statusCache.refreshState()
+	if !queued {
 		t.Fatal("forced status refresh should queue while loading")
 	}
-	if !app.statusLoading {
+	if !loading {
 		t.Fatal("status should remain loading after queueing forced refresh")
+	}
+}
+
+func TestStatusRefreshDoesNotWaitForInventoryCacheLock(t *testing.T) {
+	app := &App{}
+	defer app.requestShutdown("status cache isolation test")
+
+	app.inventoryService.mu.Lock()
+	defer app.inventoryService.mu.Unlock()
+	returned := make(chan struct{})
+	go func() {
+		app.refreshStatus(true)
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("status refresh waited on the inventory cache lock")
 	}
 }
 
@@ -118,13 +147,15 @@ func TestStatusSnapshotReloadsPersistedSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := &App{
-		status: StatusResponse{
-			StateDir: dir,
-			Settings: StatusSettings{
-				Theme: "dark",
+		statusCache: appStatusCache{
+			response: StatusResponse{
+				StateDir: dir,
+				Settings: StatusSettings{
+					Theme: "dark",
+				},
 			},
+			fetchedAt: time.Now(),
 		},
-		statusFetchedAt: time.Now(),
 	}
 
 	status := app.statusSnapshot()
@@ -198,10 +229,12 @@ func TestStatusSnapshotDoesNotReuseCachedAppUpdatePayload(t *testing.T) {
 	}}
 	app := &App{
 		appUpdateChecker: checker,
-		status: StatusResponse{
-			AppUpdate: AppUpdateStatus{CurrentVersion: "cached", LatestVersion: "cached"},
+		statusCache: appStatusCache{
+			response: StatusResponse{
+				AppUpdate: AppUpdateStatus{CurrentVersion: "cached", LatestVersion: "cached"},
+			},
+			fetchedAt: time.Now(),
 		},
-		statusFetchedAt: time.Now(),
 	}
 
 	first := app.statusSnapshot()

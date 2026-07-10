@@ -178,9 +178,12 @@ func TestMergeCommandAttemptsWithFinalResultAppliesFinalOutputCap(t *testing.T) 
 }
 
 func TestEventsAPIOnlySendsJobsWhenRevisionChanges(t *testing.T) {
-	app := &App{jobs: map[string]*OperationJob{
-		"job-1": {status: OperationJobStatus{JobID: "job-1", Type: jobTypeUpdate, State: jobStateRunning, Running: true, Revision: 1}},
-	}, jobSeq: 1}
+	app := &App{jobScheduler: operationJobScheduler{
+		jobs: map[string]*OperationJob{
+			"job-1": {status: OperationJobStatus{JobID: "job-1", Type: jobTypeUpdate, State: jobStateRunning, Running: true, Revision: 1}},
+		},
+		sequence: 1,
+	}}
 	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/api/events", nil)
 	if err != nil {
@@ -211,9 +214,9 @@ func TestEventsAPIOnlySendsJobsWhenRevisionChanges(t *testing.T) {
 		close(done)
 	}()
 	time.Sleep(200 * time.Millisecond)
-	app.jobsMu.Lock()
-	job := app.jobs["job-1"]
-	app.jobsMu.Unlock()
+	app.jobScheduler.mu.Lock()
+	job := app.jobScheduler.jobs["job-1"]
+	app.jobScheduler.mu.Unlock()
 	app.mutateOperationJob(job, func(status *OperationJobStatus) {
 		status.Notice = "changed"
 	})

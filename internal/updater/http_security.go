@@ -28,14 +28,14 @@ func setSecurityHeaders(w http.ResponseWriter) {
 }
 
 func (app *App) expectedListenPort() int {
-	if app.listenPort != 0 {
-		return app.listenPort
+	if app.webSession.listenPort != 0 {
+		return app.webSession.listenPort
 	}
 	return defaultPort
 }
 
 func (app *App) trustedHost(r *http.Request) bool {
-	if app.listenHost == "" && app.listenPort == 0 {
+	if app.webSession.listenHost == "" && app.webSession.listenPort == 0 {
 		return true
 	}
 	hostHeader := strings.TrimSpace(r.Host)
@@ -98,13 +98,13 @@ func (app *App) sessionOK(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return tokensEqualConstantTime(cookie.Value, app.sessionToken)
+	return tokensEqualConstantTime(cookie.Value, app.webSession.sessionToken)
 }
 
 func (app *App) setSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    app.sessionToken,
+		Value:    app.webSession.sessionToken,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
@@ -112,16 +112,7 @@ func (app *App) setSessionCookie(w http.ResponseWriter) {
 }
 
 func (app *App) consumeBootstrapToken(token string) bool {
-	if !tokensEqualConstantTime(token, app.token) {
-		return false
-	}
-	app.mu.Lock()
-	defer app.mu.Unlock()
-	if app.bootstrapUsed {
-		return false
-	}
-	app.bootstrapUsed = true
-	return true
+	return app.webSession.consumeBootstrapToken(token)
 }
 
 func redirectPathWithoutBootstrapToken(r *http.Request) string {
@@ -174,7 +165,7 @@ func (app *App) requestBoundaryOK(w http.ResponseWriter, r *http.Request) bool {
 		writeAPIError(w, http.StatusForbidden, "trusted UI request header required")
 		return false
 	}
-	if !tokensEqualConstantTime(r.Header.Get(csrfRequestHeader), csrfTokenForSession(app.sessionToken)) {
+	if !tokensEqualConstantTime(r.Header.Get(csrfRequestHeader), csrfTokenForSession(app.webSession.sessionToken)) {
 		writeAPIError(w, http.StatusForbidden, "CSRF token required")
 		return false
 	}

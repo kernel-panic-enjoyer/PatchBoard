@@ -9,65 +9,65 @@ import (
 const inventoryCacheTTL = 90 * time.Second
 
 func (app *App) refreshInventory(force bool) {
-	app.mu.Lock()
-	cacheExpired := app.inventoryFetchedAt.IsZero() || time.Since(app.inventoryFetchedAt) > inventoryCacheTTL
-	if app.inventoryLoading {
+	app.inventoryService.mu.Lock()
+	cacheExpired := app.inventoryService.fetchedAt.IsZero() || time.Since(app.inventoryService.fetchedAt) > inventoryCacheTTL
+	if app.inventoryService.loading {
 		if force {
-			app.inventoryQueued = true
+			app.inventoryService.queued = true
 			appLog("Inventory refresh queued.")
 		}
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		return
 	}
 	if !force && !cacheExpired {
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		return
 	}
-	app.inventoryLoading = true
-	app.inventoryErr = ""
-	app.inventoryRefreshID++
-	refreshGeneration := app.inventoryRefreshID
-	app.mu.Unlock()
+	app.inventoryService.loading = true
+	app.inventoryService.err = ""
+	app.inventoryService.refreshGeneration++
+	refreshGeneration := app.inventoryService.refreshGeneration
+	app.inventoryService.mu.Unlock()
 	appLog("Inventory refresh started.")
 
 	if !app.startBackgroundWork("inventory refresh", func(ctx context.Context) {
 		app.runInventoryRefresh(ctx, refreshGeneration, force)
 	}) {
-		app.mu.Lock()
-		if refreshGeneration == app.inventoryRefreshID {
-			app.inventoryLoading = false
-			app.inventoryErr = "shutdown in progress"
+		app.inventoryService.mu.Lock()
+		if refreshGeneration == app.inventoryService.refreshGeneration {
+			app.inventoryService.loading = false
+			app.inventoryService.err = "shutdown in progress"
 		}
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 	}
 }
 
 func (app *App) runInventoryRefresh(ctx context.Context, refreshGeneration int64, force bool) {
 	refreshedInventory := inventoryGetter(ctx)
 	if ctx.Err() != nil {
-		app.mu.Lock()
-		if refreshGeneration == app.inventoryRefreshID {
-			app.inventoryLoading = false
-			app.inventoryQueued = false
-			app.inventoryErr = "inventory refresh cancelled: " + ctx.Err().Error()
+		app.inventoryService.mu.Lock()
+		if refreshGeneration == app.inventoryService.refreshGeneration {
+			app.inventoryService.loading = false
+			app.inventoryService.queued = false
+			app.inventoryService.err = "inventory refresh cancelled: " + ctx.Err().Error()
 		}
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		appLog("Inventory refresh cancelled.")
 		return
 	}
-	app.mu.Lock()
-	if refreshGeneration != app.inventoryRefreshID {
-		app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	if refreshGeneration != app.inventoryService.refreshGeneration {
+		app.inventoryService.mu.Unlock()
 		appLog("Discarded stale inventory refresh result.")
 		return
 	}
-	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventory, refreshedInventory)
-	app.inventory = refreshedInventory.DeepCopy()
-	app.inventoryFetchedAt = time.Now()
-	app.inventoryErr = ""
-	if app.inventoryQueued {
+	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventoryService.cache, refreshedInventory)
+	app.inventoryService.cache = refreshedInventory.DeepCopy()
+	app.inventoryService.fetchedAt = time.Now()
+	app.inventoryService.err = ""
+	if app.inventoryService.queued {
 		queuedRefreshGeneration, shouldStartStoreScan := app.prepareQueuedInventoryRefreshLocked(force)
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		appLog("Inventory refresh completed with %d package(s); running queued refresh.", len(refreshedInventory.Packages))
 		if shouldStartStoreScan {
 			app.startStoreScanBackground()
@@ -75,9 +75,9 @@ func (app *App) runInventoryRefresh(ctx context.Context, refreshGeneration int64
 		app.startQueuedInventoryRefresh(queuedRefreshGeneration)
 		return
 	}
-	app.inventoryLoading = false
+	app.inventoryService.loading = false
 	shouldStartStoreScan := app.beginStoreScanLocked(force)
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 	appLog("Inventory refresh completed with %d package(s).", len(refreshedInventory.Packages))
 	if shouldStartStoreScan {
 		app.startStoreScanBackground()
@@ -93,40 +93,40 @@ func (app *App) refreshInventorySyncContext(ctx context.Context, reason string) 
 		reason = "synchronous request"
 	}
 	appLog("Inventory refresh started for %s.", reason)
-	app.mu.Lock()
-	app.inventoryRefreshID++
-	refreshGeneration := app.inventoryRefreshID
-	app.inventoryLoading = true
-	app.inventoryQueued = false
-	app.inventoryErr = ""
-	app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	app.inventoryService.refreshGeneration++
+	refreshGeneration := app.inventoryService.refreshGeneration
+	app.inventoryService.loading = true
+	app.inventoryService.queued = false
+	app.inventoryService.err = ""
+	app.inventoryService.mu.Unlock()
 
 	refreshedInventory := inventoryGetter(ctx)
 	if ctx.Err() != nil {
-		app.mu.Lock()
-		cachedInventory := app.inventory.DeepCopy()
-		if refreshGeneration == app.inventoryRefreshID {
-			app.inventoryLoading = false
-			app.inventoryQueued = false
-			app.inventoryErr = "inventory refresh cancelled: " + ctx.Err().Error()
+		app.inventoryService.mu.Lock()
+		cachedInventory := app.inventoryService.cache.DeepCopy()
+		if refreshGeneration == app.inventoryService.refreshGeneration {
+			app.inventoryService.loading = false
+			app.inventoryService.queued = false
+			app.inventoryService.err = "inventory refresh cancelled: " + ctx.Err().Error()
 		}
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		appLog("Inventory refresh cancelled for %s.", reason)
 		return cachedInventory
 	}
-	app.mu.Lock()
-	if refreshGeneration != app.inventoryRefreshID {
-		app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	if refreshGeneration != app.inventoryService.refreshGeneration {
+		app.inventoryService.mu.Unlock()
 		appLog("Discarded stale synchronous inventory refresh result for %s.", reason)
 		return refreshedInventory
 	}
-	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventory, refreshedInventory)
-	app.inventory = refreshedInventory.DeepCopy()
-	app.inventoryFetchedAt = time.Now()
-	app.inventoryErr = ""
-	if app.inventoryQueued {
+	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventoryService.cache, refreshedInventory)
+	app.inventoryService.cache = refreshedInventory.DeepCopy()
+	app.inventoryService.fetchedAt = time.Now()
+	app.inventoryService.err = ""
+	if app.inventoryService.queued {
 		queuedRefreshGeneration, shouldStartStoreScan := app.prepareQueuedInventoryRefreshLocked(true)
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		appLog("Inventory refresh completed for %s with %d package(s); running queued refresh.", reason, len(refreshedInventory.Packages))
 		if shouldStartStoreScan {
 			app.startStoreScanBackground()
@@ -134,9 +134,9 @@ func (app *App) refreshInventorySyncContext(ctx context.Context, reason string) 
 		app.startQueuedInventoryRefresh(queuedRefreshGeneration)
 		return refreshedInventory
 	}
-	app.inventoryLoading = false
+	app.inventoryService.loading = false
 	shouldStartStoreScan := app.beginStoreScanLocked(true)
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 	appLog("Inventory refresh completed for %s with %d package(s).", reason, len(refreshedInventory.Packages))
 	if shouldStartStoreScan {
 		app.startStoreScanBackground()
@@ -221,12 +221,12 @@ func canPreserveExplicitUpdateCandidate(previousPackage, refreshedPackage Packag
 }
 
 // prepareQueuedInventoryRefreshLocked starts the next refresh generation after
-// the just-finished generation has published. It must be called with app.mu held.
+// the just-finished generation has published. It must be called with app.inventoryService.mu held.
 func (app *App) prepareQueuedInventoryRefreshLocked(forceStoreScan bool) (int64, bool) {
-	app.inventoryQueued = false
-	app.inventoryLoading = true
-	app.inventoryRefreshID++
-	queuedRefreshGeneration := app.inventoryRefreshID
+	app.inventoryService.queued = false
+	app.inventoryService.loading = true
+	app.inventoryService.refreshGeneration++
+	queuedRefreshGeneration := app.inventoryService.refreshGeneration
 	shouldStartStoreScan := app.beginStoreScanLocked(forceStoreScan)
 	return queuedRefreshGeneration, shouldStartStoreScan
 }
@@ -237,22 +237,22 @@ func (app *App) startQueuedInventoryRefresh(refreshGeneration int64) {
 	}) {
 		return
 	}
-	app.mu.Lock()
-	if refreshGeneration == app.inventoryRefreshID {
-		app.inventoryLoading = false
-		app.inventoryErr = "shutdown in progress"
+	app.inventoryService.mu.Lock()
+	if refreshGeneration == app.inventoryService.refreshGeneration {
+		app.inventoryService.loading = false
+		app.inventoryService.err = "shutdown in progress"
 	}
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 }
 
 func (app *App) startStoreScanBackground() {
 	if app.startBackgroundWork("Store update scan", app.runStoreScan) {
 		return
 	}
-	app.mu.Lock()
-	app.storeScanLoading = false
-	app.storeScanQueued = false
-	app.mu.Unlock()
+	app.inventoryService.mu.Lock()
+	app.inventoryService.storeScanLoading = false
+	app.inventoryService.storeScanQueued = false
+	app.inventoryService.mu.Unlock()
 }
 
 // storeScanCooldown debounces automatic (non-forced) background Store scans so
@@ -262,37 +262,37 @@ const storeScanCooldown = 5 * time.Minute
 const storeScanFailureRetryBackoff = 45 * time.Second
 
 // beginStoreScanLocked decides whether to start a background Store scan and, if
-// so, marks one in flight. It must be called with app.mu held and returns true
+// so, marks one in flight. It must be called with app.inventoryService.mu held and returns true
 // when the caller should launch app.runStoreScan in a goroutine.
 func (app *App) beginStoreScanLocked(forceStoreScan bool) bool {
-	if !app.storeBackgroundScanEnabled {
+	if !app.inventoryService.storeBackgroundScanEnabled {
 		return false
 	}
 	now := time.Now()
 	// A non-forced refresh within the cooldown window does not warrant a scan.
 	if !forceStoreScan {
-		if !app.storeScanLastPublishedAt.IsZero() && now.Sub(app.storeScanLastPublishedAt) < storeScanCooldown {
+		if !app.inventoryService.storeScanLastPublishedAt.IsZero() && now.Sub(app.inventoryService.storeScanLastPublishedAt) < storeScanCooldown {
 			return false
 		}
-		if !app.storeScanLastFailureAt.IsZero() && now.Sub(app.storeScanLastFailureAt) < storeScanFailureRetryBackoff {
+		if !app.inventoryService.storeScanLastFailureAt.IsZero() && now.Sub(app.inventoryService.storeScanLastFailureAt) < storeScanFailureRetryBackoff {
 			return false
 		}
 	}
-	if app.storeScanLoading {
+	if app.inventoryService.storeScanLoading {
 		// A scan is already running. Queue a follow-up so this request is not
 		// lost to an in-flight scan that may have started before the caller's
 		// action (for example, re-scanning after applying a Store update).
 		if forceStoreScan {
-			app.storeScanQueued = true
+			app.inventoryService.storeScanQueued = true
 		}
 		return false
 	}
-	app.storeScanLoading = true
+	app.inventoryService.storeScanLoading = true
 	return true
 }
 
 // runStoreScan runs the expensive Microsoft Store transactional scan and
-// persists its published snapshot. It does not write back to app.inventory:
+// persists its published snapshot. It does not write back to app.inventoryService.cache:
 // inventorySnapshot re-overlays the latest published snapshot on every read, so
 // the fresh Store generation surfaces automatically on the next poll.
 //
@@ -303,17 +303,17 @@ func (app *App) beginStoreScanLocked(forceStoreScan bool) bool {
 func (app *App) runStoreScan(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
-			app.mu.Lock()
-			app.storeScanLoading = false
-			app.storeScanQueued = false
-			app.mu.Unlock()
+			app.inventoryService.mu.Lock()
+			app.inventoryService.storeScanLoading = false
+			app.inventoryService.storeScanQueued = false
+			app.inventoryService.mu.Unlock()
 			appLog("Background Microsoft Store update scan cancelled before start.")
 			return
 		}
 		appLog("Background Microsoft Store update scan started.")
-		app.mu.Lock()
-		app.storeScanLastAttemptAt = time.Now()
-		app.mu.Unlock()
+		app.inventoryService.mu.Lock()
+		app.inventoryService.storeScanLastAttemptAt = time.Now()
+		app.inventoryService.mu.Unlock()
 		result, err := runStoreTransactionalScanForInventory(ctx)
 		switch {
 		case ctx.Err() != nil:
@@ -325,23 +325,23 @@ func (app *App) runStoreScan(ctx context.Context) {
 		default:
 			appLog("Background Store update scan %s completed.", result.Scan.ScanID)
 		}
-		app.mu.Lock()
+		app.inventoryService.mu.Lock()
 		if ctx.Err() == nil {
 			now := time.Now()
 			if err == nil && result.Published {
-				app.storeScanLastPublishedAt = now
-				app.storeScanLastFailureAt = time.Time{}
+				app.inventoryService.storeScanLastPublishedAt = now
+				app.inventoryService.storeScanLastFailureAt = time.Time{}
 			} else {
-				app.storeScanLastFailureAt = now
+				app.inventoryService.storeScanLastFailureAt = now
 			}
 		}
-		if ctx.Err() == nil && app.storeScanQueued {
-			app.storeScanQueued = false
-			app.mu.Unlock()
+		if ctx.Err() == nil && app.inventoryService.storeScanQueued {
+			app.inventoryService.storeScanQueued = false
+			app.inventoryService.mu.Unlock()
 			continue
 		}
-		app.storeScanLoading = false
-		app.mu.Unlock()
+		app.inventoryService.storeScanLoading = false
+		app.inventoryService.mu.Unlock()
 		return
 	}
 }
@@ -355,9 +355,9 @@ func (app *App) waitForStoreScanIdle(ctx context.Context, timeout time.Duration)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		app.mu.RLock()
-		storeScanLoading := app.storeScanLoading
-		app.mu.RUnlock()
+		app.inventoryService.mu.RLock()
+		storeScanLoading := app.inventoryService.storeScanLoading
+		app.inventoryService.mu.RUnlock()
 		if !storeScanLoading {
 			return true
 		}
@@ -380,15 +380,15 @@ type cachedInventorySnapshot struct {
 }
 
 func (app *App) cacheInventorySnapshot() cachedInventorySnapshot {
-	app.mu.RLock()
+	app.inventoryService.mu.RLock()
 	snapshot := cachedInventorySnapshot{
-		inventory:    app.inventory.DeepCopy(),
-		loading:      app.inventoryLoading,
-		fetchedAt:    app.inventoryFetchedAt,
-		errText:      app.inventoryErr,
-		storeLoading: app.storeScanLoading,
+		inventory:    app.inventoryService.cache.DeepCopy(),
+		loading:      app.inventoryService.loading,
+		fetchedAt:    app.inventoryService.fetchedAt,
+		errText:      app.inventoryService.err,
+		storeLoading: app.inventoryService.storeScanLoading,
 	}
-	app.mu.RUnlock()
+	app.inventoryService.mu.RUnlock()
 	return snapshot
 }
 

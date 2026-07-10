@@ -103,7 +103,7 @@ func TestSingleUpdateRejectsCurrentPackageBeforeRunner(t *testing.T) {
 	})
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             "winget:Vendor.Current",
 		Manager:         managerWinget,
 		ID:              "Vendor.Current",
@@ -111,7 +111,7 @@ func TestSingleUpdateRejectsCurrentPackageBeforeRunner(t *testing.T) {
 		Version:         "1.0.0",
 		UpdateAvailable: false,
 		UpdateSupported: true,
-	}}}}}
+	}}}}}}
 	app.startSingleUpdateJob(managerWinget, "Vendor.Current", UpdateOptions{})
 
 	status := waitForUpdateJobStopped(t, app)
@@ -122,8 +122,8 @@ func TestSingleUpdateRejectsCurrentPackageBeforeRunner(t *testing.T) {
 
 func TestUpdateJobRejectsSelectedPinnedPackage(t *testing.T) {
 	app := testUpdateJobApp(t)
-	app.mu.Lock()
-	app.inventory.Packages = append(app.inventory.Packages, Package{
+	app.inventoryService.mu.Lock()
+	app.inventoryService.cache.Packages = append(app.inventoryService.cache.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
 		Manager:          managerWinget,
 		ID:               "Vendor.Pinned",
@@ -134,7 +134,7 @@ func TestUpdateJobRejectsSelectedPinnedPackage(t *testing.T) {
 		UpdateSupported:  true,
 		Pinned:           true,
 	})
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 
 	_, _, err := app.updateJobPackages([]string{"winget:Vendor.Pinned"}, UpdateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "pinned") {
@@ -144,8 +144,8 @@ func TestUpdateJobRejectsSelectedPinnedPackage(t *testing.T) {
 
 func TestUpdateJobAllowsSelectedPinnedPackageWithGlobalOption(t *testing.T) {
 	app := testUpdateJobApp(t)
-	app.mu.Lock()
-	app.inventory.Packages = append(app.inventory.Packages, Package{
+	app.inventoryService.mu.Lock()
+	app.inventoryService.cache.Packages = append(app.inventoryService.cache.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
 		Manager:          managerWinget,
 		ID:               "Vendor.Pinned",
@@ -156,7 +156,7 @@ func TestUpdateJobAllowsSelectedPinnedPackageWithGlobalOption(t *testing.T) {
 		UpdateSupported:  true,
 		Pinned:           true,
 	})
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 
 	packages, _, err := app.updateJobPackages([]string{"winget:Vendor.Pinned"}, UpdateOptions{AllowPinned: true})
 	if err != nil {
@@ -175,8 +175,8 @@ func TestUpdateJobStatusKeepsPackageSnapshotAndOverrides(t *testing.T) {
 	defer restore()
 
 	app := testUpdateJobApp(t)
-	app.mu.Lock()
-	app.inventory.Packages = append(app.inventory.Packages, Package{
+	app.inventoryService.mu.Lock()
+	app.inventoryService.cache.Packages = append(app.inventoryService.cache.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
 		Manager:          managerWinget,
 		ID:               "Vendor.Pinned",
@@ -187,7 +187,7 @@ func TestUpdateJobStatusKeepsPackageSnapshotAndOverrides(t *testing.T) {
 		UpdateSupported:  true,
 		Pinned:           true,
 	})
-	app.mu.Unlock()
+	app.inventoryService.mu.Unlock()
 
 	status, err := app.startUpdateJobWithOptions([]string{"winget:Vendor.Pinned"}, UpdateOptions{AllowPinned: true})
 	if err != nil {
@@ -233,11 +233,11 @@ func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) 
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -276,10 +276,10 @@ func TestUpdateAllBatchesMultipleChocolateyPackages(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 		updatableTestPackage(managerChoco, "git", "Git"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -302,10 +302,10 @@ func TestElevatedBatchFailureWithoutPackageRowsFailsJob(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -343,11 +343,11 @@ func TestUpdateSelectedUsesElevatedBatchPath(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 		updatableTestPackage(managerWinget, "Vendor.Three", "Vendor Three"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.One", "choco:gh"}); err != nil {
 		t.Fatal(err)
 	}
@@ -372,9 +372,9 @@ func TestSingleWingetUpdateStaysOnExistingPath(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.One"}); err != nil {
 		t.Fatal(err)
 	}
@@ -399,10 +399,10 @@ func TestWingetBatchFallsBackWhenSameUserElevationIneligible(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -453,10 +453,10 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -473,9 +473,7 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 }
 
 func TestElevatedBatchProgressIsLoggedInParentSession(t *testing.T) {
-	oldLogs := sessionLogs
-	sessionLogs = &LogBuffer{}
-	defer func() { sessionLogs = oldLogs }()
+	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	restore := replaceBulkUpdateBatchHooks(
 		func(pkg Package) bool { return true },
@@ -494,10 +492,10 @@ func TestElevatedBatchProgressIsLoggedInParentSession(t *testing.T) {
 	)
 	defer restore()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +601,7 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 	defer restore()
 
 	app := testUpdateJobApp(t)
-	app.sessionToken = "test-session"
+	app.webSession.sessionToken = "test-session"
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git"}); err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +648,7 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 		refreshInventoryAfterUpdateJob = oldRefresh
 	}()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             "winget:Vendor.App",
 		Manager:         managerWinget,
 		ID:              "Vendor.App",
@@ -659,7 +657,7 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 		UpdateAvailable: true,
 		UpdateSupported: true,
 		ActionBackend:   "winget",
-	}}}}}
+	}}}}}}
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.App"}); err != nil {
 		t.Fatal(err)
 	}
@@ -681,8 +679,8 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 		return CommandResult{OK: true, Command: "update " + pkg.ID}
 	}
 	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error {
-		app.mu.Lock()
-		app.inventory = Inventory{PackageLookup: PackageLookup{Packages: []Package{
+		app.inventoryService.mu.Lock()
+		app.inventoryService.cache = Inventory{PackageLookup: PackageLookup{Packages: []Package{
 			{
 				Key:              "winget:Current.App",
 				Manager:          managerWinget,
@@ -695,7 +693,7 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 			},
 			updatableTestPackage(managerWinget, "Fresh.App", "Fresh App"),
 		}}}
-		app.mu.Unlock()
+		app.inventoryService.mu.Unlock()
 		return nil
 	}
 	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
@@ -707,10 +705,10 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 		elevatedPackageUpdateBatchEligible = oldEligible
 	}()
 
-	app := &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Current.App", "Current App"),
 		updatableTestPackage(managerWinget, "Fresh.App", "Fresh App"),
-	}}}}
+	}}}}}
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -862,18 +860,18 @@ func TestRefreshInventorySyncPreventsStaleAsyncOverwrite(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		app.mu.RLock()
-		packages := append([]Package(nil), app.inventory.Packages...)
-		loading := app.inventoryLoading
-		app.mu.RUnlock()
+		app.inventoryService.mu.RLock()
+		packages := append([]Package(nil), app.inventoryService.cache.Packages...)
+		loading := app.inventoryService.loading
+		app.inventoryService.mu.RUnlock()
 		if !loading && len(packages) == 1 && packages[0].Name == "fresh" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	t.Fatalf("stale async refresh overwrote cache or left loading active: loading=%v packages=%#v", app.inventoryLoading, app.inventory.Packages)
+	app.inventoryService.mu.RLock()
+	defer app.inventoryService.mu.RUnlock()
+	t.Fatalf("stale async refresh overwrote cache or left loading active: loading=%v packages=%#v", app.inventoryService.loading, app.inventoryService.cache.Packages)
 }
 
 func TestRefreshInventorySyncRunsQueuedForcedRefresh(t *testing.T) {
@@ -923,18 +921,18 @@ func TestRefreshInventorySyncRunsQueuedForcedRefresh(t *testing.T) {
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		app.mu.RLock()
-		packages := append([]Package(nil), app.inventory.Packages...)
-		loading := app.inventoryLoading
-		app.mu.RUnlock()
+		app.inventoryService.mu.RLock()
+		packages := append([]Package(nil), app.inventoryService.cache.Packages...)
+		loading := app.inventoryService.loading
+		app.inventoryService.mu.RUnlock()
 		if !loading && len(packages) == 1 && packages[0].Name == "queued" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	t.Fatalf("queued forced refresh did not update cache: loading=%v packages=%#v", app.inventoryLoading, app.inventory.Packages)
+	app.inventoryService.mu.RLock()
+	defer app.inventoryService.mu.RUnlock()
+	t.Fatalf("queued forced refresh did not update cache: loading=%v packages=%#v", app.inventoryService.loading, app.inventoryService.cache.Packages)
 }
 
 func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
@@ -1004,7 +1002,7 @@ func TestStoreUpdateJobKeepsRunningUntilStoreScanCompletes(t *testing.T) {
 		return StoreScanResult{Published: true, Scan: StoreScanGeneration{ScanID: "store-refresh"}}, nil
 	}
 
-	app := &App{storeBackgroundScanEnabled: true}
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
 	app.startUpdatePackagesOperation(jobTypeUpdateAll, updateJobModeSelected, []Package{{
 		Key:             "store:Vendor.App_abc123",
 		Manager:         managerStore,

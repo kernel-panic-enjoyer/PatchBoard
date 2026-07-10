@@ -38,6 +38,26 @@ jobs:
       - name: Go tests
         run: go test -count=1 ./...
 
+      - name: Set up GCC for the race detector
+        shell: pwsh
+        run: |
+          $msysBash = 'C:\msys64\usr\bin\bash.exe'
+          if (-not (Test-Path -LiteralPath $msysBash)) {
+            winget install --id MSYS2.MSYS2 --exact --scope user --silent --accept-source-agreements --accept-package-agreements
+          }
+          & $msysBash -lc 'pacman -S --needed --noconfirm mingw-w64-ucrt-x86_64-gcc'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'MSYS2 GCC installation failed.'
+          }
+          'C:\msys64\ucrt64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Go race detector
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = '1'
+          $env:CC = 'gcc.exe'
+          go test -race -count=1 ./internal/updater -run '^(TestConcurrentEffectiveInventorySnapshotsDoNotMutateCache|TestInventorySnapshotConcurrentWithUpdateSelection|TestStateStoreConcurrentThemeAndAutoUpdateSettings|TestStateStoreConcurrentScanAndThemeUpdate|TestStateStoreConcurrentAutoUpdateResultAndWebUISettings|TestUpdateJobRejectsConcurrentDuplicateStarts|TestUpdateJobValidatesConcurrentQueuedStart|TestStatusRefreshDoesNotWaitForInventoryCacheLock|TestBootstrapTokenDoesNotWaitForInventoryCacheLock)$'
+
       - name: Go vet
         run: go vet ./...
 

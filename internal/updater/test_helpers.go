@@ -113,15 +113,32 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func testSessionApp() *App {
-	return &App{token: "test-token", sessionToken: "test-session"}
+func testSessionApp(t *testing.T) *App {
+	t.Helper()
+	app := &App{webSession: webSession{bootstrapToken: "test-token", sessionToken: "test-session"}}
+	t.Cleanup(func() {
+		app.beginShutdown()
+		if !app.waitForBackgroundWork(2 * time.Second) {
+			t.Error("test App did not stop its background work")
+		}
+	})
+	return app
+}
+
+// replaceSessionLogsForTest keeps the global log test seam from being restored
+// before the App cleanup registered afterwards has stopped its background jobs.
+func replaceSessionLogsForTest(t *testing.T, logs *LogBuffer) {
+	t.Helper()
+	previousLogs := sessionLogs
+	sessionLogs = logs
+	t.Cleanup(func() { sessionLogs = previousLogs })
 }
 
 func addTestSessionCookie(app *App, request *http.Request) {
-	if app.sessionToken == "" {
-		app.sessionToken = "test-session"
+	if app.webSession.sessionToken == "" {
+		app.webSession.sessionToken = "test-session"
 	}
-	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: app.sessionToken})
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: app.webSession.sessionToken})
 }
 
 func authenticatedRequest(app *App, method, target string, body io.Reader) *http.Request {
@@ -129,7 +146,7 @@ func authenticatedRequest(app *App, method, target string, body io.Reader) *http
 	addTestSessionCookie(app, request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set(trustedUIRequestHeader, "1")
-		request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.sessionToken))
+		request.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
 	}
 	return request
 }
@@ -137,11 +154,11 @@ func authenticatedRequest(app *App, method, target string, body io.Reader) *http
 func testUpdateJobApp(t *testing.T) *App {
 	t.Helper()
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
-	return &App{inventory: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+	return &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		{Key: "winget:Git.Git", Manager: managerWinget, ID: "Git.Git", Name: "Git", UpdateAvailable: true, UpdateSupported: true},
 		{Key: "choco:gh", Manager: managerChoco, ID: "gh", Name: "GitHub CLI", UpdateAvailable: true, UpdateSupported: true},
 		{Key: "winget:Vendor.Unknown", Manager: managerWinget, ID: "Vendor.Unknown", Name: "Unknown App", Version: "Unknown", AvailableVersion: "1.2.0", UpdateAvailable: true, UpdateSupported: true, UnknownVersion: true},
-	}}}}
+	}}}}}
 }
 
 func waitForUpdateJobStopped(t *testing.T, app *App) UpdateJobStatus {

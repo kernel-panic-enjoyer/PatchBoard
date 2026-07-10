@@ -57,18 +57,22 @@ func NewBrowserTestApp() *App {
 		managerChoco:  {Available: true, Version: "2.test", Path: "choco.exe"},
 	}
 	return &App{
-		token:           BrowserTestToken,
-		sessionToken:    "browser-session-token",
-		status:          StatusResponse{Managers: cloneManagerStatuses(managers)},
-		statusFetchedAt: now,
-		inventory: Inventory{PackageLookup: PackageLookup{
-			Managers: cloneManagerStatuses(managers),
-			Packages: []Package{
-				{Key: "winget:Test.App", Manager: managerWinget, ID: "Test.App", Name: "Browser Test App", Version: "1.0.0", AvailableVersion: "1.1.0", UpdateAvailable: true, UpdateSupported: true, Installed: true, Source: sourceWinget},
-				{Key: "choco:current", Manager: managerChoco, ID: "current", Name: "Current Tool", Version: "2.0.0", AvailableVersion: "2.0.0", UpdateSupported: true, Installed: true, Source: managerChoco},
+		webSession: webSession{bootstrapToken: BrowserTestToken, sessionToken: "browser-session-token"},
+		statusCache: appStatusCache{
+			response:  StatusResponse{Managers: cloneManagerStatuses(managers)},
+			fetchedAt: now,
+		},
+		inventoryService: inventoryService{
+			cache: Inventory{PackageLookup: PackageLookup{
+				Managers: cloneManagerStatuses(managers),
+				Packages: []Package{
+					{Key: "winget:Test.App", Manager: managerWinget, ID: "Test.App", Name: "Browser Test App", Version: "1.0.0", AvailableVersion: "1.1.0", UpdateAvailable: true, UpdateSupported: true, Installed: true, Source: sourceWinget},
+					{Key: "choco:current", Manager: managerChoco, ID: "current", Name: "Current Tool", Version: "2.0.0", AvailableVersion: "2.0.0", UpdateSupported: true, Installed: true, Source: managerChoco},
+				},
 			},
-		}},
-		inventoryFetchedAt: now,
+			},
+			fetchedAt: now,
+		},
 	}
 }
 

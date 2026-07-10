@@ -20,10 +20,12 @@ func TestRunInventoryRefreshCancellationRetainsPreviousCache(t *testing.T) {
 
 	previousFetchedAt := time.Now().Add(-time.Minute)
 	app := &App{
-		inventory:          Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:old", Manager: managerWinget, ID: "old"}}}},
-		inventoryFetchedAt: previousFetchedAt,
-		inventoryLoading:   true,
-		inventoryRefreshID: 1,
+		inventoryService: inventoryService{
+			cache:             Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:old", Manager: managerWinget, ID: "old"}}}},
+			fetchedAt:         previousFetchedAt,
+			loading:           true,
+			refreshGeneration: 1,
+		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -47,19 +49,19 @@ func TestRunInventoryRefreshCancellationRetainsPreviousCache(t *testing.T) {
 		t.Fatal("inventory refresh did not stop after cancellation")
 	}
 
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	if len(app.inventory.Packages) != 1 || app.inventory.Packages[0].Key != "winget:old" {
-		t.Fatalf("cancelled refresh replaced cached inventory: %+v", app.inventory.Packages)
+	app.inventoryService.mu.RLock()
+	defer app.inventoryService.mu.RUnlock()
+	if len(app.inventoryService.cache.Packages) != 1 || app.inventoryService.cache.Packages[0].Key != "winget:old" {
+		t.Fatalf("cancelled refresh replaced cached inventory: %+v", app.inventoryService.cache.Packages)
 	}
-	if app.inventoryLoading {
+	if app.inventoryService.loading {
 		t.Fatal("cancelled refresh left inventory loading")
 	}
-	if app.inventoryFetchedAt != previousFetchedAt {
-		t.Fatalf("cancelled refresh changed successful fetched timestamp: got %v want %v", app.inventoryFetchedAt, previousFetchedAt)
+	if app.inventoryService.fetchedAt != previousFetchedAt {
+		t.Fatalf("cancelled refresh changed successful fetched timestamp: got %v want %v", app.inventoryService.fetchedAt, previousFetchedAt)
 	}
-	if !strings.Contains(strings.ToLower(app.inventoryErr), "cancel") {
-		t.Fatalf("cancelled refresh did not expose cancellation error: %q", app.inventoryErr)
+	if !strings.Contains(strings.ToLower(app.inventoryService.err), "cancel") {
+		t.Fatalf("cancelled refresh did not expose cancellation error: %q", app.inventoryService.err)
 	}
 }
 
@@ -87,16 +89,16 @@ func TestQueuedInventoryRefreshCancelledDuringShutdown(t *testing.T) {
 	app.refreshInventory(true)
 	app.requestShutdown("test")
 
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	if app.inventoryLoading || app.inventoryQueued {
-		t.Fatalf("shutdown left inventory refresh state active: loading=%t queued=%t", app.inventoryLoading, app.inventoryQueued)
+	app.inventoryService.mu.RLock()
+	defer app.inventoryService.mu.RUnlock()
+	if app.inventoryService.loading || app.inventoryService.queued {
+		t.Fatalf("shutdown left inventory refresh state active: loading=%t queued=%t", app.inventoryService.loading, app.inventoryService.queued)
 	}
-	if len(app.inventory.Packages) != 0 {
-		t.Fatalf("shutdown cancellation published partial inventory: %+v", app.inventory.Packages)
+	if len(app.inventoryService.cache.Packages) != 0 {
+		t.Fatalf("shutdown cancellation published partial inventory: %+v", app.inventoryService.cache.Packages)
 	}
-	if !strings.Contains(strings.ToLower(app.inventoryErr), "cancel") {
-		t.Fatalf("shutdown cancellation did not expose cancellation error: %q", app.inventoryErr)
+	if !strings.Contains(strings.ToLower(app.inventoryService.err), "cancel") {
+		t.Fatalf("shutdown cancellation did not expose cancellation error: %q", app.inventoryService.err)
 	}
 }
 
@@ -120,7 +122,7 @@ func TestRunStatusRefreshCancellationDoesNotWaitOnManagerDetection(t *testing.T)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	app := &App{statusLoading: true}
+	app := &App{statusCache: appStatusCache{loading: true}}
 	done := make(chan struct{})
 	go func() {
 		app.runStatusRefresh(ctx, true)
@@ -132,13 +134,13 @@ func TestRunStatusRefreshCancellationDoesNotWaitOnManagerDetection(t *testing.T)
 	case <-time.After(2 * time.Second):
 		t.Fatal("status refresh blocked on manager detection after cancellation")
 	}
-	app.mu.RLock()
-	defer app.mu.RUnlock()
-	if app.statusLoading || app.statusQueued {
-		t.Fatalf("cancelled status refresh left active state: loading=%t queued=%t", app.statusLoading, app.statusQueued)
+	_, loading, _, refreshErr := app.statusCache.snapshot()
+	_, queued := app.statusCache.refreshState()
+	if loading || queued {
+		t.Fatalf("cancelled status refresh left active state: loading=%t queued=%t", loading, queued)
 	}
-	if !strings.Contains(strings.ToLower(app.statusErr), "cancel") {
-		t.Fatalf("cancelled status refresh did not expose cancellation error: %q", app.statusErr)
+	if !strings.Contains(strings.ToLower(refreshErr), "cancel") {
+		t.Fatalf("cancelled status refresh did not expose cancellation error: %q", refreshErr)
 	}
 }
 
