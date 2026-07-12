@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -150,25 +149,7 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 	defer pipeConn.Close()
 	appLogContext(ctx, "Elevated worker connected for %s.", invocation.Operation)
 
-	workerExchangeDone := make(chan struct{})
-	var exchangeDoneOnce sync.Once
-	markWorkerExchangeDone := func() {
-		exchangeDoneOnce.Do(func() {
-			close(workerExchangeDone)
-		})
-	}
-	defer markWorkerExchangeDone()
-	go func() {
-		select {
-		case <-ctx.Done():
-			workerProcess.Terminate()
-			_ = pipeConn.Close()
-		case <-workerExchangeDone:
-		}
-	}()
-
 	response, err := exchangeElevatedWorkerRequest(ctx, pipeConn, authContext, workerRequest, invocation.Progress)
-	markWorkerExchangeDone()
 	if err != nil {
 		workerProcess.Terminate()
 		return elevatedWorkerResponse{}, err
@@ -252,7 +233,7 @@ func validateWorkerOperationPayloadFromAny(operation string, payload any) error 
 	return validateWorkerOperationPayload(operation, raw)
 }
 
-func exchangeElevatedWorkerRequest(ctx context.Context, pipeConn io.ReadWriteCloser, _ elevatedWorkerAuthContext, request elevatedWorkerMessage, progress func(elevatedWorkerProgress)) (elevatedWorkerResponse, error) {
+func exchangeElevatedWorkerRequest(ctx context.Context, pipeConn io.ReadWriteCloser, auth elevatedWorkerAuthContext, request elevatedWorkerMessage, progress func(elevatedWorkerProgress)) (elevatedWorkerResponse, error) {
 	encoder := json.NewEncoder(pipeConn)
 	decoder := json.NewDecoder(pipeConn)
 	decoder.DisallowUnknownFields()
@@ -294,12 +275,32 @@ func exchangeElevatedWorkerRequest(ctx context.Context, pipeConn io.ReadWriteClo
 	case err := <-decodeErrCh:
 		return elevatedWorkerResponse{}, fmt.Errorf("read elevated worker response: %w", err)
 	case <-ctx.Done():
-		return elevatedWorkerResponse{
-			Version:   elevatedWorkerProtocolVersion,
-			RequestID: request.RequestID,
-			OK:        false,
-			Result:    CommandResult{Code: commandCancelledCode, Command: request.Operation, Stderr: "Cancelled."},
-		}, nil
+		cancelWriteDone := make(chan error, 1)
+		go func() {
+			cancelWriteDone <- encoder.Encode(newElevatedWorkerCancel(auth, request.RequestID))
+		}()
+		select {
+		case cancelWriteErr := <-cancelWriteDone:
+			if cancelWriteErr != nil {
+				return elevatedWorkerResponse{}, fmt.Errorf("send elevated worker cancellation: %w", cancelWriteErr)
+			}
+		case <-time.After(elevatedWorkerCancelTimeout):
+			_ = pipeConn.Close()
+			return elevatedWorkerResponse{}, fmt.Errorf("elevated worker cancellation request timed out: %w", ctx.Err())
+		}
+
+		select {
+		case workerResponse := <-finalResponseCh:
+			if !workerResponse.OK && workerResponse.Error != "" && workerResponse.Result.Stderr == "" {
+				workerResponse.Result.Stderr = workerResponse.Error
+			}
+			return workerResponse, nil
+		case decodeErr := <-decodeErrCh:
+			return elevatedWorkerResponse{}, fmt.Errorf("read elevated worker cancellation acknowledgement: %w", decodeErr)
+		case <-time.After(elevatedWorkerCancelTimeout):
+			_ = pipeConn.Close()
+			return elevatedWorkerResponse{}, fmt.Errorf("elevated worker cancellation acknowledgement timed out: %w", ctx.Err())
+		}
 	}
 }
 
@@ -463,7 +464,7 @@ func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadW
 	}
 }
 
-func serveElevatedWorkerConnection(pipeConn io.ReadWriter, authContext elevatedWorkerAuthContext) error {
+func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elevatedWorkerAuthContext) error {
 	decoder := json.NewDecoder(pipeConn)
 	decoder.DisallowUnknownFields()
 	encoder := json.NewEncoder(pipeConn)
@@ -485,7 +486,19 @@ func serveElevatedWorkerConnection(pipeConn io.ReadWriter, authContext elevatedW
 		return errors.New("first worker message must be a request")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		var cancelMessage elevatedWorkerMessage
+		if err := decoder.Decode(&cancelMessage); err != nil {
+			return
+		}
+		if err := validateElevatedWorkerMessage(cancelMessage, authContext); err != nil || cancelMessage.Type != workerMessageCancel || cancelMessage.RequestID != workerRequest.RequestID {
+			cancel()
+			return
+		}
+		cancel()
+	}()
 	batchProgressTotal := packageUpdateBatchProgressTotal(workerRequest.Operation, workerRequest.Payload)
 
 	progress := func(index int, pkg Package) {

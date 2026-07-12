@@ -314,14 +314,29 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 	defer server.Close()
 
 	requestRead := make(chan struct{})
+	cancelRead := make(chan struct{})
 	go func() {
 		decoder := json.NewDecoder(server)
 		decoder.DisallowUnknownFields()
+		encoder := json.NewEncoder(server)
 		var gotRequest elevatedWorkerMessage
 		if err := decoder.Decode(&gotRequest); err != nil {
 			return
 		}
 		close(requestRead)
+		var gotCancel elevatedWorkerMessage
+		if err := decoder.Decode(&gotCancel); err != nil {
+			return
+		}
+		if gotCancel.Type != workerMessageCancel || gotCancel.RequestID != gotRequest.RequestID {
+			return
+		}
+		close(cancelRead)
+		_ = encoder.Encode(elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			RequestID: gotRequest.RequestID,
+			Result:    CommandResult{Code: commandCancelledCode, Command: gotRequest.Operation, Stderr: "Cancelled."},
+		})
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -339,6 +354,11 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 		t.Fatal("expected request to be sent before cancellation")
 	}
 	cancel()
+	select {
+	case <-cancelRead:
+	case <-time.After(time.Second):
+		t.Fatal("expected authenticated cancel message")
+	}
 	select {
 	case result := <-done:
 		if result.Code != commandCancelledCode {

@@ -2,6 +2,7 @@ package updater
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -254,5 +255,11 @@ func decodeWorkerPayload(rawPayload json.RawMessage, target any) error {
 }
 
 func workerCommandResultError(command string, err error) CommandResult {
+	if errors.Is(err, context.Canceled) {
+		return CommandResult{Code: commandCancelledCode, Command: command, Stderr: "Cancelled."}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return CommandResult{Code: commandTimeoutCode, Command: command, Stderr: "Timed out."}
+	}
 	return CommandResult{Code: 1, Command: command, Stderr: err.Error()}
 }

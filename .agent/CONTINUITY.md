@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T13:53:00+02:00 [CODE] Completed PR-04 elevated worker cancellation: the parent now sends the existing authenticated cancel frame, waits a bounded interval for the worker's final response, and force-terminates only if the cancellation protocol fails. The worker consumes the cancel frame concurrently and derives operation contexts from it; cancellation errors map to the normal cancelled/timeout command results.
+
 - 2026-07-12T13:37:00+02:00 [CODE] Completed PR-03 typed command policy migration. `CommandSpec` declares read-only versus package-mutation execution and rejects mismatches against the existing command classifier. Manager detection, WinGet/Chocolatey inventory, Store catalog providers, and default package actions now use explicit policies; the compatibility wrapper remains only for unreviewed non-package callers.
 
 - 2026-07-12T13:22:00+02:00 [CODE] Completed PR-02 cancellation bounds: process exit after cancellation and output/worker-pipe drains now use explicit deadlines and typed lifecycle timeout errors. Timed-out pipe drains are closed, retained output is synchronized for safe result construction, and Store inventory/discovery workers no longer perform unbounded post-cancellation receives.
