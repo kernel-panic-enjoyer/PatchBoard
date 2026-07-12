@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T13:11:00+02:00 [CODE] Completed PR-01 process ownership: mutable command and killable WinRT worker children now start suspended, are assigned to a kill-on-close Job Object, then resumed. UAC workers are assigned immediately after `ShellExecuteEx` returns; they remain inert until an authenticated pipe request. A Windows regression proves suspended payloads do not run before assignment.
+
 - 2026-07-12T14:42:00+02:00 [CODE] Self-update release admission now requires a detached Ed25519 signature asset over the exact metadata bytes and executable digest, validated against a rotation-capable public-key list embedded at build time. Metadata additionally requires signing key ID, host/redirect policy rejects untrusted or non-HTTPS production download origins, and downloaded releases must be matching stripped Windows PE binaries for the running architecture. The release workflow now checks out the dispatch revision and refuses publication without protected key material; SBOM/provenance attestation remains in the CI hardening phase.
 
 - 2026-07-12T14:20:00+02:00 [CODE] Completed self-update transaction/rollback slice: replacement now retains `.bak` until the restarted executable acknowledges a private, bounded startup-health request after local listener initialization. Failure or early exit restores the previous executable atomically, retains the failed candidate as `.failed`, records the result, and attempts to restart the restored executable. Tests cover exact health acknowledgement, successful commit, restart failure rollback, and the real staged portable helper under `-race`.
@@ -265,6 +267,8 @@
 - 2026-06-25T18:14:00+02:00 [CODE] `runCommandContext` now collapses its four near-identical code-127 launch-failure blocks into a local `fail127` helper and drops two redundant re-logs of the command line; the distinct empty-command early return is unchanged.
 
 [DISCOVERIES]
+
+- 2026-07-12T13:11:00+02:00 [TOOL] The default environment has `CGO_ENABLED=0` despite MSYS2 UCRT64 GCC being installed. `CGO_ENABLED=1`, `CC=C:\\msys64\\ucrt64\\bin\\gcc.exe`, and the UCRT64 bin path are required for Windows race runs; the internal updater race suite then passed in 86.303s.
 
 - 2026-07-12T14:42:00+02:00 [CODE] A local/default build intentionally has no trusted self-update key. Such a build can run and validate normally, but reports future release assets as incompatible rather than accepting unsigned self-updates. Release operators must configure `PATCHBOARD_UPDATE_SIGNING_KEY_ID`, `PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS`, and the private signing secret before dispatching the hardened workflow.
 

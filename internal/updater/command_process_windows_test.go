@@ -66,6 +66,47 @@ Start-Sleep -Seconds 60
 	t.Fatalf("grandchild process %d survived job termination", grandchildPID)
 }
 
+func TestCommandProcessOwnerAssignsBeforeResumingMutableCommand(t *testing.T) {
+	markerPath := t.TempDir() + `\started.txt`
+	command := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-Command",
+		"Set-Content -NoNewline -LiteralPath "+quotePowerShellSingleQuotedString(markerPath)+" -Value started",
+	)
+	command.SysProcAttr = hiddenSysProcAttrWithFlags(true)
+
+	processOwner, err := newCommandProcessOwner(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer processOwner.Close()
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer terminateStartedCommand(command, processOwner)
+
+	// A suspended command must not execute its payload before Job Object ownership.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("suspended command executed before Job Object assignment: %v", err)
+	}
+	if err := processOwner.Assign(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := processOwner.Resume(command); err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(markerPath); err != nil {
+		t.Fatalf("resumed command did not execute: %v", err)
+	}
+}
+
 func quotePowerShellSingleQuotedString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }

@@ -34,7 +34,8 @@ type elevatedWorkerOperationResult struct {
 }
 
 type elevatedWorkerProcess struct {
-	handle windows.Handle
+	handle       windows.Handle
+	processOwner *commandProcessOwner
 }
 
 type elevatedWorkerExit struct {
@@ -43,12 +44,19 @@ type elevatedWorkerExit struct {
 }
 
 func (process elevatedWorkerProcess) Close() {
+	if process.processOwner != nil {
+		process.processOwner.Close()
+	}
 	if process.handle != 0 {
 		_ = windows.CloseHandle(process.handle)
 	}
 }
 
 func (process elevatedWorkerProcess) Terminate() {
+	if process.processOwner != nil {
+		process.processOwner.Terminate()
+		return
+	}
 	if process.handle != 0 {
 		_ = windows.TerminateProcess(process.handle, uint32(commandCancelledCode))
 	}
@@ -123,6 +131,11 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 		appLogContext(ctx, "Elevated worker launch failed for %s: %s.", invocation.Operation, err)
 		return elevatedWorkerResponse{}, err
 	}
+	if err := workerProcess.assignKillOnCloseJob(); err != nil {
+		workerProcess.Terminate()
+		workerProcess.Close()
+		return elevatedWorkerResponse{}, fmt.Errorf("assign elevated worker to Job Object: %w", err)
+	}
 	defer workerProcess.Close()
 
 	appLogContext(ctx, "Elevated worker launched for %s; waiting for connection.", invocation.Operation)
@@ -161,6 +174,30 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 		return elevatedWorkerResponse{}, err
 	}
 	return response, nil
+}
+
+// assignKillOnCloseJob owns the UAC-launched worker as soon as ShellExecuteEx
+// returns. ShellExecuteEx cannot create a process suspended, but the worker is
+// inert until it receives an authenticated named-pipe request; assigning it
+// here still makes cancellation and shutdown terminate the worker tree.
+func (process *elevatedWorkerProcess) assignKillOnCloseJob() error {
+	if process == nil || process.handle == 0 {
+		return errors.New("elevated worker process handle is unavailable")
+	}
+	processID, err := windows.GetProcessId(process.handle)
+	if err != nil {
+		return err
+	}
+	owner, err := newCommandProcessOwner(true)
+	if err != nil {
+		return err
+	}
+	if err := owner.AssignProcessID(processID); err != nil {
+		owner.Close()
+		return err
+	}
+	process.processOwner = owner
+	return nil
 }
 
 func acceptElevatedWorkerConnection(ctx context.Context, pipeServer *elevatedWorkerPipeServer, workerProcess elevatedWorkerProcess) (io.ReadWriteCloser, error) {

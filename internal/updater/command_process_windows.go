@@ -3,12 +3,17 @@
 package updater
 
 import (
+	"fmt"
 	"os/exec"
 	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+const createSuspendedFlag = 0x00000004
+
+var procNtResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
 
 type commandProcessOwner struct {
 	jobHandle windows.Handle
@@ -42,12 +47,35 @@ func (processOwner *commandProcessOwner) Assign(command *exec.Cmd) error {
 	if processOwner == nil || processOwner.jobHandle == 0 || command == nil || command.Process == nil {
 		return nil
 	}
-	processHandle, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(command.Process.Pid))
+	return processOwner.AssignProcessID(uint32(command.Process.Pid))
+}
+
+func (processOwner *commandProcessOwner) AssignProcessID(processID uint32) error {
+	if processOwner == nil || processOwner.jobHandle == 0 || processID == 0 {
+		return nil
+	}
+	processHandle, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, processID)
 	if err != nil {
 		return err
 	}
 	defer windows.CloseHandle(processHandle)
 	return windows.AssignProcessToJobObject(processOwner.jobHandle, processHandle)
+}
+
+func (processOwner *commandProcessOwner) Resume(command *exec.Cmd) error {
+	if processOwner == nil || processOwner.jobHandle == 0 || command == nil || command.Process == nil {
+		return nil
+	}
+	processHandle, err := windows.OpenProcess(windows.PROCESS_SUSPEND_RESUME, false, uint32(command.Process.Pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(processHandle)
+	status, _, _ := procNtResumeProcess.Call(uintptr(processHandle))
+	if status != 0 {
+		return fmt.Errorf("resume Job Object-owned process failed with NTSTATUS %#x", status)
+	}
+	return nil
 }
 
 func (processOwner *commandProcessOwner) Terminate() {

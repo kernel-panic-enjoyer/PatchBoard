@@ -15,7 +15,15 @@ const (
 )
 
 func hiddenSysProcAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindowFlag}
+	return hiddenSysProcAttrWithFlags(false)
+}
+
+func hiddenSysProcAttrWithFlags(startSuspended bool) *syscall.SysProcAttr {
+	creationFlags := uint32(createNoWindowFlag)
+	if startSuspended {
+		creationFlags |= createSuspendedFlag
+	}
+	return &syscall.SysProcAttr{HideWindow: true, CreationFlags: creationFlags}
 }
 
 func launchEnv() []string {

@@ -89,7 +89,7 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 
 	commandProcess := exec.Command(args[0], args[1:]...)
 	commandProcess.Env = launchEnv()
-	commandProcess.SysProcAttr = hiddenSysProcAttr()
+	commandProcess.SysProcAttr = hiddenSysProcAttrWithFlags(processOwner != nil)
 	stdoutTail := newBoundedOutputTail(commandResultStreamLimitBytes)
 	stderrTail := newBoundedOutputTail(commandResultStreamLimitBytes)
 	stdoutPipe, err := commandProcess.StdoutPipe()
@@ -101,7 +101,7 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 		return launchFailureResult(err.Error())
 	}
 
-	if err := commandProcess.Start(); err != nil {
+	if err := startCommandInJobObject(commandProcess, processOwner); err != nil {
 		if commandCtx.Err() == context.DeadlineExceeded {
 			result.Code = commandTimeoutCode
 			result.Stderr = "Timed out."
@@ -118,14 +118,6 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 		}
 		return launchFailureResult(err.Error())
 	}
-	if processOwner != nil {
-		if err := processOwner.Assign(commandProcess); err != nil {
-			terminateStartedCommand(commandProcess, processOwner)
-			_ = commandProcess.Wait()
-			return launchFailureResult(err.Error())
-		}
-	}
-
 	var outputReaders sync.WaitGroup
 	emitStdoutToSessionLog := !suppressCommandStdoutInSessionLog(args)
 	outputReaders.Add(2)

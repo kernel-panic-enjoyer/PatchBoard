@@ -5,6 +5,30 @@ import (
 	"os/exec"
 )
 
+// startCommandInJobObject starts a command suspended, assigns it to the
+// kill-on-close Job Object, and only then lets its initial thread run. Callers
+// must configure the command with hiddenSysProcAttrWithFlags(true) first.
+// This prevents child processes from escaping ownership during startup.
+func startCommandInJobObject(command *exec.Cmd, processOwner *commandProcessOwner) error {
+	if err := command.Start(); err != nil {
+		return err
+	}
+	if processOwner == nil {
+		return nil
+	}
+	if err := processOwner.Assign(command); err != nil {
+		terminateStartedCommand(command, processOwner)
+		_ = command.Wait()
+		return err
+	}
+	if err := processOwner.Resume(command); err != nil {
+		terminateStartedCommand(command, processOwner)
+		_ = command.Wait()
+		return err
+	}
+	return nil
+}
+
 func waitForStartedCommand(ctx context.Context, startedCommand *exec.Cmd, processOwner *commandProcessOwner) error {
 	waitResult := make(chan error, 1)
 	go func() {

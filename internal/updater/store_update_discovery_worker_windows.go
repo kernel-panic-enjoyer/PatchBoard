@@ -103,7 +103,7 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 	if len(provider.Env) > 0 {
 		cmd.Env = append(cmd.Env, provider.Env...)
 	}
-	cmd.SysProcAttr = hiddenSysProcAttr()
+	cmd.SysProcAttr = hiddenSysProcAttrWithFlags(true)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		result.Code = 127
@@ -131,14 +131,7 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 	}
 	defer owner.Close()
 
-	if err := cmd.Start(); err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
-		return incompleteStoreUpdateDiscoveryResponse(scan, err), result
-	}
-	if err := owner.Assign(cmd); err != nil {
-		terminateStartedCommand(cmd, owner)
-		_ = cmd.Wait()
+	if err := startCommandInJobObject(cmd, owner); err != nil {
 		result.Code = 127
 		result.Stderr = err.Error()
 		return incompleteStoreUpdateDiscoveryResponse(scan, err), result
