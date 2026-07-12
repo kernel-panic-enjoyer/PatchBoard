@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:20:00+02:00 [CODE] Completed self-update transaction/rollback slice: replacement now retains `.bak` until the restarted executable acknowledges a private, bounded startup-health request after local listener initialization. Failure or early exit restores the previous executable atomically, retains the failed candidate as `.failed`, records the result, and attempts to restart the restored executable. Tests cover exact health acknowledgement, successful commit, restart failure rollback, and the real staged portable helper under `-race`.
+
 - 2026-07-12T14:02:00+02:00 [CODE] Completed the first self-update handoff slice on `codex/comprehensive-remediation`: a staged helper now receives a bounded versioned request through a current-user ACL'd named pipe, reads its capability from a one-use private manifest rather than command-line arguments, validates the exact parent image/SID/session while retaining that process handle through exit, and acknowledges readiness before the parent may shut down. Replacement hashes and copies from one open handle, transient sharing violations retry before any elevation, and failures persist a bounded private outcome beside the staged helper. The shared elevated-worker pipe now uses overlapped `ConnectNamedPipe` plus cancellation instead of a blocking close race.
 
 - 2026-07-10T21:05:41+02:00 [CODE] `runSelfUpdateApply` now independently requires the target to be the running executable or the known installed PatchBoard executable before any replacement work. Added a Windows regression that rejects unrelated `PatchBoard.exe` paths.
@@ -261,6 +263,8 @@
 - 2026-06-25T18:14:00+02:00 [CODE] `runCommandContext` now collapses its four near-identical code-127 launch-failure blocks into a local `fail127` helper and drops two redundant re-logs of the command line; the distinct empty-command early return is unchanged.
 
 [DISCOVERIES]
+
+- 2026-07-12T14:12:00+02:00 [TOOL] Restart failure previously left a verified replacement without a startup health check or durable rollback decision. The new transaction keeps backup state until an exact executable-hash acknowledgement is received; a simulated restart failure restores the old bytes and preserves the failed replacement for diagnosis.
 
 - 2026-07-12T13:44:00+02:00 [TOOL] `TestStagedSelfUpdateHelperReplacesPortableOriginal` failed on the pinned baseline because the new staged executable rejected the portable original target. A real helper-process regression now passes normally and under `-race`.
 - 2026-07-12T13:49:00+02:00 [TOOL] A readiness-failure regression hung because synchronous `ConnectNamedPipe` could not be safely cancelled by closing its handle from another goroutine. Overlapped connection with `CancelIoEx` returns in about 70 ms in the focused test.

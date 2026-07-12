@@ -159,15 +159,49 @@ func buildSelfUpdateIntegrationHelper(t *testing.T, destination string) {
 	source := `package main
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
+
 	"patchboard/internal/updater"
 )
 
 func main() {
-	if len(os.Args) == 1 {
+	if len(os.Args) > 1 {
+		updater.Main()
 		return
 	}
-	updater.Main()
+	directory := filepath.Join(os.Getenv("UPDATER_TEMP_DIR"), "self-update")
+	entries, _ := os.ReadDir(directory)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "health-") || !strings.HasSuffix(entry.Name(), ".request.json") {
+			continue
+		}
+		payload, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var request map[string]any
+		if json.Unmarshal(payload, &request) != nil {
+			continue
+		}
+		protocolVersion, protocolOK := request["protocol_version"].(float64)
+		requestID, requestOK := request["request_id"].(string)
+		expectedSHA256, hashOK := request["expected_sha256"].(string)
+		if !protocolOK || !requestOK || !hashOK {
+			continue
+		}
+		ack, _ := json.Marshal(map[string]any{
+			"protocol_version": int(protocolVersion),
+			"request_id": requestID,
+			"executable_sha256": expectedSHA256,
+			"acknowledged_at": "2026-07-12T12:00:00Z",
+		})
+		ackPath := strings.TrimSuffix(filepath.Join(directory, entry.Name()), ".request.json") + ".ack.json"
+		_ = os.WriteFile(ackPath, ack, 0600)
+		return
+	}
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {

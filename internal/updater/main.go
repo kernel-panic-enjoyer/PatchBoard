@@ -380,6 +380,9 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 	mux.HandleFunc("/", app.serveHTTP)
 	server := newLocalHTTPServer(listener.Addr().String(), mux)
 	app.server = server
+	if err := acknowledgePendingSelfUpdateHealth(); err != nil {
+		appLog("Could not acknowledge self-update startup health: %s.", err)
+	}
 	app.refreshStatus(true)
 	app.refreshInventory(true)
 

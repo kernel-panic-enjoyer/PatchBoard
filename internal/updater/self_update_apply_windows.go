@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,15 @@ const (
 	selfUpdateHelperShutdownTimeout    = 5 * time.Second
 	selfUpdateReplacementRetryTimeout  = 10 * time.Second
 	selfUpdateReplacementRetryInterval = 100 * time.Millisecond
+	selfUpdateProcessStillActive       = 259
 )
+
+type selfUpdateRestartedProcess struct {
+	handle           windows.Handle
+	representsTarget bool
+}
+
+type selfUpdateRestartFunc func(string) (selfUpdateRestartedProcess, error)
 
 func launchSelfUpdateApply(ctx context.Context, artifact selfUpdateArtifact, targetPath string) error {
 	if err := ctx.Err(); err != nil {
@@ -274,14 +283,138 @@ func runAuthorizedSelfUpdateApply(request selfUpdateApplyRequest, parentHandle w
 			return err
 		}
 	}
+	return applySelfUpdateReplacementTransaction(request)
+}
+
+func applySelfUpdateReplacementTransaction(request selfUpdateApplyRequest) error {
+	return applySelfUpdateReplacementTransactionWithRestart(request, restartSelfUpdatedApp)
+}
+
+func applySelfUpdateReplacementTransactionWithRestart(request selfUpdateApplyRequest, restart selfUpdateRestartFunc) error {
+	if restart == nil {
+		return errors.New("self-update restart function is required")
+	}
 	if err := replaceSelfUpdateExecutableWithRetry(request); err != nil {
 		if !request.Elevated && isSelfUpdatePermissionError(err) {
 			return relaunchSelfUpdateApplyElevated(request)
 		}
 		return err
 	}
+	if !request.Restart {
+		return nil
+	}
+	healthRequest, healthRequestPath, healthAckPath, err := createSelfUpdateStartupHealthRequest(request)
+	if err != nil {
+		return rollbackSelfUpdateAfterStartupFailure(request, restart, "create startup health request", err)
+	}
+	defer os.Remove(healthRequestPath)
+	defer os.Remove(healthAckPath)
+	restartedProcess, err := restart(request.TargetPath)
+	if err != nil {
+		return rollbackSelfUpdateAfterStartupFailure(request, restart, "restart updated application", err)
+	}
+	defer restartedProcess.Close()
+	if err := waitForSelfUpdateStartupHealth(healthRequest, healthAckPath, restartedProcess); err != nil {
+		if restartedProcess.representsTarget {
+			terminateSelfUpdateHelper(elevatedWorkerProcess{handle: restartedProcess.handle})
+		}
+		return rollbackSelfUpdateAfterStartupFailure(request, restart, "verify restarted application", err)
+	}
+	if err := os.Remove(request.TargetPath + ".bak"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove verified self-update backup: %w", err)
+	}
+	return nil
+}
+
+func (process selfUpdateRestartedProcess) Close() {
+	if process.handle != 0 {
+		_ = windows.CloseHandle(process.handle)
+	}
+}
+
+func waitForSelfUpdateStartupHealth(healthRequest selfUpdateStartupHealthRequest, healthAckPath string, restartedProcess selfUpdateRestartedProcess) error {
+	deadline := time.UnixMilli(healthRequest.DeadlineUnixMS)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ack, err := readSelfUpdateStartupHealthAck(healthAckPath); err == nil {
+			return validateSelfUpdateStartupHealthAck(healthRequest, ack)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read self-update startup health acknowledgement: %w", err)
+		}
+		if restartedProcess.representsTarget && restartedProcess.handle != 0 {
+			var exitCode uint32
+			if err := windows.GetExitCodeProcess(restartedProcess.handle, &exitCode); err != nil {
+				return fmt.Errorf("query restarted application state: %w", err)
+			}
+			if exitCode != selfUpdateProcessStillActive {
+				return fmt.Errorf("restarted application exited with code %d before startup health acknowledgement", exitCode)
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return errors.New("timed out waiting for restarted application startup health acknowledgement")
+		}
+		<-ticker.C
+	}
+}
+
+func rollbackSelfUpdateAfterStartupFailure(request selfUpdateApplyRequest, restart selfUpdateRestartFunc, phase string, cause error) error {
+	if restoreErr := restoreSelfUpdateBackup(request.TargetPath); restoreErr != nil {
+		return fmt.Errorf("self-update %s failed: %w; rollback failed: %v", phase, cause, restoreErr)
+	}
 	if request.Restart {
-		return restartSelfUpdatedApp(request.TargetPath)
+		if restoredProcess, restartErr := restart(request.TargetPath); restartErr != nil {
+			return fmt.Errorf("self-update %s failed: %w; restored previous executable but could not restart it: %v", phase, cause, restartErr)
+		} else {
+			restoredProcess.Close()
+		}
+	}
+	return fmt.Errorf("self-update %s failed: %w; restored previous executable", phase, cause)
+}
+
+func restoreSelfUpdateBackup(targetPath string) error {
+	backupPath := targetPath + ".bak"
+	backup, err := os.Open(backupPath)
+	if err != nil {
+		return fmt.Errorf("open self-update backup: %w", err)
+	}
+	temp, err := os.CreateTemp(filepath.Dir(targetPath), ".PatchBoard-rollback-*.exe")
+	if err != nil {
+		_ = backup.Close()
+		return err
+	}
+	tempPath := temp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if _, err := io.Copy(temp, backup); err != nil {
+		_ = backup.Close()
+		_ = temp.Close()
+		return err
+	}
+	if err := backup.Close(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tempPath, 0o755); err != nil {
+		return err
+	}
+	if err := replaceFileKeepingBackup(tempPath, targetPath, targetPath+".failed"); err != nil {
+		return err
+	}
+	cleanup = false
+	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
@@ -449,15 +582,23 @@ func relaunchSelfUpdateApplyElevated(request selfUpdateApplyRequest) error {
 	return launchSelfUpdateApplyHelper(context.Background(), executablePath, request, true)
 }
 
-func restartSelfUpdatedApp(targetPath string) error {
+func restartSelfUpdatedApp(targetPath string) (selfUpdateRestartedProcess, error) {
 	if isAdmin() {
 		command := exec.Command("explorer.exe", targetPath)
 		command.SysProcAttr = hiddenSysProcAttr()
-		return command.Start()
+		if err := command.Start(); err != nil {
+			return selfUpdateRestartedProcess{}, err
+		}
+		if err := command.Process.Release(); err != nil {
+			return selfUpdateRestartedProcess{}, err
+		}
+		return selfUpdateRestartedProcess{}, nil
 	}
-	command := exec.Command(targetPath)
-	command.SysProcAttr = hiddenSysProcAttr()
-	return command.Start()
+	process, err := launchSelfUpdateApplyProcess(targetPath, nil)
+	if err != nil {
+		return selfUpdateRestartedProcess{}, err
+	}
+	return selfUpdateRestartedProcess{handle: process.handle, representsTarget: true}, nil
 }
 
 func isSelfUpdatePermissionError(err error) bool {
