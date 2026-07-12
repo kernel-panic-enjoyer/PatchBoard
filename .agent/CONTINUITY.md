@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T13:37:00+02:00 [CODE] Completed PR-03 typed command policy migration. `CommandSpec` declares read-only versus package-mutation execution and rejects mismatches against the existing command classifier. Manager detection, WinGet/Chocolatey inventory, Store catalog providers, and default package actions now use explicit policies; the compatibility wrapper remains only for unreviewed non-package callers.
+
 - 2026-07-12T13:22:00+02:00 [CODE] Completed PR-02 cancellation bounds: process exit after cancellation and output/worker-pipe drains now use explicit deadlines and typed lifecycle timeout errors. Timed-out pipe drains are closed, retained output is synchronized for safe result construction, and Store inventory/discovery workers no longer perform unbounded post-cancellation receives.
 
 - 2026-07-12T13:11:00+02:00 [CODE] Completed PR-01 process ownership: mutable command and killable WinRT worker children now start suspended, are assigned to a kill-on-close Job Object, then resumed. UAC workers are assigned immediately after `ShellExecuteEx` returns; they remain inert until an authenticated pipe request. A Windows regression proves suspended payloads do not run before assignment.

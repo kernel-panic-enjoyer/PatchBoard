@@ -114,7 +114,7 @@ func (provider wingetMSStoreExactCatalogProvider) run(ctx context.Context, timeo
 	if provider.Run != nil {
 		return provider.Run(ctx, timeout, args...)
 	}
-	return runCommandContext(ctx, timeout, args...)
+	return runReadOnlyCommand(ctx, timeout, args...)
 }
 
 func (provider wingetMSStoreExactCatalogProvider) now() time.Time {
@@ -164,7 +164,7 @@ func (provider wingetMSStoreExactCatalogQueryProvider) run(ctx context.Context, 
 	if provider.Run != nil {
 		return provider.Run(ctx, timeout, args...)
 	}
-	return runCommandContext(ctx, timeout, args...)
+	return runReadOnlyCommand(ctx, timeout, args...)
 }
 
 func wingetExactProductIDQueryIndicatesNoOffer(output string) bool {

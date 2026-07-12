@@ -16,6 +16,26 @@ const (
 	commandLaunchFailureCode = 127
 )
 
+type commandOperation uint8
+
+const (
+	// commandOperationAuto preserves compatibility for call sites that have not
+	// yet declared their command policy. The command classifier remains the
+	// source of truth until those call sites migrate.
+	commandOperationAuto commandOperation = iota
+	commandOperationReadOnly
+	commandOperationPackageMutation
+)
+
+// CommandSpec makes timeout and package-operation policy explicit at command
+// call sites. A read-only declaration is validated against the command
+// classifier so a provider cannot accidentally bypass mutation ownership.
+type CommandSpec struct {
+	Arguments []string
+	Timeout   time.Duration
+	Operation commandOperation
+}
+
 type CommandResult struct {
 	OK      bool   `json:"ok"`
 	Code    int    `json:"code"`
@@ -33,7 +53,39 @@ func runCommand(timeout time.Duration, args ...string) CommandResult {
 }
 
 func runCommandContext(parentCtx context.Context, timeout time.Duration, args ...string) CommandResult {
+	return runCommandSpec(parentCtx, CommandSpec{
+		Arguments: args,
+		Timeout:   timeout,
+		Operation: commandOperationAuto,
+	})
+}
+
+func runReadOnlyCommand(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+	return runCommandSpec(ctx, CommandSpec{
+		Arguments: args,
+		Timeout:   timeout,
+		Operation: commandOperationReadOnly,
+	})
+}
+
+func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
+	args := spec.Arguments
+	timeout := spec.Timeout
 	result := CommandResult{Command: strings.Join(args, " ")}
+	packageMutation := isPackageManagerMutationCommand(args)
+	switch spec.Operation {
+	case commandOperationAuto:
+	case commandOperationReadOnly:
+		if packageMutation {
+			return validationCommandResult(result.Command, fmt.Errorf("read-only command spec cannot run package mutation: %s", result.Command))
+		}
+	case commandOperationPackageMutation:
+		if !packageMutation {
+			return validationCommandResult(result.Command, fmt.Errorf("package-mutation command spec requires a recognized package mutation: %s", result.Command))
+		}
+	default:
+		return validationCommandResult(result.Command, fmt.Errorf("unsupported command operation %d", spec.Operation))
+	}
 	logCategories := logCategoriesForCommand(args)
 	commandLogCtx := withLogMetadata(parentCtx, logMetadata{CommandID: nextCommandLogID()})
 	logCommand := func(stream, message string) {
@@ -61,7 +113,7 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 
 	startedAt := time.Now()
 	logCommand("command", result.Command)
-	if isPackageManagerMutationCommand(args) {
+	if packageMutation {
 		releasePackageOperation, err := defaultPackageMutationCoordinator.Acquire(commandCtx, func() {
 			logCommand("app", "Waiting for another package operation before running "+result.Command)
 		})
@@ -70,7 +122,7 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 		}
 		defer releasePackageOperation()
 	}
-	if shouldAcquireWingetCommandLock(args) {
+	if isWingetCommand(args) && packageMutation {
 		if !lockMutexContextWithWait(commandCtx, &wingetCommandMu, func() {
 			logCommand("app", "Waiting for another winget mutation to finish before running "+result.Command)
 		}) {
@@ -79,7 +131,7 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 		defer wingetCommandMu.Unlock()
 	}
 
-	processOwner, err := newCommandProcessOwner(shouldOwnCommandProcessTree(args))
+	processOwner, err := newCommandProcessOwner(packageMutation)
 	if err != nil {
 		return launchFailureResult(err.Error())
 	}

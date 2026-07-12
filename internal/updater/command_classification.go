@@ -47,10 +47,6 @@ func hasCmdRunPrefix(executableName string, args []string, minArgs int) bool {
 		strings.EqualFold(args[2], commandProcessorRunCommandFlag)
 }
 
-func shouldOwnCommandProcessTree(args []string) bool {
-	return isPackageManagerMutationCommand(args)
-}
-
 func packageManagerCommandVerb(args []string) (string, string) {
 	manager, verb, _ := packageManagerCommandParts(args)
 	return manager, verb

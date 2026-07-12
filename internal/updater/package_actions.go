@@ -17,7 +17,13 @@ const (
 	packageActionTimeout = 20 * time.Minute
 )
 
-var packageActionCommandRunner = runCommandContext
+var packageActionCommandRunner = func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
+	return runCommandSpec(ctx, CommandSpec{
+		Arguments: args,
+		Timeout:   timeout,
+		Operation: commandOperationPackageMutation,
+	})
+}
 var packageActionManagerAvailable = func(packageManager string) bool {
 	return detectManager(packageManager).Available
 }

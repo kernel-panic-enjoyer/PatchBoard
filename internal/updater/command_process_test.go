@@ -55,3 +55,25 @@ func TestWaitForOutputDrainTimesOutAndClosesPipes(t *testing.T) {
 	}
 	close(drainDone)
 }
+
+func TestReadOnlyCommandSpecRejectsPackageMutation(t *testing.T) {
+	result := runCommandSpec(context.Background(), CommandSpec{
+		Arguments: []string{"winget", "upgrade", "--id", "Git.Git", "--exact"},
+		Timeout:   time.Second,
+		Operation: commandOperationReadOnly,
+	})
+	if result.Code != 2 || result.OK || result.Stderr == "" {
+		t.Fatalf("read-only spec must reject a package mutation: %#v", result)
+	}
+}
+
+func TestPackageMutationCommandSpecRejectsReadOnlyCommand(t *testing.T) {
+	result := runCommandSpec(context.Background(), CommandSpec{
+		Arguments: []string{"winget", "list"},
+		Timeout:   time.Second,
+		Operation: commandOperationPackageMutation,
+	})
+	if result.Code != 2 || result.OK || result.Stderr == "" {
+		t.Fatalf("package-mutation spec must reject a read-only command: %#v", result)
+	}
+}

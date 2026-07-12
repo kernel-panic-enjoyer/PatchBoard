@@ -48,12 +48,12 @@ func parseChocoOutdated(output string) map[string]string {
 }
 
 func chocoInstalledContext(ctx context.Context) ([]Package, CommandResult) {
-	result := runCommandContext(ctx, 90*time.Second, managerCommand(managerChoco, "list", "--local-only", "--limit-output", "--no-color")...)
+	result := runReadOnlyCommand(ctx, 90*time.Second, managerCommand(managerChoco, "list", "--local-only", "--limit-output", "--no-color")...)
 	return parseChocoList(chocoCombinedOutput(result)), result
 }
 
 func chocoUpdatesContext(ctx context.Context) (map[string]string, map[string]Package, CommandResult) {
-	result := runCommandContext(ctx, 120*time.Second, managerCommand(managerChoco, "outdated", "--limit-output", "--no-color")...)
+	result := runReadOnlyCommand(ctx, 120*time.Second, managerCommand(managerChoco, "outdated", "--limit-output", "--no-color")...)
 	return parseChocoOutdated(chocoCombinedOutput(result)), nil, result
 }
 

@@ -447,14 +447,14 @@ func (provider storeCLIExactCatalogProvider) run(ctx context.Context, timeout ti
 	if provider.Run != nil {
 		return provider.Run(ctx, timeout, args...)
 	}
-	return runCommandContext(ctx, timeout, args...)
+	return runReadOnlyCommand(ctx, timeout, args...)
 }
 
 func (provider storeCLIUpdatesCatalogProvider) run(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
 	if provider.Run != nil {
 		return provider.Run(ctx, timeout, args...)
 	}
-	return runCommandContext(ctx, timeout, args...)
+	return runReadOnlyCommand(ctx, timeout, args...)
 }
 
 func (provider storeCLIExactCatalogProvider) now() time.Time {

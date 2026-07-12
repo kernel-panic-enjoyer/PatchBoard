@@ -42,7 +42,7 @@ func detectManagerContext(ctx context.Context, manager string) ManagerStatus {
 	if manager == managerStore {
 		return detectStoreCLIManagerContext(ctx)
 	}
-	result := runCommandContext(ctx, managerDetectionTimeout, managerCommand(manager, "--version")...)
+	result := runReadOnlyCommand(ctx, managerDetectionTimeout, managerCommand(manager, "--version")...)
 	if manager == managerWinget && isWingetTransientFailure(result) {
 		appLog("Winget version detection failed with transient code %d; retrying once.", result.Code)
 		timer := time.NewTimer(wingetDetectionRetryGap)
@@ -51,7 +51,7 @@ func detectManagerContext(ctx context.Context, manager string) ManagerStatus {
 			timer.Stop()
 			result = CommandResult{Command: "detect " + manager, Code: commandCancelledCode, Stderr: ctx.Err().Error()}
 		case <-timer.C:
-			result = runCommandContext(ctx, managerDetectionTimeout, managerCommand(manager, "--version")...)
+			result = runReadOnlyCommand(ctx, managerDetectionTimeout, managerCommand(manager, "--version")...)
 		}
 	}
 	output := strings.TrimSpace(result.Stdout)
@@ -70,7 +70,7 @@ func detectManagerContext(ctx context.Context, manager string) ManagerStatus {
 }
 
 func detectStoreCLIManagerContext(ctx context.Context) ManagerStatus {
-	result := runCommandContext(ctx, managerDetectionTimeout, managerCommand(managerStore, "--help")...)
+	result := runReadOnlyCommand(ctx, managerDetectionTimeout, managerCommand(managerStore, "--help")...)
 	status := ManagerStatus{
 		Available: result.OK,
 		Path:      resolveExecutable(managerStore),
