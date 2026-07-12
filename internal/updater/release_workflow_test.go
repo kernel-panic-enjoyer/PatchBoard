@@ -2,6 +2,8 @@ package updater
 
 import (
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,6 +27,35 @@ func TestReleaseWorkflowBuildsAndPublishesWindowsExecutable(t *testing.T) {
 	} {
 		if !strings.Contains(workflow, expected) {
 			t.Fatalf("release workflow missing %q", expected)
+		}
+	}
+}
+
+func TestWorkflowsPinActionsToCommitSHAs(t *testing.T) {
+	workflowPaths, err := filepath.Glob("../../.github/workflows/*.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitSHA := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	for _, workflowPath := range workflowPaths {
+		workflowData, readErr := os.ReadFile(workflowPath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		for _, line := range strings.Split(string(workflowData), "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "uses: ") {
+				continue
+			}
+			actionRef := strings.TrimSpace(strings.TrimPrefix(line, "uses: "))
+			_, revision, found := strings.Cut(actionRef, "@")
+			if !found {
+				t.Fatalf("workflow action is missing a revision: %s", line)
+			}
+			revision = strings.TrimSpace(strings.SplitN(revision, "#", 2)[0])
+			if !commitSHA.MatchString(revision) {
+				t.Fatalf("workflow action must use a 40-character commit SHA, got %q in %s", revision, workflowPath)
+			}
 		}
 	}
 }

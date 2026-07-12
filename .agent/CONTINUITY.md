@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:42:00+02:00 [CODE] CI hardening is partially advanced: every GitHub Actions workflow now pins each action reference to the immutable commit resolved from its declared release tag, with a static regression enforcing 40-character SHA revisions. CI-04 remains open for deterministic MSYS2 package acquisition and dependency automation.
+
 - 2026-07-12T14:29:00+02:00 [CODE] Completed IN-01 inventory generation ownership. A superseded synchronous refresh now returns a deep copy of the current authoritative cache instead of its obsolete local result; asynchronous publication and cancellation behavior already guarded cache ownership. Focused Windows race coverage passed.
 
 - 2026-07-12T14:18:00+02:00 [CODE] Completed ST-01 StateStore recovery: `Load` now recovers and restores `state.json` from a valid `state.json.bak` when the primary is missing as well as corrupt. Defaults are used silently only when both files are absent; otherwise failure retains explicit provenance in the returned error and Session Log.
