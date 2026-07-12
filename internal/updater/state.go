@@ -209,19 +209,23 @@ func (store *FileStateStore) loadLocked(ctx context.Context, stateDirectory stri
 	if err == nil {
 		return state, nil
 	}
-	if !os.IsNotExist(err) {
-		recoveredState, recoveredData, backupLoadErr := readStateFile(backupPath)
-		if backupLoadErr == nil {
+	recoveredState, recoveredData, backupLoadErr := readStateFile(backupPath)
+	if backupLoadErr == nil {
+		if errors.Is(err, os.ErrNotExist) {
+			appLog("Recovered missing state.json from backup.")
+		} else {
 			appLog("Recovered state.json from backup after primary load failed: %s.", err)
-			if restoreErr := store.writeBytesLocked(ctx, stateDirectory, recoveredData, "state-recover-", "state.json.corrupt"); restoreErr != nil {
-				appLog("Could not restore recovered state backup to state.json: %s.", restoreErr)
-			}
-			return recoveredState, nil
 		}
-		appLog("State primary and backup could not be loaded; using defaults. primary=%s backup=%s.", err, backupLoadErr)
-		return defaultState(), fmt.Errorf("state primary and backup could not be loaded: primary=%w backup=%v", err, backupLoadErr)
+		if restoreErr := store.writeBytesLocked(ctx, stateDirectory, recoveredData, "state-recover-", "state.json.corrupt"); restoreErr != nil {
+			appLog("Could not restore recovered state backup to state.json: %s.", restoreErr)
+		}
+		return recoveredState, nil
 	}
-	return defaultState(), nil
+	if errors.Is(err, os.ErrNotExist) && errors.Is(backupLoadErr, os.ErrNotExist) {
+		return defaultState(), nil
+	}
+	appLog("State primary and backup could not be loaded; using defaults. primary=%s backup=%s.", err, backupLoadErr)
+	return defaultState(), fmt.Errorf("state primary and backup could not be loaded: primary=%w backup=%v", err, backupLoadErr)
 }
 
 func readStateFile(statePath string) (State, []byte, error) {

@@ -245,6 +245,34 @@ func TestStateStoreCorruptPrimaryRecoversBackup(t *testing.T) {
 	}
 }
 
+func TestStateStoreMissingPrimaryRecoversBackup(t *testing.T) {
+	store := newTestFileStateStore(t)
+	first := defaultState()
+	first.Theme = "dark"
+	if err := saveStateToStore(t, store, first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.Theme = "light"
+	if err := saveStateToStore(t, store, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(store.dir, "state.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Theme != "dark" {
+		t.Fatalf("missing primary did not recover last-known-good backup: %#v", loaded)
+	}
+	if _, err := os.Stat(filepath.Join(store.dir, "state.json")); err != nil {
+		t.Fatalf("recovered primary was not restored: %v", err)
+	}
+}
+
 func TestStateStoreUpdateKeepsCanonicalAutoUpdatePackageKeys(t *testing.T) {
 	store := newTestFileStateStore(t)
 	defer stubAutoUpdateTaskRunners()()
