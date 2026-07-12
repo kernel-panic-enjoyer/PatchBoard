@@ -116,9 +116,10 @@ func (app *App) refreshInventorySyncContext(ctx context.Context, reason string) 
 	}
 	app.inventoryService.mu.Lock()
 	if refreshGeneration != app.inventoryService.refreshGeneration {
+		authoritativeInventory := app.inventoryService.cache.DeepCopy()
 		app.inventoryService.mu.Unlock()
 		appLog("Discarded stale synchronous inventory refresh result for %s.", reason)
-		return refreshedInventory
+		return authoritativeInventory
 	}
 	refreshedInventory = preserveExplicitUpdateCandidatesFromDegradedRefresh(app.inventoryService.cache, refreshedInventory)
 	app.inventoryService.cache = refreshedInventory.DeepCopy()

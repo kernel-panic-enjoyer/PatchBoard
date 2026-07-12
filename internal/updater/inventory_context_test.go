@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -99,6 +100,48 @@ func TestQueuedInventoryRefreshCancelledDuringShutdown(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(app.inventoryService.err), "cancel") {
 		t.Fatalf("shutdown cancellation did not expose cancellation error: %q", app.inventoryService.err)
+	}
+}
+
+func TestSynchronousInventoryRefreshReturnsAuthoritativeCacheWhenSuperseded(t *testing.T) {
+	oldGetter := inventoryGetter
+	defer func() { inventoryGetter = oldGetter }()
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	inventoryGetter = func(context.Context) Inventory {
+		if calls.Add(1) == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:old", Manager: managerWinget, ID: "old"}}}}
+		}
+		return Inventory{PackageLookup: PackageLookup{Packages: []Package{{Key: "winget:new", Manager: managerWinget, ID: "new"}}}}
+	}
+
+	app := &App{}
+	firstResult := make(chan Inventory, 1)
+	go func() {
+		firstResult <- app.refreshInventorySync("first")
+	}()
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not start")
+	}
+	secondResult := app.refreshInventorySync("second")
+	close(releaseFirst)
+
+	var supersededResult Inventory
+	select {
+	case supersededResult = <-firstResult:
+	case <-time.After(time.Second):
+		t.Fatal("superseded refresh did not finish")
+	}
+	for name, inventory := range map[string]Inventory{"second": secondResult, "superseded": supersededResult} {
+		if len(inventory.Packages) != 1 || inventory.Packages[0].Key != "winget:new" {
+			t.Fatalf("%s refresh returned non-authoritative inventory: %#v", name, inventory.Packages)
+		}
 	}
 }
 

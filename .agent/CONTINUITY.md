@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:29:00+02:00 [CODE] Completed IN-01 inventory generation ownership. A superseded synchronous refresh now returns a deep copy of the current authoritative cache instead of its obsolete local result; asynchronous publication and cancellation behavior already guarded cache ownership. Focused Windows race coverage passed.
+
 - 2026-07-12T14:18:00+02:00 [CODE] Completed ST-01 StateStore recovery: `Load` now recovers and restores `state.json` from a valid `state.json.bak` when the primary is missing as well as corrupt. Defaults are used silently only when both files are absent; otherwise failure retains explicit provenance in the returned error and Session Log.
 
 - 2026-07-12T14:05:00+02:00 [CODE] Completed PR-05 lifecycle diagnostics. Command-scoped Session Log entries now record bounded process ID and Job Object ownership at launch, plus cancellation and termination requests before the existing terminal exit entry. The output is correlation metadata only and does not add command output or secrets.
