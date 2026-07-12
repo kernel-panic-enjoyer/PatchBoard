@@ -3,6 +3,7 @@ package updater
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -12,6 +13,7 @@ import (
 const commandResultStreamLimitBytes = 2 * 1024 * 1024
 
 type boundedCommandOutputTail struct {
+	mu            sync.Mutex
 	limitBytes    int
 	retainedBytes []byte
 	omittedBytes  int64
@@ -22,6 +24,9 @@ func newBoundedOutputTail(limitBytes int) *boundedCommandOutputTail {
 }
 
 func (tail *boundedCommandOutputTail) Write(chunk []byte) (int, error) {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+
 	chunkLen := len(chunk)
 	if chunkLen == 0 {
 		return 0, nil
@@ -46,11 +51,16 @@ func (tail *boundedCommandOutputTail) Write(chunk []byte) (int, error) {
 }
 
 func (tail *boundedCommandOutputTail) String() string {
-	retainedText := validUTF8TailString([]byte(decodeCommandOutputBytes(tail.retainedBytes)))
-	if tail.omittedBytes == 0 {
+	tail.mu.Lock()
+	retainedBytes := append([]byte(nil), tail.retainedBytes...)
+	omittedBytes := tail.omittedBytes
+	tail.mu.Unlock()
+
+	retainedText := validUTF8TailString([]byte(decodeCommandOutputBytes(retainedBytes)))
+	if omittedBytes == 0 {
 		return retainedText
 	}
-	truncationNotice := fmt.Sprintf("[output truncated: omitted %d bytes]\n", tail.omittedBytes)
+	truncationNotice := fmt.Sprintf("[output truncated: omitted %d bytes]\n", omittedBytes)
 	return truncationNotice + retainedText
 }
 

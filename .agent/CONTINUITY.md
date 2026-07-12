@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T13:22:00+02:00 [CODE] Completed PR-02 cancellation bounds: process exit after cancellation and output/worker-pipe drains now use explicit deadlines and typed lifecycle timeout errors. Timed-out pipe drains are closed, retained output is synchronized for safe result construction, and Store inventory/discovery workers no longer perform unbounded post-cancellation receives.
+
 - 2026-07-12T13:11:00+02:00 [CODE] Completed PR-01 process ownership: mutable command and killable WinRT worker children now start suspended, are assigned to a kill-on-close Job Object, then resumed. UAC workers are assigned immediately after `ShellExecuteEx` returns; they remain inert until an authenticated pipe request. A Windows regression proves suspended payloads do not run before assignment.
 
 - 2026-07-12T14:42:00+02:00 [CODE] Self-update release admission now requires a detached Ed25519 signature asset over the exact metadata bytes and executable digest, validated against a rotation-capable public-key list embedded at build time. Metadata additionally requires signing key ID, host/redirect policy rejects untrusted or non-HTTPS production download origins, and downloaded releases must be matching stripped Windows PE binaries for the running architecture. The release workflow now checks out the dispatch revision and refuses publication without protected key material; SBOM/provenance attestation remains in the CI hardening phase.

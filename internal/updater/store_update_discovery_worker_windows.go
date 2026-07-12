@@ -158,10 +158,26 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 		close(stderrDone)
 	}()
 
+	type workerIOResult struct {
+		writeErr    error
+		stdoutBytes []byte
+	}
+	workerIODone := make(chan workerIOResult, 1)
+	go func() {
+		workerIO := workerIOResult{
+			writeErr:    <-writeDone,
+			stdoutBytes: <-stdoutDone,
+		}
+		<-stderrDone
+		workerIODone <- workerIO
+	}()
+
 	waitErr := waitForStartedCommand(ctx, cmd, owner)
-	<-writeDone
-	stdoutBytes := <-stdoutDone
-	<-stderrDone
+	workerIO, workerIOErr := waitForCommandChannel(workerIODone, func() {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+	}, ctx.Err(), commandOutputDrainTimeout)
 	result.Stderr = stderrTail.String()
 	if ctx.Err() == context.DeadlineExceeded {
 		err := errors.New("Store update discovery worker timed out and was terminated")
@@ -175,6 +191,17 @@ func (provider storeUpdateDiscoveryWorkerProvider) Discover(ctx context.Context,
 		result.Stderr = appendDiagnostic(result.Stderr, err.Error())
 		return incompleteStoreUpdateDiscoveryResponse(scan, err), result
 	}
+	if workerIOErr != nil {
+		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
+		result.Stderr = appendDiagnostic(result.Stderr, workerIOErr.Error())
+		return incompleteStoreUpdateDiscoveryResponse(scan, workerIOErr), result
+	}
+	if workerIO.writeErr != nil {
+		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
+		result.Stderr = appendDiagnostic(result.Stderr, workerIO.writeErr.Error())
+		return incompleteStoreUpdateDiscoveryResponse(scan, workerIO.writeErr), result
+	}
+	stdoutBytes := workerIO.stdoutBytes
 
 	response, parseErr := decodeStoreUpdateDiscoveryWorkerResponse(stdoutBytes)
 	var exitCode int

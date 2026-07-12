@@ -664,7 +664,7 @@ func streamCommandOutputContext(ctx context.Context, reader io.Reader, stream st
 			pendingLine = appendLogChunkContext(ctx, stream, pendingLine, decodedChunk, categories, emitSessionLog)
 		}
 		if readErr != nil {
-			if readErr != io.EOF {
+			if readErr != io.EOF && ctx.Err() == nil {
 				appLogContext(ctx, "Error reading %s stream: %s", stream, readErr)
 			}
 			break

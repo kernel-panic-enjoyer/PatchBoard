@@ -123,8 +123,11 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 	outputReaders.Add(2)
 	go streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", stdoutTail, &outputReaders, logCategories, emitStdoutToSessionLog)
 	go streamCommandOutputContext(commandCtx, stderrPipe, "stderr", stderrTail, &outputReaders, logCategories, true)
-	err = waitForStartedCommand(commandCtx, commandProcess, processOwner)
-	outputReaders.Wait()
+	commandExitErr := waitForStartedCommand(commandCtx, commandProcess, processOwner)
+	outputDrainErr := waitForCommandOutputReaders(&outputReaders, func() {
+		_ = stdoutPipe.Close()
+		_ = stderrPipe.Close()
+	}, commandCtx.Err())
 
 	result.Stdout = stdoutTail.String()
 	result.Stderr = stderrTail.String()
@@ -137,6 +140,11 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 	if commandCtx.Err() == context.DeadlineExceeded {
 		result.Code = commandTimeoutCode
 		result.Stderr += "\nTimed out."
+		for _, err := range []error{commandExitErr, outputDrainErr} {
+			if err != nil {
+				result.Stderr = appendDiagnostic(result.Stderr, err.Error())
+			}
+		}
 		logCommand("stderr", "Timed out.")
 		logDetectionSummaryIfStdoutSuppressed()
 		logCommand("exit", fmt.Sprintf("%s exited with code %d", result.Command, commandTimeoutCode))
@@ -145,19 +153,30 @@ func runCommandContext(parentCtx context.Context, timeout time.Duration, args ..
 	if commandCtx.Err() == context.Canceled {
 		result.Code = commandCancelledCode
 		result.Stderr += "\nCancelled."
+		for _, err := range []error{commandExitErr, outputDrainErr} {
+			if err != nil {
+				result.Stderr = appendDiagnostic(result.Stderr, err.Error())
+			}
+		}
 		logCommand("stderr", "Cancelled.")
 		logDetectionSummaryIfStdoutSuppressed()
 		logCommand("exit", fmt.Sprintf("%s cancelled with code %d", result.Command, result.Code))
 		return result
 	}
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if commandExitErr != nil || outputDrainErr != nil {
+		if exitErr, ok := commandExitErr.(*exec.ExitError); ok {
 			result.Code = exitErr.ExitCode()
-		} else {
+		} else if commandExitErr != nil {
 			result.Code = commandLaunchFailureCode
 			if result.Stderr == "" {
-				result.Stderr = err.Error()
+				result.Stderr = commandExitErr.Error()
 			}
+		}
+		if outputDrainErr != nil {
+			if commandExitErr == nil {
+				result.Code = commandLaunchFailureCode
+			}
+			result.Stderr = appendDiagnostic(result.Stderr, outputDrainErr.Error())
 		}
 		logDetectionSummaryIfStdoutSuppressed()
 		logCommand("exit", fmt.Sprintf("%s exited with code %d", result.Command, result.Code))

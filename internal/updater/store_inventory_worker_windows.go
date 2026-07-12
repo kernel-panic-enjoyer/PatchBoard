@@ -162,10 +162,26 @@ func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan
 		close(stderrDone)
 	}()
 
+	type workerIOResult struct {
+		writeErr    error
+		stdoutBytes []byte
+	}
+	workerIODone := make(chan workerIOResult, 1)
+	go func() {
+		workerIO := workerIOResult{
+			writeErr:    <-writeDone,
+			stdoutBytes: <-stdoutDone,
+		}
+		<-stderrDone
+		workerIODone <- workerIO
+	}()
+
 	waitErr := waitForStartedCommand(ctx, cmd, owner)
-	<-writeDone
-	stdoutBytes := <-stdoutDone
-	<-stderrDone
+	workerIO, workerIOErr := waitForCommandChannel(workerIODone, func() {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
+	}, ctx.Err(), commandOutputDrainTimeout)
 	result.Stderr = stderrTail.String()
 	if ctx.Err() == context.DeadlineExceeded {
 		err := errors.New("Store inventory worker timed out and was terminated")
@@ -179,6 +195,17 @@ func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan
 		result.Stderr = appendDiagnostic(result.Stderr, err.Error())
 		return incompleteStorePackagedInventory(scan, err), result
 	}
+	if workerIOErr != nil {
+		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
+		result.Stderr = appendDiagnostic(result.Stderr, workerIOErr.Error())
+		return incompleteStorePackagedInventory(scan, workerIOErr), result
+	}
+	if workerIO.writeErr != nil {
+		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
+		result.Stderr = appendDiagnostic(result.Stderr, workerIO.writeErr.Error())
+		return incompleteStorePackagedInventory(scan, workerIO.writeErr), result
+	}
+	stdoutBytes := workerIO.stdoutBytes
 
 	response, parseErr := decodeStoreInventoryWorkerResponse(stdoutBytes)
 	var exitCode int
