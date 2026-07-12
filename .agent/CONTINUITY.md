@@ -1,5 +1,7 @@
 [PLANS]
 
+- 2026-07-12T12:16:08+02:00 [USER] Active objective: comprehensively remediate the pinned PatchBoard revision `36c6f471cb3e7f8ae465346cee04acc1bd441cc6` across self-update trust/rollback, Windows process ownership, state recovery, inventory/jobs, package identities, HTTP contracts, architecture, frontend, CI/release, and documentation. Work is isolated on `codex/comprehensive-remediation`; remote writes and releases are forbidden unless separately authorized.
+
 - 2026-07-10T21:45:51+02:00 [USER] Active objective completed locally: resolve the standard-library vulnerability gate exposed after the Windows test repair by requiring Go 1.26.5 in both modules, then republish and monitor `main`.
 - 2026-07-10T21:35:36+02:00 [USER] Active objective completed locally: fix the failing Windows CI assertions, validate the full Windows build/test path, and publish the focused repair to `main`.
 - 2026-07-10T21:05:41+02:00 [CODE] Self-update apply target authorization is tightened at the production apply entrypoint; the next architecture slice remains to be selected from the remaining hardening recommendations.
@@ -86,6 +88,8 @@
 - 2026-06-28T18:43:24+02:00 [USER] Active objective: license the repository under GPLv3 using `GPL-3.0-only`.
 
 [DECISIONS]
+
+- 2026-07-12T12:16:08+02:00 [CODE] The remediation will proceed in reviewable fail-first slices tracked in `docs/reports/comprehensive-remediation-matrix.md`; exact Microsoft Store SID+PFN identity and fresh-exact-target authorization remain non-negotiable, and the final executable will be rebuilt under `dist/`.
 
 - 2026-07-10T15:12:22+02:00 [CODE] Staticcheck `v0.7.0` is pinned as a blocking root/browser/release gate. `staticcheck.conf` inherits upstream defaults and temporarily excludes only `U1000` for compatibility/test-seam retirement and `ST1005` for existing user-facing diagnostic casing; correctness, performance, deprecation, and other default checks remain enabled.
 - 2026-07-09T18:56:02+02:00 [CODE] CI now installs `golang.org/x/vuln/cmd/govulncheck@v1.5.0` into `$RUNNER_TEMP` and runs it as a blocking vulnerability gate for the root module in Windows CI and release builds, and for the browser test module in Browser UI CI. The workflow uses `go install` plus a temp `GOBIN` instead of `go run` to avoid Windows temporary executable cleanup failures.
