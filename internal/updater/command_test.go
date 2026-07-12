@@ -818,6 +818,30 @@ func TestRunCommandContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRunCommandContextCancellationLogsProcessLifecycle(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows command cancellation test")
+	}
+	replaceSessionLogsForTest(t, &LogBuffer{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	result := runCommandContext(ctx, 10*time.Second, "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Start-Sleep -Seconds 5")
+	if result.Code != commandCancelledCode {
+		t.Fatalf("expected cancelled result, got %#v", result)
+	}
+
+	logText := joinLogMessages(sessionLogs.Snapshot())
+	for _, expected := range []string{"Command process started (pid=", "Command cancellation requested", "Command termination requested"} {
+		if !strings.Contains(logText, expected) {
+			t.Fatalf("missing lifecycle log %q in %q", expected, logText)
+		}
+	}
+}
+
 func TestRunCommandContextCancellationWhileWaitingForMutationLock(t *testing.T) {
 	defaultPackageMutationCoordinator.mu.Lock()
 	defer defaultPackageMutationCoordinator.mu.Unlock()

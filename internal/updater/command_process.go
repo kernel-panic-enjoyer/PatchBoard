@@ -57,7 +57,14 @@ func startCommandInJobObject(command *exec.Cmd, processOwner *commandProcessOwne
 }
 
 func waitForStartedCommand(ctx context.Context, startedCommand *exec.Cmd, processOwner *commandProcessOwner) error {
+	return waitForStartedCommandWithTermination(ctx, startedCommand, processOwner, nil)
+}
+
+func waitForStartedCommandWithTermination(ctx context.Context, startedCommand *exec.Cmd, processOwner *commandProcessOwner, beforeTerminate func()) error {
 	return waitForCommandExitWithTimeout(ctx, startedCommand.Wait, func() {
+		if beforeTerminate != nil {
+			beforeTerminate()
+		}
 		terminateStartedCommand(startedCommand, processOwner)
 	}, commandTerminationWaitTimeout)
 }

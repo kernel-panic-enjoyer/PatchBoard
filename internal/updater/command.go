@@ -170,12 +170,20 @@ func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
 		}
 		return launchFailureResult(err.Error())
 	}
+	processID := 0
+	if commandProcess.Process != nil {
+		processID = commandProcess.Process.Pid
+	}
+	logCommand("app", fmt.Sprintf("Command process started (pid=%d, job_owned=%t).", processID, processOwner != nil))
 	var outputReaders sync.WaitGroup
 	emitStdoutToSessionLog := !suppressCommandStdoutInSessionLog(args)
 	outputReaders.Add(2)
 	go streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", stdoutTail, &outputReaders, logCategories, emitStdoutToSessionLog)
 	go streamCommandOutputContext(commandCtx, stderrPipe, "stderr", stderrTail, &outputReaders, logCategories, true)
-	commandExitErr := waitForStartedCommand(commandCtx, commandProcess, processOwner)
+	commandExitErr := waitForStartedCommandWithTermination(commandCtx, commandProcess, processOwner, func() {
+		logCommand("app", fmt.Sprintf("Command cancellation requested (pid=%d).", processID))
+		logCommand("app", fmt.Sprintf("Command termination requested (pid=%d, job_owned=%t).", processID, processOwner != nil))
+	})
 	outputDrainErr := waitForCommandOutputReaders(&outputReaders, func() {
 		_ = stdoutPipe.Close()
 		_ = stderrPipe.Close()

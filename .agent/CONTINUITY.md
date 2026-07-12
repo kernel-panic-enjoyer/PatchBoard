@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:05:00+02:00 [CODE] Completed PR-05 lifecycle diagnostics. Command-scoped Session Log entries now record bounded process ID and Job Object ownership at launch, plus cancellation and termination requests before the existing terminal exit entry. The output is correlation metadata only and does not add command output or secrets.
+
 - 2026-07-12T13:53:00+02:00 [CODE] Completed PR-04 elevated worker cancellation: the parent now sends the existing authenticated cancel frame, waits a bounded interval for the worker's final response, and force-terminates only if the cancellation protocol fails. The worker consumes the cancel frame concurrently and derives operation contexts from it; cancellation errors map to the normal cancelled/timeout command results.
 
 - 2026-07-12T13:37:00+02:00 [CODE] Completed PR-03 typed command policy migration. `CommandSpec` declares read-only versus package-mutation execution and rejects mismatches against the existing command classifier. Manager detection, WinGet/Chocolatey inventory, Store catalog providers, and default package actions now use explicit policies; the compatibility wrapper remains only for unreviewed non-package callers.
