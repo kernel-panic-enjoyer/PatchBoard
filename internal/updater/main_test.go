@@ -68,6 +68,26 @@ func TestParseCLIApplicationUninstallModes(t *testing.T) {
 	}
 }
 
+func TestParseCLISelfUpdateManifestMode(t *testing.T) {
+	options, err := parseCLI([]string{
+		"--self-update-apply",
+		"--self-update-manifest=C:\\Temp\\PatchBoard-apply.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Mode != cliModeSelfUpdateApply || options.SelfUpdateManifest == "" {
+		t.Fatalf("unexpected self-update manifest options: %#v", options)
+	}
+	for _, args := range [][]string{
+		{"--self-update-apply", "--self-update-manifest=C:\\Temp\\apply.json", "--self-update-target=C:\\PatchBoard.exe"},
+	} {
+		if _, err := parseCLI(args); err == nil {
+			t.Fatalf("parseCLI(%v) should reject mixed self-update protocol arguments", args)
+		}
+	}
+}
+
 func TestParseCLIRejectsWorkerProtocolFlagsOutsideElevatedWorker(t *testing.T) {
 	for _, args := range [][]string{
 		{"--worker-pipe=\\\\.\\pipe\\PatchBoard-test"},

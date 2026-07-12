@@ -73,6 +73,7 @@ type cliOptions struct {
 	SelfUpdateSHA256    string
 	SelfUpdateRestart   bool
 	SelfUpdateElevated  bool
+	SelfUpdateManifest  string
 	UninstallTarget     string
 	UninstallParentPID  int
 }
@@ -112,6 +113,7 @@ func parseCLI(args []string) (cliOptions, error) {
 	selfUpdateSHA256 := set.String("self-update-sha256", "", "")
 	selfUpdateRestart := set.Bool("self-update-restart", false, "")
 	selfUpdateElevated := set.Bool("self-update-elevated", false, "")
+	selfUpdateManifest := set.String("self-update-manifest", "", "")
 	uninstall := set.Bool(strings.TrimPrefix(flagUninstall, "--"), false, "")
 	uninstallApply := set.Bool(strings.TrimPrefix(flagUninstallApply, "--"), false, "")
 	uninstallTarget := set.String("uninstall-target", "", "")
@@ -152,6 +154,7 @@ func parseCLI(args []string) (cliOptions, error) {
 			*selfUpdateSHA256,
 			*selfUpdateRestart,
 			*selfUpdateElevated,
+			*selfUpdateManifest,
 		); err != nil {
 			return options, err
 		}
@@ -200,7 +203,16 @@ func setWorkerMode(options *cliOptions, storeInventoryWorker, storeUpdateDiscove
 	return true
 }
 
-func applySelfUpdateCLIOptions(options *cliOptions, target, parentPIDText, sha256Text string, restart, elevated bool) error {
+func applySelfUpdateCLIOptions(options *cliOptions, target, parentPIDText, sha256Text string, restart, elevated bool, manifestPath string) error {
+	manifestPath = strings.TrimSpace(manifestPath)
+	if manifestPath != "" {
+		if strings.TrimSpace(target) != "" || strings.TrimSpace(parentPIDText) != "" || strings.TrimSpace(sha256Text) != "" || restart || elevated {
+			return errors.New("self-update manifest mode cannot be combined with legacy apply arguments")
+		}
+		options.Mode = cliModeSelfUpdateApply
+		options.SelfUpdateManifest = manifestPath
+		return nil
+	}
 	parentPID, err := parseSelfUpdateParentPID(parentPIDText)
 	if err != nil {
 		return err
@@ -463,7 +475,7 @@ func Main() {
 	case cliModeStoreDiscovery:
 		os.Exit(runStoreUpdateDiscoveryWorkerFromArgs())
 	case cliModeSelfUpdateApply:
-		if err := runSelfUpdateApply(selfUpdateApplyRequestFromOptions(options)); err != nil {
+		if err := runSelfUpdateApplyFromOptions(options); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

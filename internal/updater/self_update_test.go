@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -354,6 +355,30 @@ func TestApplySelfUpdateCopiesExecutableAndKeepsBackup(t *testing.T) {
 	}
 	if string(targetData) != "new" || string(backupData) != "old" {
 		t.Fatalf("unexpected replacement target=%q backup=%q", targetData, backupData)
+	}
+}
+
+func TestCopyAndVerifySelfUpdateSourceUsesAlreadyOpenedHandle(t *testing.T) {
+	directory := t.TempDir()
+	sourcePath := filepath.Join(directory, "PatchBoard-update.exe")
+	trustedPayload := []byte("trusted update")
+	replacementPayload := []byte("substituted update")
+	if err := os.WriteFile(sourcePath, trustedPayload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	openedSource, err := os.Open(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer openedSource.Close()
+	if err := os.WriteFile(sourcePath, replacementPayload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(trustedPayload)
+	var copied bytes.Buffer
+	err = copyAndVerifySelfUpdateSourceHandle(&copied, openedSource, hex.EncodeToString(digest[:]))
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("source mutation after open must fail closed, got %v with bytes %q", err, copied.Bytes())
 	}
 }
 

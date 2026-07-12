@@ -164,13 +164,15 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 }
 
 func acceptElevatedWorkerConnection(ctx context.Context, pipeServer *elevatedWorkerPipeServer, workerProcess elevatedWorkerProcess) (io.ReadWriteCloser, error) {
+	acceptCtx, cancelAccept := context.WithCancel(ctx)
+	defer cancelAccept()
 	type acceptResult struct {
 		pipeConn io.ReadWriteCloser
 		err      error
 	}
 	acceptResultCh := make(chan acceptResult, 1)
 	go func() {
-		pipeConn, err := pipeServer.Accept(ctx)
+		pipeConn, err := pipeServer.Accept(acceptCtx)
 		acceptResultCh <- acceptResult{pipeConn: pipeConn, err: err}
 	}()
 
@@ -186,13 +188,21 @@ func acceptElevatedWorkerConnection(ctx context.Context, pipeServer *elevatedWor
 	case accepted := <-acceptResultCh:
 		return accepted.pipeConn, accepted.err
 	case exited := <-processExitCh:
-		pipeServer.Close()
+		cancelAccept()
+		accepted := <-acceptResultCh
+		if accepted.pipeConn != nil {
+			_ = accepted.pipeConn.Close()
+		}
 		if exited.Err != nil {
 			return nil, fmt.Errorf("elevated worker exited before connecting: %w", exited.Err)
 		}
 		return nil, fmt.Errorf("elevated worker exited before connecting with code %d", exited.Code)
 	case <-ctx.Done():
-		pipeServer.Close()
+		cancelAccept()
+		accepted := <-acceptResultCh
+		if accepted.pipeConn != nil {
+			_ = accepted.pipeConn.Close()
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -285,7 +295,7 @@ func newElevatedWorkerPipeServer(pipeName, userSID string) (*elevatedWorkerPipeS
 	defer cleanup()
 	pipeHandle, err := windows.CreateNamedPipe(
 		pipeNameUTF16,
-		windows.PIPE_ACCESS_DUPLEX|windows.FILE_FLAG_FIRST_PIPE_INSTANCE,
+		windows.PIPE_ACCESS_DUPLEX|windows.FILE_FLAG_FIRST_PIPE_INSTANCE|windows.FILE_FLAG_OVERLAPPED,
 		windows.PIPE_TYPE_BYTE|windows.PIPE_READMODE_BYTE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS,
 		1,
 		elevatedWorkerPipeBufferSize,
@@ -300,26 +310,54 @@ func newElevatedWorkerPipeServer(pipeName, userSID string) (*elevatedWorkerPipeS
 }
 
 func (server *elevatedWorkerPipeServer) Accept(ctx context.Context) (io.ReadWriteCloser, error) {
-	errCh := make(chan error, 1)
-	go func() {
-		err := windows.ConnectNamedPipe(server.handle, nil)
-		if errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
-			err = nil
-		}
-		errCh <- err
-	}()
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return nil, err
-		}
-		file := os.NewFile(uintptr(server.handle), "elevated-worker-pipe")
-		server.handle = 0
-		return file, nil
-	case <-ctx.Done():
-		server.Close()
-		return nil, ctx.Err()
+	if server.handle == 0 {
+		return nil, errors.New("worker pipe server is closed")
 	}
+	event, err := windows.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(event)
+	overlapped := windows.Overlapped{HEvent: event}
+	err = windows.ConnectNamedPipe(server.handle, &overlapped)
+	switch {
+	case err == nil || errors.Is(err, windows.ERROR_PIPE_CONNECTED):
+		return server.connectedFile(), nil
+	case !errors.Is(err, windows.ERROR_IO_PENDING):
+		return nil, err
+	}
+
+	for {
+		waitResult, waitErr := windows.WaitForSingleObject(event, 50)
+		if waitErr != nil {
+			_ = windows.CancelIoEx(server.handle, &overlapped)
+			return nil, waitErr
+		}
+		if waitResult == windows.WAIT_OBJECT_0 {
+			var transferred uint32
+			if err := windows.GetOverlappedResult(server.handle, &overlapped, &transferred, false); err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
+				return nil, err
+			}
+			return server.connectedFile(), nil
+		}
+		if waitResult != uint32(windows.WAIT_TIMEOUT) {
+			_ = windows.CancelIoEx(server.handle, &overlapped)
+			return nil, fmt.Errorf("unexpected worker pipe wait result %d", waitResult)
+		}
+		select {
+		case <-ctx.Done():
+			_ = windows.CancelIoEx(server.handle, &overlapped)
+			_, _ = windows.WaitForSingleObject(event, uint32(elevatedWorkerShutdownTimeout/time.Millisecond))
+			return nil, ctx.Err()
+		default:
+		}
+	}
+}
+
+func (server *elevatedWorkerPipeServer) connectedFile() *os.File {
+	file := os.NewFile(uintptr(server.handle), "elevated-worker-pipe")
+	server.handle = 0
+	return file
 }
 
 func (server *elevatedWorkerPipeServer) Close() {

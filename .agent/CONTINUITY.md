@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:02:00+02:00 [CODE] Completed the first self-update handoff slice on `codex/comprehensive-remediation`: a staged helper now receives a bounded versioned request through a current-user ACL'd named pipe, reads its capability from a one-use private manifest rather than command-line arguments, validates the exact parent image/SID/session while retaining that process handle through exit, and acknowledges readiness before the parent may shut down. Replacement hashes and copies from one open handle, transient sharing violations retry before any elevation, and failures persist a bounded private outcome beside the staged helper. The shared elevated-worker pipe now uses overlapped `ConnectNamedPipe` plus cancellation instead of a blocking close race.
+
 - 2026-07-10T21:05:41+02:00 [CODE] `runSelfUpdateApply` now independently requires the target to be the running executable or the known installed PatchBoard executable before any replacement work. Added a Windows regression that rejects unrelated `PatchBoard.exe` paths.
 - 2026-07-10T20:40:39+02:00 [CODE] Added `inventoryService` as the owner of the immutable manager/native inventory cache, refresh lifecycle, and Store scan coordination. App inventory reads, refreshes, Store scans, and status manager projection now use that service lock; `App` remains the coordinator for lifecycle and background work.
 - 2026-07-10T20:40:39+02:00 [CODE] Added test App lifecycle cleanup and ordered session-log test seams so background operation jobs terminate before shared test log state is restored. This fixed the full race-detector failure in `TestOperationJobRetentionPrunesPerJobLogRings`.
@@ -259,6 +261,10 @@
 - 2026-06-25T18:14:00+02:00 [CODE] `runCommandContext` now collapses its four near-identical code-127 launch-failure blocks into a local `fail127` helper and drops two redundant re-logs of the command line; the distinct empty-command early return is unchanged.
 
 [DISCOVERIES]
+
+- 2026-07-12T13:44:00+02:00 [TOOL] `TestStagedSelfUpdateHelperReplacesPortableOriginal` failed on the pinned baseline because the new staged executable rejected the portable original target. A real helper-process regression now passes normally and under `-race`.
+- 2026-07-12T13:49:00+02:00 [TOOL] A readiness-failure regression hung because synchronous `ConnectNamedPipe` could not be safely cancelled by closing its handle from another goroutine. Overlapped connection with `CancelIoEx` returns in about 70 ms in the focused test.
+- 2026-07-12T13:55:00+02:00 [TOOL] Race instrumentation exposed parent-PID reuse and a transient post-exit sharing violation. Retaining the validated parent handle prevents reuse; retrying sharing violations prevents unnecessary UAC elevation for portable targets. Full updater `-race` passed afterward.
 
 - 2026-07-10T21:45:51+02:00 [TOOL] Windows CI run `29118663060` passed tests, race detection, vet, and Staticcheck, then failed `govulncheck` because `go-version-file` resolved the loose `go 1.26` directive to cached Go 1.26.4. Official Go data identifies `GO-2026-5856` as fixed in Go 1.26.5 (released 2026-07-07); local Go 1.26.5 correctly reported no reachable vulnerabilities.
 - 2026-07-10T21:35:36+02:00 [TOOL] Windows CI run `29117060083` exposed two test-environment assumptions: Windows renders the built-in Administrator SID (`...-500`) as the SDDL alias `LA`, and a status refresh can legitimately take longer than the install endpoint test's two-second completion deadline. The private-path assertion now inspects actual DACL ACE SIDs, and the endpoint test verifies refresh scheduling instead of unrelated refresh completion.

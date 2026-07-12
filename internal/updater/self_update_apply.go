@@ -3,21 +3,52 @@ package updater
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type selfUpdateApplyRequest struct {
-	SourcePath     string
-	TargetPath     string
-	ExpectedSHA256 string
-	ParentPID      int
-	Restart        bool
-	Elevated       bool
+	SourcePath      string `json:"source_path"`
+	TargetPath      string `json:"target_path"`
+	ExpectedSHA256  string `json:"expected_sha256"`
+	ParentPID       int    `json:"parent_pid"`
+	ParentUserSID   string `json:"parent_user_sid"`
+	ParentSessionID uint32 `json:"parent_session_id"`
+	DeadlineUnixMS  int64  `json:"deadline_unix_ms"`
+	Restart         bool   `json:"restart"`
+	Elevated        bool   `json:"elevated"`
+	Delegated       bool   `json:"delegated"`
+}
+
+type selfUpdateApplyOutcome struct {
+	CompletedAt string `json:"completed_at"`
+	Succeeded   bool   `json:"succeeded"`
+	Error       string `json:"error,omitempty"`
+}
+
+func selfUpdateApplyOutcomePath(sourcePath string) string {
+	return sourcePath + ".apply-outcome.json"
+}
+
+func recordSelfUpdateApplyOutcome(request selfUpdateApplyRequest, result error) {
+	outcome := selfUpdateApplyOutcome{
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Succeeded:   result == nil,
+	}
+	if result != nil {
+		outcome.Error = truncateUTF8String(result.Error(), 1024)
+	}
+	payload, err := json.Marshal(outcome)
+	if err != nil {
+		return
+	}
+	_ = writeUserPrivateFile(selfUpdateApplyOutcomePath(request.SourcePath), payload)
 }
 
 func validateSelfUpdateApplyRequest(request selfUpdateApplyRequest) error {
@@ -89,13 +120,6 @@ func replaceExecutableForSelfUpdate(request selfUpdateApplyRequest) error {
 	if err := validateSelfUpdateApplyRequest(request); err != nil {
 		return err
 	}
-	actual, err := fileSHA256(request.SourcePath)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(actual, request.ExpectedSHA256) {
-		return fmt.Errorf("self-update checksum mismatch: got %s want %s", actual, request.ExpectedSHA256)
-	}
 	targetDir := filepath.Dir(request.TargetPath)
 	temp, err := os.CreateTemp(targetDir, ".PatchBoard-replace-*.exe")
 	if err != nil {
@@ -108,7 +132,7 @@ func replaceExecutableForSelfUpdate(request selfUpdateApplyRequest) error {
 			_ = os.Remove(tempPath)
 		}
 	}()
-	if err := copyFileContents(temp, request.SourcePath); err != nil {
+	if err := copyAndVerifySelfUpdateSource(temp, request.SourcePath, request.ExpectedSHA256); err != nil {
 		_ = temp.Close()
 		return err
 	}
@@ -126,6 +150,30 @@ func replaceExecutableForSelfUpdate(request selfUpdateApplyRequest) error {
 		return err
 	}
 	cleanup = false
+	return nil
+}
+
+// copyAndVerifySelfUpdateSource binds verification to the exact open file
+// handle whose bytes are copied. Reopening the staged path after hashing would
+// allow a path substitution between verification and replacement.
+func copyAndVerifySelfUpdateSource(destination io.Writer, sourcePath, expectedSHA256 string) error {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	return copyAndVerifySelfUpdateSourceHandle(destination, source, expectedSHA256)
+}
+
+func copyAndVerifySelfUpdateSourceHandle(destination io.Writer, source io.Reader, expectedSHA256 string) error {
+	digest := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(destination, digest), source); err != nil {
+		return err
+	}
+	actualSHA256 := hex.EncodeToString(digest.Sum(nil))
+	if !strings.EqualFold(actualSHA256, expectedSHA256) {
+		return fmt.Errorf("self-update checksum mismatch: got %s want %s", actualSHA256, expectedSHA256)
+	}
 	return nil
 }
 
