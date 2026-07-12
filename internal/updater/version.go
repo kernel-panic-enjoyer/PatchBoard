@@ -5,7 +5,11 @@ import (
 	"strings"
 )
 
-var appVersion = "0.0.0-dev"
+var (
+	appVersion                  = "0.0.0-dev"
+	appUpdateSigningKeyID       = ""
+	appUpdateTrustedSigningKeys = ""
+)
 
 const (
 	appLicenseID     = "GPL-3.0-only"

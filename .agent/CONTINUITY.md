@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-12T14:42:00+02:00 [CODE] Self-update release admission now requires a detached Ed25519 signature asset over the exact metadata bytes and executable digest, validated against a rotation-capable public-key list embedded at build time. Metadata additionally requires signing key ID, host/redirect policy rejects untrusted or non-HTTPS production download origins, and downloaded releases must be matching stripped Windows PE binaries for the running architecture. The release workflow now checks out the dispatch revision and refuses publication without protected key material; SBOM/provenance attestation remains in the CI hardening phase.
+
 - 2026-07-12T14:20:00+02:00 [CODE] Completed self-update transaction/rollback slice: replacement now retains `.bak` until the restarted executable acknowledges a private, bounded startup-health request after local listener initialization. Failure or early exit restores the previous executable atomically, retains the failed candidate as `.failed`, records the result, and attempts to restart the restored executable. Tests cover exact health acknowledgement, successful commit, restart failure rollback, and the real staged portable helper under `-race`.
 
 - 2026-07-12T14:02:00+02:00 [CODE] Completed the first self-update handoff slice on `codex/comprehensive-remediation`: a staged helper now receives a bounded versioned request through a current-user ACL'd named pipe, reads its capability from a one-use private manifest rather than command-line arguments, validates the exact parent image/SID/session while retaining that process handle through exit, and acknowledges readiness before the parent may shut down. Replacement hashes and copies from one open handle, transient sharing violations retry before any elevation, and failures persist a bounded private outcome beside the staged helper. The shared elevated-worker pipe now uses overlapped `ConnectNamedPipe` plus cancellation instead of a blocking close race.
@@ -263,6 +265,8 @@
 - 2026-06-25T18:14:00+02:00 [CODE] `runCommandContext` now collapses its four near-identical code-127 launch-failure blocks into a local `fail127` helper and drops two redundant re-logs of the command line; the distinct empty-command early return is unchanged.
 
 [DISCOVERIES]
+
+- 2026-07-12T14:42:00+02:00 [CODE] A local/default build intentionally has no trusted self-update key. Such a build can run and validate normally, but reports future release assets as incompatible rather than accepting unsigned self-updates. Release operators must configure `PATCHBOARD_UPDATE_SIGNING_KEY_ID`, `PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS`, and the private signing secret before dispatching the hardened workflow.
 
 - 2026-07-12T14:12:00+02:00 [TOOL] Restart failure previously left a verified replacement without a startup health check or durable rollback decision. The new transaction keeps backup state until an exact executable-hash acknowledgement is received; a simulated restart failure restores the old bytes and preserves the failed replacement for diagnosis.
 

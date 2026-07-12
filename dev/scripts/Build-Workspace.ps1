@@ -3,7 +3,9 @@ param(
     [switch]$SkipVet,
     [switch]$TimestampedOutput,
     [switch]$Strip,
-    [string]$Version = ''
+    [string]$Version = '',
+    [string]$UpdateSigningKeyID = '',
+    [string]$UpdateSigningPublicKeys = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,6 +97,16 @@ if ($Version.Trim() -ne '') {
 if ($Strip) {
     $ldflagsParts += @('-s', '-w')
 }
+if (($UpdateSigningKeyID.Trim() -eq '') -ne ($UpdateSigningPublicKeys.Trim() -eq '')) {
+    throw 'UpdateSigningKeyID and UpdateSigningPublicKeys must be provided together.'
+}
+if ($UpdateSigningKeyID.Trim() -ne '') {
+    if ($UpdateSigningKeyID -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        throw 'UpdateSigningKeyID contains unsupported characters.'
+    }
+    $ldflagsParts += "-X patchboard/internal/updater.appUpdateSigningKeyID=$($UpdateSigningKeyID.Trim())"
+    $ldflagsParts += "-X patchboard/internal/updater.appUpdateTrustedSigningKeys=$($UpdateSigningPublicKeys.Trim())"
+}
 $ldflags = $ldflagsParts -join ' '
 go build -ldflags $ldflags -o $output .
 Assert-NativeSuccess "go build"
@@ -129,6 +141,7 @@ $metadata = [ordered]@{
     repository = 'https://github.com/kernel-panic-enjoyer/PatchBoard'
     linker_flags = $ldflags
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
+    signing_key_id = $UpdateSigningKeyID.Trim()
 }
 $metadataPath = [IO.Path]::ChangeExtension($output, '.metadata.json')
 $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
