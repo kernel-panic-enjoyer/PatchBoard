@@ -66,18 +66,10 @@ jobs:
 
       - name: Build and validate
         shell: pwsh
-        env:
-          PATCHBOARD_UPDATE_SIGNING_KEY_ID: ${{ vars.PATCHBOARD_UPDATE_SIGNING_KEY_ID }}
-          PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS: ${{ vars.PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:PATCHBOARD_UPDATE_SIGNING_KEY_ID) -or [string]::IsNullOrWhiteSpace($env:PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS)) {
-            throw 'Release signing configuration is required.'
-          }
           powershell -NoProfile -ExecutionPolicy Bypass -File .\dev\scripts\Build-Workspace.ps1 `
             -Version '${{ inputs.version }}' `
-            -Strip `
-            -UpdateSigningKeyID $env:PATCHBOARD_UPDATE_SIGNING_KEY_ID `
-            -UpdateSigningPublicKeys $env:PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS
+            -Strip
 
       - name: Distribution smoke
         shell: pwsh
@@ -89,20 +81,6 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath .\dist\PatchBoard.exe).Hash.ToLowerInvariant()
           "$hash  PatchBoard.exe" | Set-Content -LiteralPath .\dist\PatchBoard.exe.sha256 -Encoding ascii
 
-      - name: Sign self-update release metadata
-        shell: pwsh
-        env:
-          PATCHBOARD_UPDATE_SIGNING_KEY_ID: ${{ vars.PATCHBOARD_UPDATE_SIGNING_KEY_ID }}
-          PATCHBOARD_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.PATCHBOARD_UPDATE_SIGNING_PRIVATE_KEY }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:PATCHBOARD_UPDATE_SIGNING_PRIVATE_KEY)) {
-            throw 'PATCHBOARD_UPDATE_SIGNING_PRIVATE_KEY is required.'
-          }
-          go run .\dev\tools\release-sign `
-            -metadata .\dist\PatchBoard.metadata.json `
-            -output .\dist\PatchBoard.update-signature.json `
-            -key-id $env:PATCHBOARD_UPDATE_SIGNING_KEY_ID
-
       - name: Create GitHub release
         shell: pwsh
         env:
@@ -112,7 +90,6 @@ jobs:
             .\dist\PatchBoard.exe `
             .\dist\PatchBoard.metadata.json `
             .\dist\PatchBoard.exe.sha256 `
-            .\dist\PatchBoard.update-signature.json `
             --target "$env:GITHUB_SHA" `
             --title "PatchBoard v${{ inputs.version }}" `
             --notes "CI-built PatchBoard.exe release."

@@ -6,9 +6,7 @@ import (
 )
 
 var (
-	appVersion                  = "0.0.0-dev"
-	appUpdateSigningKeyID       = ""
-	appUpdateTrustedSigningKeys = ""
+	appVersion = "0.0.0-dev"
 )
 
 const (

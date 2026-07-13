@@ -3,11 +3,8 @@ package updater
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,19 +16,6 @@ import (
 )
 
 const selfUpdateTestReleaseCommit = "0123456789abcdef0123456789abcdef01234567"
-const selfUpdateTestSigningKeyID = "test-key-2026"
-
-var selfUpdateTestSigningPrivateKey ed25519.PrivateKey
-
-func init() {
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		panic(err)
-	}
-	selfUpdateTestSigningPrivateKey = privateKey
-	appUpdateSigningKeyID = selfUpdateTestSigningKeyID
-	appUpdateTrustedSigningKeys = selfUpdateTestSigningKeyID + "=" + base64.StdEncoding.EncodeToString(publicKey)
-}
 
 func TestCompareAppVersions(t *testing.T) {
 	tests := []struct {
@@ -66,8 +50,7 @@ func TestParseGitHubReleaseRequiresStableNewerAssets(t *testing.T) {
 		"assets": [
 			{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234},
 			{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/app.metadata.json","size":321},
-			{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64},
-			{"name":"PatchBoard.update-signature.json","browser_download_url":"https://github.example/app.signature.json","size":512}
+			{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64}
 		]
 	}`), "0.0.1")
 	if err != nil {
@@ -119,8 +102,7 @@ func TestParseGitHubReleaseRequiresExactTargetCommit(t *testing.T) {
 			"assets": [
 				{"name":"PatchBoard.exe","browser_download_url":"https://github.example/app.exe","size":1234},
 				{"name":"PatchBoard.metadata.json","browser_download_url":"https://github.example/app.metadata.json","size":321},
-				{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64},
-				{"name":"PatchBoard.update-signature.json","browser_download_url":"https://github.example/app.signature.json","size":512}
+				{"name":"PatchBoard.exe.sha256","browser_download_url":"https://github.example/app.exe.sha256","size":64}
 			]
 		}`, targetCommitish)
 		status, err := parseGitHubRelease([]byte(releaseJSON), "0.0.1")
@@ -171,10 +153,9 @@ func TestGitHubReleaseCheckerRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
-func TestGitHubReleaseCheckerFallsBackToSignedReleaseWhenAPIRateLimited(t *testing.T) {
+func TestGitHubReleaseCheckerFallsBackToGitHubReleaseWhenAPIRateLimited(t *testing.T) {
 	payload := []byte("signed PatchBoard release")
 	metadata := selfUpdateMetadataFixture(payload, "0.0.2", nil)
-	signature := selfUpdateSignatureFixture(metadata, payload)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/releases/latest":
@@ -185,8 +166,6 @@ func TestGitHubReleaseCheckerFallsBackToSignedReleaseWhenAPIRateLimited(t *testi
 			http.Redirect(writer, request, "/releases/tag/v0.0.2", http.StatusFound)
 		case "/releases/download/v0.0.2/PatchBoard.metadata.json":
 			_, _ = writer.Write([]byte(metadata))
-		case "/releases/download/v0.0.2/PatchBoard.update-signature.json":
-			_, _ = writer.Write([]byte(signature))
 		default:
 			http.NotFound(writer, request)
 		}
@@ -203,47 +182,13 @@ func TestGitHubReleaseCheckerFallsBackToSignedReleaseWhenAPIRateLimited(t *testi
 		t.Fatal(err)
 	}
 	if !status.Available || status.LatestTag != "v0.0.2" || status.LatestVersion != "0.0.2" {
-		t.Fatalf("signed fallback did not expose the newer release: %#v", status)
+		t.Fatalf("release page fallback did not expose the newer release: %#v", status)
 	}
 	if status.ReleaseTargetCommit != selfUpdateTestReleaseCommit {
-		t.Fatalf("signed fallback lost the signed release commit: %#v", status)
+		t.Fatalf("release page fallback lost the release commit: %#v", status)
 	}
 	if !strings.Contains(status.ExecutableURL, "/releases/download/v0.0.2/PatchBoard.exe") {
-		t.Fatalf("signed fallback did not build a fixed release asset URL: %#v", status)
-	}
-}
-
-func TestGitHubReleaseCheckerRejectsUnsignedFallbackWhenAPIRateLimited(t *testing.T) {
-	payload := []byte("signed PatchBoard release")
-	metadata := selfUpdateMetadataFixture(payload, "0.0.2", nil)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/api/releases/latest":
-			writer.Header().Set("X-RateLimit-Remaining", "0")
-			writer.WriteHeader(http.StatusForbidden)
-		case "/releases/latest":
-			http.Redirect(writer, request, "/releases/tag/v0.0.2", http.StatusFound)
-		case "/releases/download/v0.0.2/PatchBoard.metadata.json":
-			_, _ = writer.Write([]byte(metadata))
-		case "/releases/download/v0.0.2/PatchBoard.update-signature.json":
-			_, _ = writer.Write([]byte(`{"protocol_version":1,"key_id":"test-key-2026","metadata_sha256":"0000000000000000000000000000000000000000000000000000000000000000","artifact_sha256":"0000000000000000000000000000000000000000000000000000000000000000","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}`))
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
-	defer server.Close()
-
-	checker := GitHubReleaseChecker{
-		Client:               server.Client(),
-		LatestReleaseURL:     server.URL + "/api/releases/latest",
-		LatestReleasePageURL: server.URL + "/releases/latest",
-	}
-	status, err := checker.Check(context.Background(), "0.0.1")
-	if err == nil || status.Available {
-		t.Fatalf("unsigned fallback must fail closed, status=%#v err=%v", status, err)
-	}
-	if !strings.Contains(err.Error(), "signed release fallback failed") {
-		t.Fatalf("expected fallback rejection context, got %v", err)
+		t.Fatalf("release page fallback did not build a fixed release asset URL: %#v", status)
 	}
 }
 
@@ -267,8 +212,6 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 			_, _ = w.Write([]byte(metadataText))
 		case "/app.exe.sha256":
 			_, _ = w.Write([]byte(shaText))
-		case "/app.signature.json":
-			_, _ = w.Write([]byte(selfUpdateSignatureFixture(metadataText, payload)))
 		default:
 			http.NotFound(w, r)
 		}
@@ -283,7 +226,6 @@ func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 		ExecutableURL:       server.URL + "/app.exe",
 		MetadataURL:         server.URL + "/app.metadata.json",
 		SHA256URL:           server.URL + "/app.exe.sha256",
-		SignatureURL:        server.URL + "/app.signature.json",
 		ExecutableSize:      int64(len(payload)),
 	}, dir)
 	if err != nil {
@@ -321,7 +263,6 @@ func TestDownloadSelfUpdateRejectsChecksumMismatch(t *testing.T) {
 		ExecutableURL:       server.URL + "/app.exe",
 		MetadataURL:         server.URL + "/app.metadata.json",
 		SHA256URL:           server.URL + "/app.exe.sha256",
-		SignatureURL:        server.URL + "/app.signature.json",
 	}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("expected checksum mismatch, got %v", err)
@@ -386,7 +327,6 @@ func TestDownloadSelfUpdateRejectsMetadataMismatch(t *testing.T) {
 				ExecutableURL:       server.URL + "/app.exe",
 				MetadataURL:         server.URL + "/app.metadata.json",
 				SHA256URL:           server.URL + "/app.exe.sha256",
-				SignatureURL:        server.URL + "/app.signature.json",
 				ExecutableSize:      int64(len(payload)),
 			}, t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -420,39 +360,10 @@ func TestDownloadSelfUpdateRequiresReleaseTargetCommit(t *testing.T) {
 		ExecutableURL:  server.URL + "/app.exe",
 		MetadataURL:    server.URL + "/app.metadata.json",
 		SHA256URL:      server.URL + "/app.exe.sha256",
-		SignatureURL:   server.URL + "/app.signature.json",
 		ExecutableSize: int64(len(payload)),
 	}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "release target commit") {
 		t.Fatalf("expected release target commit rejection, got %v", err)
-	}
-}
-
-func TestSelfUpdateSignatureRejectsUntrustedAndTamperedArtifacts(t *testing.T) {
-	payload := []byte("new executable")
-	metadata := selfUpdateMetadataFixture(payload, "0.0.2", nil)
-	signature, err := decodeSelfUpdateSignature([]byte(selfUpdateSignatureFixture(metadata, payload)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(payload)
-	artifactSHA256 := hex.EncodeToString(digest[:])
-	if err := validateSelfUpdateSignature(signature, []byte(metadata), artifactSHA256); err != nil {
-		t.Fatal(err)
-	}
-	signature.ArtifactSHA256 = strings.Repeat("0", 64)
-	if err := validateSelfUpdateSignature(signature, []byte(metadata), artifactSHA256); err == nil || !strings.Contains(err.Error(), "artifact digest") {
-		t.Fatalf("expected artifact signature rejection, got %v", err)
-	}
-	originalKeys := appUpdateTrustedSigningKeys
-	originalKeyID := appUpdateSigningKeyID
-	t.Cleanup(func() {
-		appUpdateTrustedSigningKeys = originalKeys
-		appUpdateSigningKeyID = originalKeyID
-	})
-	appUpdateTrustedSigningKeys = ""
-	if _, err := trustedSelfUpdateSigningKeys(); err == nil || !strings.Contains(err.Error(), "no trusted") {
-		t.Fatalf("expected missing trust configuration rejection, got %v", err)
 	}
 }
 
@@ -536,24 +447,23 @@ func TestCopyAndVerifySelfUpdateSourceUsesAlreadyOpenedHandle(t *testing.T) {
 func selfUpdateMetadataFixture(payload []byte, version string, overrides map[string]string) string {
 	sum := sha256.Sum256(payload)
 	values := map[string]string{
-		"artifact":       `"C:\\Program Files\\PatchBoard\\PatchBoard.exe"`,
-		"commit":         fmt.Sprintf("%q", selfUpdateTestReleaseCommit),
-		"sha256":         fmt.Sprintf("%q", hex.EncodeToString(sum[:])),
-		"version":        fmt.Sprintf("%q", version),
-		"bytes":          fmt.Sprintf("%d", len(payload)),
-		"dirty":          "false",
-		"license":        fmt.Sprintf("%q", appLicenseID),
-		"repository":     fmt.Sprintf("%q", appRepositoryURL),
-		"signing_key_id": fmt.Sprintf("%q", selfUpdateTestSigningKeyID),
-		"go_version":     fmt.Sprintf("%q", runtime.Version()),
-		"goos":           fmt.Sprintf("%q", runtime.GOOS),
-		"goarch":         fmt.Sprintf("%q", runtime.GOARCH),
-		"stripped":       "true",
-		"unstripped":     "false",
+		"artifact":   `"C:\\Program Files\\PatchBoard\\PatchBoard.exe"`,
+		"commit":     fmt.Sprintf("%q", selfUpdateTestReleaseCommit),
+		"sha256":     fmt.Sprintf("%q", hex.EncodeToString(sum[:])),
+		"version":    fmt.Sprintf("%q", version),
+		"bytes":      fmt.Sprintf("%d", len(payload)),
+		"dirty":      "false",
+		"license":    fmt.Sprintf("%q", appLicenseID),
+		"repository": fmt.Sprintf("%q", appRepositoryURL),
+		"go_version": fmt.Sprintf("%q", runtime.Version()),
+		"goos":       fmt.Sprintf("%q", runtime.GOOS),
+		"goarch":     fmt.Sprintf("%q", runtime.GOARCH),
+		"stripped":   "true",
+		"unstripped": "false",
 	}
 	for key, value := range overrides {
 		switch key {
-		case "artifact", "commit", "sha256", "version", "license", "repository", "signing_key_id", "go_version", "goos", "goarch":
+		case "artifact", "commit", "sha256", "version", "license", "repository", "go_version", "goos", "goarch":
 			values[key] = fmt.Sprintf("%q", value)
 		default:
 			values[key] = value
@@ -568,30 +478,10 @@ func selfUpdateMetadataFixture(payload []byte, version string, overrides map[str
 		"dirty": %s,
 		"license": %s,
 		"repository": %s,
-		"signing_key_id": %s,
 		"go_version": %s,
 		"goos": %s,
 		"goarch": %s,
 		"stripped": %s,
 		"unstripped": %s
-	}`, values["artifact"], values["commit"], values["sha256"], values["version"], values["bytes"], values["dirty"], values["license"], values["repository"], values["signing_key_id"], values["go_version"], values["goos"], values["goarch"], values["stripped"], values["unstripped"])
-}
-
-func selfUpdateSignatureFixture(metadata string, payload []byte) string {
-	metadataDigest := sha256.Sum256([]byte(metadata))
-	artifactDigest := sha256.Sum256(payload)
-	metadataSHA256 := hex.EncodeToString(metadataDigest[:])
-	artifactSHA256 := hex.EncodeToString(artifactDigest[:])
-	signature := ed25519.Sign(selfUpdateTestSigningPrivateKey, selfUpdateSignatureMessage(metadataSHA256, artifactSHA256))
-	data, err := json.Marshal(selfUpdateSignature{
-		ProtocolVersion: selfUpdateSignatureProtocolVersion,
-		KeyID:           selfUpdateTestSigningKeyID,
-		MetadataSHA256:  metadataSHA256,
-		ArtifactSHA256:  artifactSHA256,
-		Signature:       base64.StdEncoding.EncodeToString(signature),
-	})
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
+	}`, values["artifact"], values["commit"], values["sha256"], values["version"], values["bytes"], values["dirty"], values["license"], values["repository"], values["go_version"], values["goos"], values["goarch"], values["stripped"], values["unstripped"])
 }

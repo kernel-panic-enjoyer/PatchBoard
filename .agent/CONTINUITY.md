@@ -176,9 +176,7 @@
 
 [PROGRESS]
 
-- 2026-07-13T17:30:19+02:00 [TOOL] The GitHub REST release endpoint returned an actual unauthenticated rate-limit response (`HTTP 403`, `X-RateLimit-Remaining: 0`) for the host IP. The self-update checker now falls back only for that explicit condition to the signed `github.com` latest-release redirect and fixed release assets; the fallback verifies the trusted signature, metadata version/repository/artifact digest, byte bound, and exact signed commit before exposing an update. Normal non-rate-limit API failures remain errors.
-
-- 2026-07-13T17:30:19+02:00 [TOOL] Read-only release verification found that public `v0.2.0` redirects to valid PatchBoard executable/metadata/checksum assets but returns `404` for `PatchBoard.update-signature.json`; its metadata also has no signing key ID. It is correctly ineligible for the hardened self-update path and must not be accepted without a CI-built signed replacement release.
+- 2026-07-13T18:16:45+02:00 [USER] Supersedes the independent-signature decision: GitHub Releases are the chosen self-update authority. Remove embedded signing keys, detached signature assets, release-signing tooling, and CI signing-secret requirements; retain configured-repository/HTTPS origin checks, exact version/commit metadata, SHA-256, size bounds, and Windows PE validation. A compromised GitHub repository can therefore publish an update by accepted product decision.
 
 - 2026-07-12T14:42:00+02:00 [CODE] CI hardening is partially advanced: every GitHub Actions workflow now pins each action reference to the immutable commit resolved from its declared release tag, with a static regression enforcing 40-character SHA revisions. CI-04 remains open for deterministic MSYS2 package acquisition and dependency automation.
 
@@ -196,7 +194,7 @@
 
 - 2026-07-12T13:11:00+02:00 [CODE] Completed PR-01 process ownership: mutable command and killable WinRT worker children now start suspended, are assigned to a kill-on-close Job Object, then resumed. UAC workers are assigned immediately after `ShellExecuteEx` returns; they remain inert until an authenticated pipe request. A Windows regression proves suspended payloads do not run before assignment.
 
-- 2026-07-12T14:42:00+02:00 [CODE] Self-update release admission now requires a detached Ed25519 signature asset over the exact metadata bytes and executable digest, validated against a rotation-capable public-key list embedded at build time. Metadata additionally requires signing key ID, host/redirect policy rejects untrusted or non-HTTPS production download origins, and downloaded releases must be matching stripped Windows PE binaries for the running architecture. The release workflow now checks out the dispatch revision and refuses publication without protected key material; SBOM/provenance attestation remains in the CI hardening phase.
+- 2026-07-13T18:16:45+02:00 [USER] Supersedes 2026-07-12 independent-signature release admission. GitHub Releases are the accepted authority; CI no longer requires protected signing material. Repository/HTTPS restrictions, exact metadata/version/commit binding, checksum, and matching stripped Windows PE checks remain mandatory.
 
 - 2026-07-12T14:20:00+02:00 [CODE] Completed self-update transaction/rollback slice: replacement now retains `.bak` until the restarted executable acknowledges a private, bounded startup-health request after local listener initialization. Failure or early exit restores the previous executable atomically, retains the failed candidate as `.failed`, records the result, and attempts to restart the restored executable. Tests cover exact health acknowledgement, successful commit, restart failure rollback, and the real staged portable helper under `-race`.
 
@@ -288,7 +286,7 @@
 
 - 2026-07-12T13:11:00+02:00 [TOOL] The default environment has `CGO_ENABLED=0` despite MSYS2 UCRT64 GCC being installed. `CGO_ENABLED=1`, `CC=C:\\msys64\\ucrt64\\bin\\gcc.exe`, and the UCRT64 bin path are required for Windows race runs; the internal updater race suite then passed in 86.303s.
 
-- 2026-07-12T14:42:00+02:00 [CODE] A local/default build intentionally has no trusted self-update key. Such a build can run and validate normally, but reports future release assets as incompatible rather than accepting unsigned self-updates. Release operators must configure `PATCHBOARD_UPDATE_SIGNING_KEY_ID`, `PATCHBOARD_UPDATE_SIGNING_PUBLIC_KEYS`, and the private signing secret before dispatching the hardened workflow.
+- 2026-07-13T18:16:45+02:00 [USER] Supersedes the local-build signing-key limitation: local and release builds evaluate the same GitHub Release asset contract and do not require self-update signing-key configuration.
 
 - 2026-07-12T14:12:00+02:00 [TOOL] Restart failure previously left a verified replacement without a startup health check or durable rollback decision. The new transaction keeps backup state until an exact executable-hash acknowledgement is received; a simulated restart failure restores the old bytes and preserves the failed replacement for diagnosis.
 

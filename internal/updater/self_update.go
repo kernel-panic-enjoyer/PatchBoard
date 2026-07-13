@@ -26,7 +26,6 @@ const (
 	releaseAssetExecutable = "PatchBoard.exe"
 	releaseAssetMetadata   = "PatchBoard.metadata.json"
 	releaseAssetSHA256     = "PatchBoard.exe.sha256"
-	releaseAssetSignature  = "PatchBoard.update-signature.json"
 
 	maxGitHubReleaseResponseBytes = 512 * 1024
 	maxGitHubReleaseErrorBytes    = 8 * 1024
@@ -57,7 +56,6 @@ type AppUpdateStatus struct {
 	ExecutableURL  string `json:"-"`
 	MetadataURL    string `json:"-"`
 	SHA256URL      string `json:"-"`
-	SignatureURL   string `json:"-"`
 	ExecutableSize int64  `json:"-"`
 	// ReleaseTargetCommit is hidden from the public status response but is
 	// required during download verification so a release asset cannot claim to
@@ -93,23 +91,22 @@ type selfUpdateArtifact struct {
 }
 
 type selfUpdateReleaseMetadata struct {
-	Artifact     string `json:"artifact"`
-	Commit       string `json:"commit"`
-	Dirty        bool   `json:"dirty"`
-	GoVersion    string `json:"go_version"`
-	GOOS         string `json:"goos"`
-	GOARCH       string `json:"goarch"`
-	CGOEnabled   string `json:"cgo_enabled"`
-	Bytes        int64  `json:"bytes"`
-	SHA256       string `json:"sha256"`
-	Version      string `json:"version"`
-	Stripped     bool   `json:"stripped"`
-	Unstripped   bool   `json:"unstripped"`
-	License      string `json:"license"`
-	Repository   string `json:"repository"`
-	LinkerFlags  string `json:"linker_flags"`
-	GeneratedAt  string `json:"generated_at"`
-	SigningKeyID string `json:"signing_key_id"`
+	Artifact    string `json:"artifact"`
+	Commit      string `json:"commit"`
+	Dirty       bool   `json:"dirty"`
+	GoVersion   string `json:"go_version"`
+	GOOS        string `json:"goos"`
+	GOARCH      string `json:"goarch"`
+	CGOEnabled  string `json:"cgo_enabled"`
+	Bytes       int64  `json:"bytes"`
+	SHA256      string `json:"sha256"`
+	Version     string `json:"version"`
+	Stripped    bool   `json:"stripped"`
+	Unstripped  bool   `json:"unstripped"`
+	License     string `json:"license"`
+	Repository  string `json:"repository"`
+	LinkerFlags string `json:"linker_flags"`
+	GeneratedAt string `json:"generated_at"`
 }
 
 func defaultGitHubReleaseChecker() GitHubReleaseChecker {
@@ -153,11 +150,11 @@ func (checker GitHubReleaseChecker) Check(ctx context.Context, currentVersion st
 	}
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		if isGitHubAPIRateLimited(response) {
-			fallbackStatus, fallbackErr := checker.checkSignedLatestRelease(ctx, currentVersion)
+			fallbackStatus, fallbackErr := checker.checkGitHubReleasePage(ctx, currentVersion)
 			if fallbackErr == nil {
 				return fallbackStatus, nil
 			}
-			return status, fmt.Errorf("GitHub release check is rate limited and signed release fallback failed: %w", fallbackErr)
+			return status, fmt.Errorf("GitHub release check is rate limited and release page fallback failed: %w", fallbackErr)
 		}
 		return status, fmt.Errorf("GitHub release check failed with HTTP %d", response.StatusCode)
 	}
@@ -185,17 +182,10 @@ func isGitHubAPIRateLimited(response *http.Response) bool {
 	return err == nil && strings.Contains(strings.ToLower(string(body)), "rate limit")
 }
 
-// checkSignedLatestRelease avoids GitHub's unauthenticated REST rate limit
-// only after the API explicitly reports that limit. The signed metadata is the
-// trust anchor here: its version, commit, artifact digest, and repository must
-// all verify before the fallback can offer an update.
-func (checker GitHubReleaseChecker) checkSignedLatestRelease(ctx context.Context, currentVersion string) (AppUpdateStatus, error) {
-	if _, err := trustedSelfUpdateSigningKeys(); err != nil {
-		return AppUpdateStatus{
-			CurrentVersion:     currentVersion,
-			IncompatibleReason: "application self-update trust is not configured: " + err.Error(),
-		}, nil
-	}
+// checkGitHubReleasePage avoids GitHub's unauthenticated REST rate limit only
+// after the API explicitly reports that limit. The page and asset URLs remain
+// constrained to the configured GitHub repository and HTTPS origins.
+func (checker GitHubReleaseChecker) checkGitHubReleasePage(ctx context.Context, currentVersion string) (AppUpdateStatus, error) {
 	releaseTag, releaseURL, err := checker.resolveLatestReleaseTag(ctx)
 	if err != nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
@@ -208,23 +198,11 @@ func (checker GitHubReleaseChecker) checkSignedLatestRelease(ctx context.Context
 	if err != nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
 	}
-	signatureURL, err := releaseAssetURL(releaseURL, releaseAssetSignature)
+	metadata, _, err := downloadSelfUpdateMetadata(ctx, checker.Client, metadataURL)
 	if err != nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
 	}
-	metadata, metadataData, err := downloadSelfUpdateMetadata(ctx, checker.Client, metadataURL)
-	if err != nil {
-		return AppUpdateStatus{CurrentVersion: currentVersion}, err
-	}
-	signatureData, err := httpGetBounded(ctx, checker.Client, signatureURL, maxSelfUpdateMetadataBytes, "signature")
-	if err != nil {
-		return AppUpdateStatus{CurrentVersion: currentVersion}, err
-	}
-	signature, err := decodeSelfUpdateSignature(signatureData)
-	if err != nil {
-		return AppUpdateStatus{CurrentVersion: currentVersion}, fmt.Errorf("invalid self-update signature: %w", err)
-	}
-	commit, artifactSHA256, err := validateSignedSelfUpdateReleaseDescriptor(metadata, metadataData, signature, latestVersion)
+	commit, _, err := validateSelfUpdateMetadataDescriptor(metadata, latestVersion)
 	if err != nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
 	}
@@ -241,13 +219,9 @@ func (checker GitHubReleaseChecker) checkSignedLatestRelease(ctx context.Context
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
 	}
 	status.MetadataURL = metadataURL
-	status.SignatureURL = signatureURL
 	status.SHA256URL, err = releaseAssetURL(releaseURL, releaseAssetSHA256)
 	if err != nil {
 		return AppUpdateStatus{CurrentVersion: currentVersion}, err
-	}
-	if !strings.EqualFold(artifactSHA256, metadata.SHA256) {
-		return AppUpdateStatus{CurrentVersion: currentVersion}, errors.New("signed self-update release descriptor has inconsistent artifact digest")
 	}
 	status.Available = compareAppVersions(latestVersion, currentVersion) > 0
 	return status, nil
@@ -353,17 +327,12 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	executableAsset := assetsByName[releaseAssetExecutable]
 	metadataAsset := assetsByName[releaseAssetMetadata]
 	checksumAsset := assetsByName[releaseAssetSHA256]
-	signatureAsset := assetsByName[releaseAssetSignature]
-	if executableAsset.BrowserDownloadURL == "" || metadataAsset.BrowserDownloadURL == "" || checksumAsset.BrowserDownloadURL == "" || signatureAsset.BrowserDownloadURL == "" {
-		updateStatus.IncompatibleReason = missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset, signatureAsset)
+	if executableAsset.BrowserDownloadURL == "" || metadataAsset.BrowserDownloadURL == "" || checksumAsset.BrowserDownloadURL == "" {
+		updateStatus.IncompatibleReason = missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset)
 		return updateStatus, nil
 	}
 	if executableAsset.Size > maxSelfUpdateExecutableBytes {
 		return updateStatus, fmt.Errorf("release executable exceeds %d bytes", maxSelfUpdateExecutableBytes)
-	}
-	if _, err := trustedSelfUpdateSigningKeys(); err != nil {
-		updateStatus.IncompatibleReason = "application self-update trust is not configured: " + err.Error()
-		return updateStatus, nil
 	}
 	targetCommit, ok := normalizeReleaseTargetCommit(latestRelease.TargetCommitish)
 	if !ok {
@@ -374,7 +343,6 @@ func parseGitHubRelease(releaseJSON []byte, currentVersion string) (AppUpdateSta
 	updateStatus.ExecutableURL = executableAsset.BrowserDownloadURL
 	updateStatus.MetadataURL = metadataAsset.BrowserDownloadURL
 	updateStatus.SHA256URL = checksumAsset.BrowserDownloadURL
-	updateStatus.SignatureURL = signatureAsset.BrowserDownloadURL
 	updateStatus.ExecutableSize = executableAsset.Size
 	updateStatus.ReleaseTargetCommit = targetCommit
 	return updateStatus, nil
@@ -388,7 +356,7 @@ func normalizeReleaseTargetCommit(targetCommitish string) (string, bool) {
 	return targetCommitish, true
 }
 
-func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset, signatureAsset githubReleaseAsset) string {
+func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset githubReleaseAsset) string {
 	var missing []string
 	if executableAsset.BrowserDownloadURL == "" {
 		missing = append(missing, releaseAssetExecutable)
@@ -398,9 +366,6 @@ func missingSelfUpdateAssetReason(executableAsset, metadataAsset, checksumAsset,
 	}
 	if checksumAsset.BrowserDownloadURL == "" {
 		missing = append(missing, releaseAssetSHA256)
-	}
-	if signatureAsset.BrowserDownloadURL == "" {
-		missing = append(missing, releaseAssetSignature)
 	}
 	if len(missing) == 0 {
 		return ""
@@ -415,7 +380,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if !updateStatus.Available {
 		return selfUpdateArtifact{}, errors.New("no application update is available")
 	}
-	if updateStatus.ExecutableURL == "" || updateStatus.MetadataURL == "" || updateStatus.SHA256URL == "" || updateStatus.SignatureURL == "" {
+	if updateStatus.ExecutableURL == "" || updateStatus.MetadataURL == "" || updateStatus.SHA256URL == "" {
 		return selfUpdateArtifact{}, errors.New("application update release assets are incomplete")
 	}
 	if updateStatus.ExecutableSize > maxSelfUpdateExecutableBytes {
@@ -428,7 +393,7 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 	if err != nil {
 		return selfUpdateArtifact{}, err
 	}
-	metadata, metadataData, err := downloadSelfUpdateMetadata(ctx, client, updateStatus.MetadataURL)
+	metadata, _, err := downloadSelfUpdateMetadata(ctx, client, updateStatus.MetadataURL)
 	if err != nil {
 		return selfUpdateArtifact{}, err
 	}
@@ -455,20 +420,6 @@ func downloadSelfUpdateArtifact(ctx context.Context, client *http.Client, update
 		return selfUpdateArtifact{}, fmt.Errorf("self-update checksum mismatch: got %s want %s", actualSHA256, expectedSHA256)
 	}
 	if err := validateSelfUpdateMetadata(metadata, updateStatus, actualSHA256, actualBytes); err != nil {
-		return selfUpdateArtifact{}, err
-	}
-	signatureData, err := httpGetBounded(ctx, client, updateStatus.SignatureURL, maxSelfUpdateMetadataBytes, "signature")
-	if err != nil {
-		return selfUpdateArtifact{}, err
-	}
-	signature, err := decodeSelfUpdateSignature(signatureData)
-	if err != nil {
-		return selfUpdateArtifact{}, fmt.Errorf("invalid self-update signature: %w", err)
-	}
-	if signature.KeyID != strings.TrimSpace(metadata.SigningKeyID) {
-		return selfUpdateArtifact{}, errors.New("self-update signature key does not match metadata")
-	}
-	if err := validateSelfUpdateSignature(signature, metadataData, actualSHA256); err != nil {
 		return selfUpdateArtifact{}, err
 	}
 	if err := validateDownloadedSelfUpdateExecutable(artifactPath, metadata); err != nil {
@@ -505,20 +456,6 @@ func decodeSelfUpdateMetadata(metadataData []byte) (selfUpdateReleaseMetadata, e
 		return metadata, fmt.Errorf("invalid self-update metadata: %w", err)
 	}
 	return metadata, nil
-}
-
-func validateSignedSelfUpdateReleaseDescriptor(metadata selfUpdateReleaseMetadata, metadataData []byte, signature selfUpdateSignature, expectedVersion string) (string, string, error) {
-	metadataCommit, metadataSHA256, err := validateSelfUpdateMetadataDescriptor(metadata, expectedVersion)
-	if err != nil {
-		return "", "", err
-	}
-	if signature.KeyID != strings.TrimSpace(metadata.SigningKeyID) {
-		return "", "", errors.New("self-update signature key does not match metadata")
-	}
-	if err := validateSelfUpdateSignature(signature, metadataData, metadataSHA256); err != nil {
-		return "", "", err
-	}
-	return metadataCommit, metadataSHA256, nil
 }
 
 func validateSelfUpdateMetadata(metadata selfUpdateReleaseMetadata, updateStatus AppUpdateStatus, actualSHA256 string, actualBytes int64) error {
@@ -572,9 +509,6 @@ func validateSelfUpdateMetadataDescriptor(metadata selfUpdateReleaseMetadata, ex
 	}
 	if !strings.EqualFold(filepath.Base(strings.TrimSpace(metadata.Artifact)), releaseAssetExecutable) {
 		return "", "", fmt.Errorf("self-update metadata artifact must describe %s", releaseAssetExecutable)
-	}
-	if strings.TrimSpace(metadata.SigningKeyID) == "" {
-		return "", "", errors.New("self-update metadata signing key ID is missing")
 	}
 	return metadataCommit, metadataSHA256, nil
 }

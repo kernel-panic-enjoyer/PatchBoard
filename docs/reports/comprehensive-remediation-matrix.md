@@ -7,7 +7,7 @@ Baseline captured: `2026-07-12T12:16:08+02:00`
 This matrix tracks the release-blocking remediation requested for PatchBoard. A
 row is complete only when the production change, a regression test, and the
 relevant validation gates pass. Status values are `pending`, `in progress`,
-`complete`, `blocked`, or `not applicable`.
+`complete`, `blocked`, `not applicable`, or `accepted risk`.
 
 ## Baseline
 
@@ -28,7 +28,7 @@ relevant validation gates pass. Status values are `pending`, `in progress`,
 | SU-02 | Critical | Self-update | parent/helper handoff | The parent treats process start as helper readiness and may shut down before the helper validates its request. | Add an authenticated readiness handshake; a failed helper launch must neither report success nor stop the parent. | 1 | complete |
 | SU-03 | Critical | Self-update | staged source | Hashing and copying can observe different path contents. | Open once, validate and copy from the same handle; reject source substitution. | 1 | complete |
 | SU-04 | Critical | Self-update | replacement transaction | Replacement lacks a complete startup-health acknowledgement and durable rollback decision. | Stage, verify, replace, restart, await health acknowledgement, and restore backup on failure. | 1 | complete |
-| SU-05 | Critical | Supply-chain | release authorization | Digest plus GitHub release metadata does not provide an independent signer/attestation trust root. | Bind repo, revision, semver, PE architecture, Go/build metadata, license, signature/attestation, provenance, and SBOM; fail closed where trust is absent. | 1, 9 | in progress |
+| SU-05 | Critical | Supply-chain | release authorization | GitHub Releases are the selected self-update trust authority; a repository compromise can therefore publish an update. | Require the configured GitHub repository, HTTPS asset origins, exact release/version/commit metadata, checksum, and matching Windows PE architecture. Independent signing is intentionally not required; SBOM/provenance remain tracked separately. | 1, 9 | accepted risk |
 | SU-06 | High | Self-update | download client | Redirect and final-origin behavior is not explicitly constrained by the release policy. | Enforce bounded redirects and approved HTTPS origins; test cross-origin and downgrade rejection. | 1 | complete |
 | PR-01 | Critical | Process ownership | Windows command launch | A child can run before assignment to the kill-on-close Job Object. | Launch atomically owned with `PROC_THREAD_ATTRIBUTE_JOB_LIST` or suspended/assign/resume; prove child/grandchild cleanup. | 2 | complete |
 | PR-02 | Critical | Cancellation | command runner | Cancellation and final wait paths can block indefinitely. | Bound terminate/wait/pipe-drain phases and return a typed timeout diagnostic. | 2 | complete |
@@ -68,7 +68,7 @@ relevant validation gates pass. Status values are `pending`, `in progress`,
 | CI-02 | High | Portable CI | non-Windows guard | Linux coverage is documentation-only and does not exercise portable packages. | Add real portable unit/static tests while excluding Windows-only code through build constraints. | 9 | pending |
 | CI-03 | Critical | Release | revision binding | Release workflow can build `main` rather than the exact approved release revision. | Resolve and validate one immutable revision, build once, and promote the same artifacts. | 9 | pending |
 | CI-04 | Critical | Supply-chain | workflow dependencies | Actions and MSYS2 package acquisition rely on mutable tags/repositories. | Pin actions by commit SHA and use a deterministic race-toolchain source with dependency automation. | 9 | pending |
-| CI-05 | High | Release | artifacts | Release lacks complete SBOM, provenance and independent signing/attestation policy. | Generate and publish checksums, SBOM and provenance; enforce signature/attestation verification in update flow. | 9 | pending |
+| CI-05 | High | Release | artifacts | Release lacks complete SBOM and provenance publication. | Generate and publish checksums, SBOM, and provenance for CI-built releases. | 9 | pending |
 | CI-06 | High | Quality gates | fuzz/coverage/hardware | Fuzzing, coverage and hardware-gated tests are incomplete or potentially misleading. | Expand fuzz targets/fixtures, publish coverage, and make opt-in hardware/live gates explicit. | 9 | pending |
 | CL-01 | Medium | Cleanup | dead/legacy code | Compatibility wrappers and stale hook paths remain after migrations. | Remove only after all consumers migrate and regression coverage proves behavior. | 10 | pending |
 | CL-02 | Medium | Diagnostics | redaction/output | Secret redaction and bounded output need repository-wide consistency. | Centralize redaction/limits and test encoded, split and oversized inputs. | 10 | pending |
@@ -85,3 +85,5 @@ relevant validation gates pass. Status values are `pending`, `in progress`,
   safe fallback; lack of time is not a blocker.
 - `not applicable`: repository inspection proves the requested issue does not
   exist, with evidence recorded in the final report.
+- `accepted risk`: the product owner explicitly selected a bounded trade-off;
+  the retained safeguards and remaining exposure are documented.
