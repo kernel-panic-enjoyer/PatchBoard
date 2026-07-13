@@ -171,6 +171,82 @@ func TestGitHubReleaseCheckerRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+func TestGitHubReleaseCheckerFallsBackToSignedReleaseWhenAPIRateLimited(t *testing.T) {
+	payload := []byte("signed PatchBoard release")
+	metadata := selfUpdateMetadataFixture(payload, "0.0.2", nil)
+	signature := selfUpdateSignatureFixture(metadata, payload)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/releases/latest":
+			writer.Header().Set("X-RateLimit-Remaining", "0")
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"message":"API rate limit exceeded"}`))
+		case "/releases/latest":
+			http.Redirect(writer, request, "/releases/tag/v0.0.2", http.StatusFound)
+		case "/releases/download/v0.0.2/PatchBoard.metadata.json":
+			_, _ = writer.Write([]byte(metadata))
+		case "/releases/download/v0.0.2/PatchBoard.update-signature.json":
+			_, _ = writer.Write([]byte(signature))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	checker := GitHubReleaseChecker{
+		Client:               server.Client(),
+		LatestReleaseURL:     server.URL + "/api/releases/latest",
+		LatestReleasePageURL: server.URL + "/releases/latest",
+	}
+	status, err := checker.Check(context.Background(), "0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Available || status.LatestTag != "v0.0.2" || status.LatestVersion != "0.0.2" {
+		t.Fatalf("signed fallback did not expose the newer release: %#v", status)
+	}
+	if status.ReleaseTargetCommit != selfUpdateTestReleaseCommit {
+		t.Fatalf("signed fallback lost the signed release commit: %#v", status)
+	}
+	if !strings.Contains(status.ExecutableURL, "/releases/download/v0.0.2/PatchBoard.exe") {
+		t.Fatalf("signed fallback did not build a fixed release asset URL: %#v", status)
+	}
+}
+
+func TestGitHubReleaseCheckerRejectsUnsignedFallbackWhenAPIRateLimited(t *testing.T) {
+	payload := []byte("signed PatchBoard release")
+	metadata := selfUpdateMetadataFixture(payload, "0.0.2", nil)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/releases/latest":
+			writer.Header().Set("X-RateLimit-Remaining", "0")
+			writer.WriteHeader(http.StatusForbidden)
+		case "/releases/latest":
+			http.Redirect(writer, request, "/releases/tag/v0.0.2", http.StatusFound)
+		case "/releases/download/v0.0.2/PatchBoard.metadata.json":
+			_, _ = writer.Write([]byte(metadata))
+		case "/releases/download/v0.0.2/PatchBoard.update-signature.json":
+			_, _ = writer.Write([]byte(`{"protocol_version":1,"key_id":"test-key-2026","metadata_sha256":"0000000000000000000000000000000000000000000000000000000000000000","artifact_sha256":"0000000000000000000000000000000000000000000000000000000000000000","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	checker := GitHubReleaseChecker{
+		Client:               server.Client(),
+		LatestReleaseURL:     server.URL + "/api/releases/latest",
+		LatestReleasePageURL: server.URL + "/releases/latest",
+	}
+	status, err := checker.Check(context.Background(), "0.0.1")
+	if err == nil || status.Available {
+		t.Fatalf("unsigned fallback must fail closed, status=%#v err=%v", status, err)
+	}
+	if !strings.Contains(err.Error(), "signed release fallback failed") {
+		t.Fatalf("expected fallback rejection context, got %v", err)
+	}
+}
+
 func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 	currentExecutable, err := os.Executable()
 	if err != nil {

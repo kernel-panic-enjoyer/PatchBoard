@@ -176,6 +176,10 @@
 
 [PROGRESS]
 
+- 2026-07-13T17:30:19+02:00 [TOOL] The GitHub REST release endpoint returned an actual unauthenticated rate-limit response (`HTTP 403`, `X-RateLimit-Remaining: 0`) for the host IP. The self-update checker now falls back only for that explicit condition to the signed `github.com` latest-release redirect and fixed release assets; the fallback verifies the trusted signature, metadata version/repository/artifact digest, byte bound, and exact signed commit before exposing an update. Normal non-rate-limit API failures remain errors.
+
+- 2026-07-13T17:30:19+02:00 [TOOL] Read-only release verification found that public `v0.2.0` redirects to valid PatchBoard executable/metadata/checksum assets but returns `404` for `PatchBoard.update-signature.json`; its metadata also has no signing key ID. It is correctly ineligible for the hardened self-update path and must not be accepted without a CI-built signed replacement release.
+
 - 2026-07-12T14:42:00+02:00 [CODE] CI hardening is partially advanced: every GitHub Actions workflow now pins each action reference to the immutable commit resolved from its declared release tag, with a static regression enforcing 40-character SHA revisions. CI-04 remains open for deterministic MSYS2 package acquisition and dependency automation.
 
 - 2026-07-12T14:29:00+02:00 [CODE] Completed IN-01 inventory generation ownership. A superseded synchronous refresh now returns a deep copy of the current authoritative cache instead of its obsolete local result; asynchronous publication and cancellation behavior already guarded cache ownership. Focused Windows race coverage passed.
