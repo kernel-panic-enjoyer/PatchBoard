@@ -36,6 +36,8 @@ jobs:
           }
 
       - name: Go tests
+        env:
+          PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION: "1"
         run: go test -count=1 ./...
 
       - name: Set up GCC for the race detector

@@ -4,6 +4,7 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 )
+
+const selfUpdateIntegrationTestEnvironment = "PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION"
 
 func TestValidateSelfUpdateLaunchTargetAcceptsRunningExecutable(t *testing.T) {
 	runningExecutable, err := os.Executable()
@@ -31,6 +34,9 @@ func TestValidateSelfUpdateLaunchTargetRejectsUnrelatedExecutable(t *testing.T) 
 }
 
 func TestStagedSelfUpdateHelperReplacesPortableOriginal(t *testing.T) {
+	if os.Getenv(selfUpdateIntegrationTestEnvironment) != "1" {
+		t.Skip("self-update integration test requires explicit opt-in because it executes a temporary self-replacing executable")
+	}
 	if os.Getenv("PATCHBOARD_SELF_UPDATE_PORTABLE_PARENT") == "1" {
 		runPortableSelfUpdateParent(t)
 		return
@@ -69,6 +75,7 @@ func TestStagedSelfUpdateHelperReplacesPortableOriginal(t *testing.T) {
 
 	parent := exec.Command(portableOriginal, "-test.run=^TestStagedSelfUpdateHelperReplacesPortableOriginal$")
 	parent.Env = append(os.Environ(),
+		selfUpdateIntegrationTestEnvironment+"=1",
 		"PATCHBOARD_SELF_UPDATE_PORTABLE_PARENT=1",
 		"PATCHBOARD_SELF_UPDATE_ARTIFACT="+stagedHelper,
 		"PATCHBOARD_SELF_UPDATE_SHA256="+helpersum,
@@ -82,6 +89,8 @@ func TestStagedSelfUpdateHelperReplacesPortableOriginal(t *testing.T) {
 	for time.Now().Before(deadline) {
 		updatedSum, hashErr := fileSHA256(portableOriginal)
 		if hashErr == nil && strings.EqualFold(updatedSum, helpersum) {
+			waitForSuccessfulSelfUpdateApplyOutcome(t, stagedHelper, 10*time.Second)
+			waitForSelfUpdateHelperFileRelease(t, stagedHelper, 10*time.Second)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -89,6 +98,48 @@ func TestStagedSelfUpdateHelperReplacesPortableOriginal(t *testing.T) {
 	updatedSum, hashErr := fileSHA256(portableOriginal)
 	outcome, _ := os.ReadFile(selfUpdateApplyOutcomePath(stagedHelper))
 	t.Fatalf("staged helper did not replace portable original: digest=%q error=%v want=%q outcome=%s", updatedSum, hashErr, helpersum, outcome)
+}
+
+func waitForSuccessfulSelfUpdateApplyOutcome(t *testing.T, helperPath string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(selfUpdateApplyOutcomePath(helperPath))
+		if err == nil {
+			var outcome selfUpdateApplyOutcome
+			if err := json.Unmarshal(data, &outcome); err != nil {
+				t.Fatalf("decode self-update helper outcome: %v", err)
+			}
+			if !outcome.Succeeded {
+				t.Fatalf("self-update helper failed: %s", outcome.Error)
+			}
+			return
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("read self-update helper outcome: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("self-update helper did not report completion")
+}
+
+func waitForSelfUpdateHelperFileRelease(t *testing.T, helperPath string, timeout time.Duration) {
+	t.Helper()
+	probePath := helperPath + ".release-probe"
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := os.Rename(helperPath, probePath); err == nil {
+			if err := os.Rename(probePath, helperPath); err != nil {
+				t.Fatalf("restore self-update helper after release probe: %v", err)
+			}
+			return
+		} else {
+			lastErr = err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("self-update helper executable remained locked: %v", lastErr)
 }
 
 func TestSelfUpdateHelperMustAcknowledgeReadiness(t *testing.T) {
@@ -132,12 +183,27 @@ func runPortableSelfUpdateParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID, err := currentSessionID()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := launchSelfUpdateApply(ctx, selfUpdateArtifact{
-		Path:   artifactPath,
-		SHA256: expectedSHA256,
-	}, targetPath); err != nil {
+	request := selfUpdateApplyRequest{
+		SourcePath:      artifactPath,
+		TargetPath:      targetPath,
+		ExpectedSHA256:  expectedSHA256,
+		ParentPID:       os.Getpid(),
+		ParentUserSID:   userSID,
+		ParentSessionID: sessionID,
+		DeadlineUnixMS:  time.Now().Add(30 * time.Second).UnixMilli(),
+		Restart:         false,
+	}
+	if err := launchSelfUpdateApplyHelper(ctx, artifactPath, request, false); err != nil {
 		t.Fatal(err)
 	}
 	os.Exit(0)
