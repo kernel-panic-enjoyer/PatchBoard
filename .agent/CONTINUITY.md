@@ -176,6 +176,8 @@
 
 [PROGRESS]
 
+- 2026-07-13T19:28:48+02:00 [TOOL] The public `v0.2.0` metadata begins with UTF-8 BOM bytes `EF BB BF`, which strict Go JSON decoding rejected during the rate-limit fallback. The self-update metadata reader now strips only one leading BOM before strict decoding; future build metadata is explicitly UTF-8 without a BOM. Focused regression, full tests, vet, Node syntax validation, and the workspace build passed.
+
 - 2026-07-13T18:16:45+02:00 [USER] Supersedes the independent-signature decision: GitHub Releases are the chosen self-update authority. Remove embedded signing keys, detached signature assets, release-signing tooling, and CI signing-secret requirements; retain configured-repository/HTTPS origin checks, exact version/commit metadata, SHA-256, size bounds, and Windows PE validation. A compromised GitHub repository can therefore publish an update by accepted product decision.
 
 - 2026-07-12T14:42:00+02:00 [CODE] CI hardening is partially advanced: every GitHub Actions workflow now pins each action reference to the immutable commit resolved from its declared release tag, with a static regression enforcing 40-character SHA revisions. CI-04 remains open for deterministic MSYS2 package acquisition and dependency automation.

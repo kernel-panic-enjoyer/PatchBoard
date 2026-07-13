@@ -192,6 +192,18 @@ func TestGitHubReleaseCheckerFallsBackToGitHubReleaseWhenAPIRateLimited(t *testi
 	}
 }
 
+func TestDecodeSelfUpdateMetadataAcceptsUTF8ByteOrderMark(t *testing.T) {
+	metadata := append([]byte{0xef, 0xbb, 0xbf}, []byte(selfUpdateMetadataFixture([]byte("release"), "0.0.2", nil))...)
+
+	decoded, err := decodeSelfUpdateMetadata(metadata)
+	if err != nil {
+		t.Fatalf("UTF-8 BOM-prefixed metadata was rejected: %v", err)
+	}
+	if decoded.Version != "0.0.2" {
+		t.Fatalf("decoded metadata version = %q, want 0.0.2", decoded.Version)
+	}
+}
+
 func TestDownloadSelfUpdateVerifiesChecksum(t *testing.T) {
 	currentExecutable, err := os.Executable()
 	if err != nil {

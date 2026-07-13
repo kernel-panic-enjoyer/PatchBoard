@@ -131,7 +131,9 @@ $metadata = [ordered]@{
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
 }
 $metadataPath = [IO.Path]::ChangeExtension($output, '.metadata.json')
-$metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
+$metadataJSON = $metadata | ConvertTo-Json -Depth 4
+$metadataEncoding = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText($metadataPath, $metadataJSON, $metadataEncoding)
 Write-Output "Binary size: $($builtBinary.Length) bytes ($builtMiB MiB)"
 Write-Output "SHA-256: $sha256"
 Write-Output "Metadata: $metadataPath"

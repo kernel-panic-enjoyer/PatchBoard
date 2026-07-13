@@ -75,6 +75,7 @@ func TestBuildWorkspaceSupportsReleaseStrippingMetadata(t *testing.T) {
 		"GPL-3.0-only",
 		"repository",
 		"https://github.com/kernel-panic-enjoyer/PatchBoard",
+		"[Text.UTF8Encoding]::new($false)",
 		"Get-Command node -ErrorAction SilentlyContinue",
 	} {
 		if !strings.Contains(script, expected) {

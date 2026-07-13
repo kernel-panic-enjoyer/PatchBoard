@@ -34,6 +34,7 @@ const (
 	maxSelfUpdateMetadataBytes    = 64 * 1024
 	appUpdateCheckTimeout         = 8 * time.Second
 	selfUpdateApplyTimeout        = 2 * time.Minute
+	utf8ByteOrderMark             = "\xef\xbb\xbf"
 )
 
 var sha256LinePattern = regexp.MustCompile(`(?i)\b[0-9a-f]{64}\b`)
@@ -443,6 +444,10 @@ func downloadSelfUpdateMetadata(ctx context.Context, client *http.Client, metada
 
 func decodeSelfUpdateMetadata(metadataData []byte) (selfUpdateReleaseMetadata, error) {
 	var metadata selfUpdateReleaseMetadata
+	// Windows PowerShell's UTF-8 output includes this optional marker. Accept it
+	// only at the beginning so CI metadata remains readable without relaxing the
+	// strict JSON schema below.
+	metadataData = bytes.TrimPrefix(metadataData, []byte(utf8ByteOrderMark))
 	decoder := json.NewDecoder(bytes.NewReader(metadataData))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&metadata); err != nil {
