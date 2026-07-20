@@ -1,5 +1,7 @@
 [PLANS]
 
+- 2026-07-20T20:51:29+02:00 [USER] Objective completed: pushed the validated bulk-update/UI/logging fixes to `main` and published GitHub release `v0.2.2` from the CI-built release workflow.
+
 - 2026-07-20T20:35:35+02:00 [USER] Active objective: push the validated bulk-update/UI/logging fixes directly to `main` and publish GitHub release `v0.2.2` from the CI-built release workflow.
 
 - 2026-07-20T20:14:42+02:00 [USER] Objective completed locally: diagnose and fix the seven-package elevated batch hanging after UAC/worker connection without running destructive live package updates.
@@ -404,6 +406,8 @@
 - 2026-06-25T18:14:00+02:00 [TOOL] System Go is 1.19.4 (too old for this `go 1.26` module); provisioned Go 1.26.4 into the session scratchpad SDK to build/test. `go build ./...`, `go vet ./...`, and `go test -count=1 ./internal/updater` all pass after the cleanup; gofmt clean. Race detector still blocked (cgo/gcc absent).
 
 [OUTCOMES]
+
+- 2026-07-20T20:51:29+02:00 [TOOL] Commit `5feae6f54570a225f0226b066f2527b5a7e3cfe6` was fast-forward pushed to `main`; Windows CI, Browser UI CI, CodeQL, and Non-Windows Guard passed. Release run `29769115020` published non-draft/non-prerelease `v0.2.2` with CI-built stripped `PatchBoard.exe`, metadata, and checksum; downloaded asset SHA-256 `01194f7b763ac23de18492a41c44aa2b20ad5c8336e0a29977e6d4742b9fe2aa` matched the checksum file and metadata commit/version.
 
 - 2026-07-20T20:14:42+02:00 [TOOL] Elevated-worker deadlock validation passed: focused serialized-pipe/event tests, `go test -count=1 ./internal/updater`, `go test -count=1 ./...`, Windows `go test -race -count=1 ./...`, `go vet ./...`, Staticcheck v0.7.0, bundled Node syntax check, full browser tests with `uitestsupport`, `git diff --check`, workspace build, and distribution smoke. Rebuilt `dist\PatchBoard.exe` is 17,056,768 bytes with SHA-256 `FE59AD651057B453B425664A5F230616F51D9C9633D121D054464E60D1CA92DD`; no live package mutation was run.
 
