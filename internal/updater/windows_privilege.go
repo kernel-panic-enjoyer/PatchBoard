@@ -86,7 +86,73 @@ func currentSessionID() (uint32, error) {
 	return sessionID, nil
 }
 
-func launchElevatedWorkerProcess(pipeName, capability, userSID string, sessionID uint32) (elevatedWorkerProcess, error) {
+// detectElevatedPackageUpdateBatchCapability determines whether one UAC
+// consent prompt can produce a worker token for the same interactive user.
+// A standard-user credential prompt may switch SIDs, which is acceptable for
+// Chocolatey but must never be used for current-user WinGet operations.
+func detectElevatedPackageUpdateBatchCapability() elevatedPackageUpdateBatchCapability {
+	currentToken := windows.GetCurrentProcessToken()
+	if currentToken.IsElevated() {
+		return elevatedPackageUpdateBatchCapability{SameUserElevationAvailable: true}
+	}
+
+	capability := elevatedPackageUpdateBatchCapability{RequiresElevation: true}
+	linkedToken, err := currentToken.GetLinkedToken()
+	if err != nil {
+		return capability
+	}
+	defer linkedToken.Close()
+
+	currentSID, err := tokenUserSID(currentToken)
+	if err != nil {
+		return capability
+	}
+	linkedSID, err := tokenUserSID(linkedToken)
+	if err != nil || !strings.EqualFold(currentSID, linkedSID) {
+		return capability
+	}
+	currentTokenSession, err := tokenSessionID(currentToken)
+	if err != nil {
+		return capability
+	}
+	linkedTokenSession, err := tokenSessionID(linkedToken)
+	if err != nil || currentTokenSession != linkedTokenSession {
+		return capability
+	}
+	capability.SameUserElevationAvailable = true
+	return capability
+}
+
+func tokenUserSID(token windows.Token) (string, error) {
+	user, err := token.GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	if user == nil || user.User.Sid == nil {
+		return "", fmt.Errorf("token has no user SID")
+	}
+	return user.User.Sid.String(), nil
+}
+
+func tokenSessionID(token windows.Token) (uint32, error) {
+	var sessionID uint32
+	var returnedLength uint32
+	if err := windows.GetTokenInformation(
+		token,
+		windows.TokenSessionId,
+		(*byte)(unsafe.Pointer(&sessionID)),
+		uint32(unsafe.Sizeof(sessionID)),
+		&returnedLength,
+	); err != nil {
+		return 0, err
+	}
+	if returnedLength != uint32(unsafe.Sizeof(sessionID)) {
+		return 0, fmt.Errorf("unexpected token session ID length %d", returnedLength)
+	}
+	return sessionID, nil
+}
+
+func launchElevatedWorkerProcess(pipeName, capability, userSID string, sessionID uint32, jobName, cancelEventName string) (elevatedWorkerProcess, error) {
 	exe, err := osExecutable()
 	if err != nil {
 		return elevatedWorkerProcess{}, err
@@ -97,6 +163,8 @@ func launchElevatedWorkerProcess(pipeName, capability, userSID string, sessionID
 		"--worker-capability=" + capability,
 		"--worker-user-sid=" + userSID,
 		fmt.Sprintf("--worker-session-id=%d", sessionID),
+		"--worker-job=" + jobName,
+		"--worker-cancel-event=" + cancelEventName,
 	}
 	handle, err := shellExecuteRunasProcess(exe, strings.Join(quoteArgs(args), " "))
 	if err != nil {

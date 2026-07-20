@@ -3,7 +3,9 @@
 package updater
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -13,6 +15,73 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+const namedJobHelperEnvironment = "PATCHBOARD_NAMED_JOB_HELPER"
+
+func TestNamedCommandProcessOwnerLetsWorkerJoinItself(t *testing.T) {
+	if jobName := os.Getenv(namedJobHelperEnvironment); jobName != "" {
+		if err := assignCurrentProcessToNamedJob(jobName); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("joined")
+		time.Sleep(time.Minute)
+		return
+	}
+
+	jobName := `Local\PatchBoard-Test-` + strconv.FormatInt(time.Now().UnixNano(), 10)
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	processOwner, err := newNamedCommandProcessOwner(jobName, userSID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer processOwner.Close()
+
+	helper := exec.Command(os.Args[0], "-test.run=^TestNamedCommandProcessOwnerLetsWorkerJoinItself$")
+	helper.Env = append(os.Environ(), namedJobHelperEnvironment+"="+jobName)
+	helper.SysProcAttr = hiddenSysProcAttr()
+	stdout, err := helper.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := helper.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if helper.Process != nil {
+			_ = helper.Process.Kill()
+		}
+	}()
+
+	ready := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		if scanner.Scan() {
+			ready <- scanner.Text()
+			return
+		}
+		ready <- ""
+	}()
+	select {
+	case line := <-ready:
+		if line != "joined" {
+			t.Fatalf("worker did not join named Job Object: %q", line)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not join named Job Object")
+	}
+
+	processOwner.Terminate()
+	exited := make(chan error, 1)
+	go func() { exited <- helper.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("named Job Object did not terminate worker")
+	}
+}
 
 func TestCommandProcessOwnerTerminatesGrandchildProcessTree(t *testing.T) {
 	testDir := t.TempDir()

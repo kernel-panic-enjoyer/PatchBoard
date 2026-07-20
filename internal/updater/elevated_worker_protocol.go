@@ -15,7 +15,6 @@ const (
 	elevatedWorkerPackageUpdateBatchMaxPackages = 100
 
 	workerMessageRequest = "request"
-	workerMessageCancel  = "cancel"
 
 	workerResponseProgress = "progress"
 
@@ -113,17 +112,6 @@ func newElevatedWorkerRequest(auth elevatedWorkerAuthContext, requestID, operati
 	}, nil
 }
 
-func newElevatedWorkerCancel(auth elevatedWorkerAuthContext, requestID string) elevatedWorkerMessage {
-	return elevatedWorkerMessage{
-		Version:    elevatedWorkerProtocolVersion,
-		Type:       workerMessageCancel,
-		RequestID:  requestID,
-		Capability: auth.Capability,
-		UserSID:    auth.UserSID,
-		SessionID:  auth.SessionID,
-	}
-}
-
 func marshalWorkerPayload(operationPayload any) (json.RawMessage, error) {
 	if operationPayload == nil {
 		return nil, nil
@@ -151,20 +139,13 @@ func validateElevatedWorkerMessage(message elevatedWorkerMessage, expectedAuth e
 	if message.SessionID != expectedAuth.SessionID {
 		return errors.New("worker session is invalid")
 	}
-	switch message.Type {
-	case workerMessageRequest:
-		if message.Operation == "" {
-			return errors.New("worker operation is required")
-		}
-		return validateWorkerOperationPayload(message.Operation, message.Payload)
-	case workerMessageCancel:
-		if message.Operation != "" || len(message.Payload) != 0 {
-			return errors.New("worker cancel message cannot include operation payload")
-		}
-		return nil
-	default:
+	if message.Type != workerMessageRequest {
 		return fmt.Errorf("unknown worker message type %q", message.Type)
 	}
+	if message.Operation == "" {
+		return errors.New("worker operation is required")
+	}
+	return validateWorkerOperationPayload(message.Operation, message.Payload)
 }
 
 func validateWorkerOperationPayload(operation string, rawPayload json.RawMessage) error {

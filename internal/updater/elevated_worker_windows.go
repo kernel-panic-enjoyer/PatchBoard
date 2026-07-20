@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -54,7 +55,6 @@ func (process elevatedWorkerProcess) Close() {
 func (process elevatedWorkerProcess) Terminate() {
 	if process.processOwner != nil {
 		process.processOwner.Terminate()
-		return
 	}
 	if process.handle != 0 {
 		_ = windows.TerminateProcess(process.handle, uint32(commandCancelledCode))
@@ -85,7 +85,9 @@ func runElevatedWorkerOperation(ctx context.Context, invocation elevatedWorkerIn
 	}
 	response, err := runElevatedWorkerInvocation(ctx, invocation)
 	if err != nil {
-		return workerCommandResultError(invocation.Operation, err)
+		result := elevatedWorkerCommandResultError(invocation.Operation, err)
+		appendWorkerResultLogsContext(ctx, result)
+		return result
 	}
 	appendWorkerResultLogsContext(ctx, response.Result)
 	return response.Result
@@ -123,18 +125,29 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 		return elevatedWorkerResponse{}, err
 	}
 	defer pipeServer.Close()
+	cancelEventName := `Local\PatchBoard-Worker-Cancel-` + requestID
+	cancelEvent, err := createElevatedWorkerCancellationEvent(cancelEventName, userSID)
+	if err != nil {
+		return elevatedWorkerResponse{}, fmt.Errorf("create elevated worker cancellation event: %w", err)
+	}
+	defer windows.CloseHandle(cancelEvent)
+	// A medium-integrity parent cannot assign a UAC-elevated process to a Job
+	// Object. Create a named owner first, then require the worker to join it
+	// before connecting or accepting any operation payload.
+	jobName := `Local\PatchBoard-Worker-` + requestID
+	processOwner, err := newNamedCommandProcessOwner(jobName, userSID)
+	if err != nil {
+		return elevatedWorkerResponse{}, fmt.Errorf("create elevated worker Job Object: %w", err)
+	}
 
 	appLogContext(ctx, "Launching elevated worker for %s. Approve the Windows UAC prompt if shown.", invocation.Operation)
-	workerProcess, err := launchElevatedWorkerProcess(pipeName, capability, userSID, sessionID)
+	workerProcess, err := launchElevatedWorkerProcess(pipeName, capability, userSID, sessionID, jobName, cancelEventName)
 	if err != nil {
+		processOwner.Close()
 		appLogContext(ctx, "Elevated worker launch failed for %s: %s.", invocation.Operation, err)
 		return elevatedWorkerResponse{}, err
 	}
-	if err := workerProcess.assignKillOnCloseJob(); err != nil {
-		workerProcess.Terminate()
-		workerProcess.Close()
-		return elevatedWorkerResponse{}, fmt.Errorf("assign elevated worker to Job Object: %w", err)
-	}
+	workerProcess.processOwner = processOwner
 	defer workerProcess.Close()
 
 	appLogContext(ctx, "Elevated worker launched for %s; waiting for connection.", invocation.Operation)
@@ -149,36 +162,14 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 	defer pipeConn.Close()
 	appLogContext(ctx, "Elevated worker connected for %s.", invocation.Operation)
 
-	response, err := exchangeElevatedWorkerRequest(ctx, pipeConn, authContext, workerRequest, invocation.Progress)
+	response, err := exchangeElevatedWorkerRequest(ctx, pipeConn, workerRequest, invocation.Progress, func() error {
+		return windows.SetEvent(cancelEvent)
+	})
 	if err != nil {
 		workerProcess.Terminate()
 		return elevatedWorkerResponse{}, err
 	}
 	return response, nil
-}
-
-// assignKillOnCloseJob owns the UAC-launched worker as soon as ShellExecuteEx
-// returns. ShellExecuteEx cannot create a process suspended, but the worker is
-// inert until it receives an authenticated named-pipe request; assigning it
-// here still makes cancellation and shutdown terminate the worker tree.
-func (process *elevatedWorkerProcess) assignKillOnCloseJob() error {
-	if process == nil || process.handle == 0 {
-		return errors.New("elevated worker process handle is unavailable")
-	}
-	processID, err := windows.GetProcessId(process.handle)
-	if err != nil {
-		return err
-	}
-	owner, err := newCommandProcessOwner(true)
-	if err != nil {
-		return err
-	}
-	if err := owner.AssignProcessID(processID); err != nil {
-		owner.Close()
-		return err
-	}
-	process.processOwner = owner
-	return nil
 }
 
 func acceptElevatedWorkerConnection(ctx context.Context, pipeServer *elevatedWorkerPipeServer, workerProcess elevatedWorkerProcess) (io.ReadWriteCloser, error) {
@@ -233,7 +224,13 @@ func validateWorkerOperationPayloadFromAny(operation string, payload any) error 
 	return validateWorkerOperationPayload(operation, raw)
 }
 
-func exchangeElevatedWorkerRequest(ctx context.Context, pipeConn io.ReadWriteCloser, auth elevatedWorkerAuthContext, request elevatedWorkerMessage, progress func(elevatedWorkerProgress)) (elevatedWorkerResponse, error) {
+func exchangeElevatedWorkerRequest(
+	ctx context.Context,
+	pipeConn io.ReadWriteCloser,
+	request elevatedWorkerMessage,
+	progress func(elevatedWorkerProgress),
+	signalCancellation func() error,
+) (elevatedWorkerResponse, error) {
 	encoder := json.NewEncoder(pipeConn)
 	decoder := json.NewDecoder(pipeConn)
 	decoder.DisallowUnknownFields()
@@ -275,18 +272,11 @@ func exchangeElevatedWorkerRequest(ctx context.Context, pipeConn io.ReadWriteClo
 	case err := <-decodeErrCh:
 		return elevatedWorkerResponse{}, fmt.Errorf("read elevated worker response: %w", err)
 	case <-ctx.Done():
-		cancelWriteDone := make(chan error, 1)
-		go func() {
-			cancelWriteDone <- encoder.Encode(newElevatedWorkerCancel(auth, request.RequestID))
-		}()
-		select {
-		case cancelWriteErr := <-cancelWriteDone:
-			if cancelWriteErr != nil {
-				return elevatedWorkerResponse{}, fmt.Errorf("send elevated worker cancellation: %w", cancelWriteErr)
-			}
-		case <-time.After(elevatedWorkerCancelTimeout):
-			_ = pipeConn.Close()
-			return elevatedWorkerResponse{}, fmt.Errorf("elevated worker cancellation request timed out: %w", ctx.Err())
+		if signalCancellation == nil {
+			return elevatedWorkerResponse{}, ctx.Err()
+		}
+		if err := signalCancellation(); err != nil {
+			return elevatedWorkerResponse{}, fmt.Errorf("signal elevated worker cancellation: %w", err)
 		}
 
 		select {
@@ -326,7 +316,7 @@ func newElevatedWorkerPipeServer(pipeName, userSID string) (*elevatedWorkerPipeS
 	if err != nil {
 		return nil, err
 	}
-	securityAttributes, cleanup, err := namedPipeSecurityAttributes(userSID)
+	securityAttributes, cleanup, err := elevatedWorkerObjectSecurityAttributes(userSID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +395,7 @@ func (server *elevatedWorkerPipeServer) Close() {
 	}
 }
 
-func namedPipeSecurityAttributes(userSID string) (*windows.SecurityAttributes, func(), error) {
+func elevatedWorkerObjectSecurityAttributes(userSID string) (*windows.SecurityAttributes, func(), error) {
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;" + userSID + ")")
 	if err != nil {
 		return nil, func() {}, err
@@ -417,25 +407,90 @@ func namedPipeSecurityAttributes(userSID string) (*windows.SecurityAttributes, f
 	return attributes, func() {}, nil
 }
 
+// Cancellation uses a separate event because synchronous Windows named pipes
+// can serialize a blocking read with writes on the same handle. Reading a
+// cancellation frame while the worker writes progress would deadlock both
+// peers before the first package command starts.
+func createElevatedWorkerCancellationEvent(eventName, userSID string) (windows.Handle, error) {
+	securityAttributes, cleanup, err := elevatedWorkerObjectSecurityAttributes(userSID)
+	if err != nil {
+		return 0, err
+	}
+	defer cleanup()
+	eventNameUTF16, err := windows.UTF16PtrFromString(eventName)
+	if err != nil {
+		return 0, err
+	}
+	return windows.CreateEvent(securityAttributes, 1, 0, eventNameUTF16)
+}
+
+func openElevatedWorkerCancellationEvent(eventName string) (windows.Handle, error) {
+	eventNameUTF16, err := windows.UTF16PtrFromString(eventName)
+	if err != nil {
+		return 0, err
+	}
+	return windows.OpenEvent(windows.SYNCHRONIZE, false, eventNameUTF16)
+}
+
+func watchElevatedWorkerCancellationEvent(event windows.Handle) (<-chan struct{}, func()) {
+	cancellation := make(chan struct{})
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for {
+			waitResult, err := windows.WaitForSingleObject(event, 50)
+			if err != nil || waitResult != uint32(windows.WAIT_TIMEOUT) {
+				close(cancellation)
+				return
+			}
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+	var stopOnce sync.Once
+	return cancellation, func() {
+		stopOnce.Do(func() {
+			close(stop)
+			<-stopped
+		})
+	}
+}
+
 func runElevatedWorkerFromArgs() error {
 	pipeName, _ := argValue("--worker-pipe")
 	capability, _ := argValue("--worker-capability")
 	userSID, _ := argValue("--worker-user-sid")
 	sessionIDRaw, _ := argValue("--worker-session-id")
+	jobName, _ := argValue("--worker-job")
+	cancelEventName, _ := argValue("--worker-cancel-event")
 	sessionID, err := parseRequiredUint32(sessionIDRaw)
 	if err != nil {
 		return err
 	}
 	authContext := elevatedWorkerAuthContext{Capability: capability, UserSID: userSID, SessionID: sessionID}
-	if pipeName == "" || capability == "" || userSID == "" {
-		return errors.New("worker pipe, capability, and user SID are required")
+	if pipeName == "" || capability == "" || userSID == "" || jobName == "" || cancelEventName == "" {
+		return errors.New("worker pipe, capability, user SID, Job Object, and cancellation event are required")
 	}
+	if err := assignCurrentProcessToNamedJob(jobName); err != nil {
+		return fmt.Errorf("join elevated worker Job Object: %w", err)
+	}
+	cancelEvent, err := openElevatedWorkerCancellationEvent(cancelEventName)
+	if err != nil {
+		return fmt.Errorf("open elevated worker cancellation event: %w", err)
+	}
+	defer windows.CloseHandle(cancelEvent)
+	cancellation, stopWatchingCancellation := watchElevatedWorkerCancellationEvent(cancelEvent)
+	defer stopWatchingCancellation()
 	pipeConn, err := connectElevatedWorkerPipe(pipeName, elevatedWorkerStartupTimeout)
 	if err != nil {
 		return err
 	}
 	defer pipeConn.Close()
-	return serveElevatedWorkerConnection(pipeConn, authContext)
+	return serveElevatedWorkerConnection(pipeConn, authContext, cancellation)
 }
 
 func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadWriteCloser, error) {
@@ -464,7 +519,18 @@ func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadW
 	}
 }
 
-func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elevatedWorkerAuthContext) error {
+type elevatedWorkerOperationExecutor func(context.Context, string, json.RawMessage, elevatedWorkerAuthContext, func(int, Package)) elevatedWorkerOperationResult
+
+func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elevatedWorkerAuthContext, cancellation <-chan struct{}) error {
+	return serveElevatedWorkerConnectionWithExecutor(pipeConn, authContext, cancellation, executeElevatedWorkerOperation)
+}
+
+func serveElevatedWorkerConnectionWithExecutor(
+	pipeConn io.ReadWriteCloser,
+	authContext elevatedWorkerAuthContext,
+	cancellation <-chan struct{},
+	execute elevatedWorkerOperationExecutor,
+) error {
 	decoder := json.NewDecoder(pipeConn)
 	decoder.DisallowUnknownFields()
 	encoder := json.NewEncoder(pipeConn)
@@ -487,17 +553,18 @@ func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elev
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	cancellationWatcherDone := make(chan struct{})
 	go func() {
-		var cancelMessage elevatedWorkerMessage
-		if err := decoder.Decode(&cancelMessage); err != nil {
-			return
-		}
-		if err := validateElevatedWorkerMessage(cancelMessage, authContext); err != nil || cancelMessage.Type != workerMessageCancel || cancelMessage.RequestID != workerRequest.RequestID {
+		defer close(cancellationWatcherDone)
+		select {
+		case <-cancellation:
 			cancel()
-			return
+		case <-ctx.Done():
 		}
+	}()
+	defer func() {
 		cancel()
+		<-cancellationWatcherDone
 	}()
 	batchProgressTotal := packageUpdateBatchProgressTotal(workerRequest.Operation, workerRequest.Payload)
 
@@ -516,7 +583,7 @@ func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elev
 			},
 		})
 	}
-	operationResult := executeElevatedWorkerOperation(ctx, workerRequest.Operation, workerRequest.Payload, authContext, progress)
+	operationResult := execute(ctx, workerRequest.Operation, workerRequest.Payload, authContext, progress)
 	workerResponse := elevatedWorkerResponse{
 		Version:   elevatedWorkerProtocolVersion,
 		RequestID: workerRequest.RequestID,
@@ -625,6 +692,15 @@ func packageUpdateBatchProgressTotal(operation string, payload json.RawMessage) 
 }
 
 func executeElevatedPackageUpdateBatch(ctx context.Context, packages []Package, progress func(int, Package)) elevatedWorkerOperationResult {
+	return executeElevatedPackageUpdateBatchWithRunner(ctx, packages, progress, updatePackageWithMetadataContext)
+}
+
+func executeElevatedPackageUpdateBatchWithRunner(
+	ctx context.Context,
+	packages []Package,
+	progress func(int, Package),
+	updatePackage func(context.Context, Package) CommandResult,
+) elevatedWorkerOperationResult {
 	results := make([]UpdateResult, 0, len(packages))
 	for index, pkg := range packages {
 		if ctx.Err() != nil {
@@ -638,9 +714,13 @@ func executeElevatedPackageUpdateBatch(ctx context.Context, packages []Package, 
 		if progress != nil {
 			progress(index+1, pkg)
 		}
-		result := updatePackageWithMetadataContext(ctx, pkg)
+		result := updatePackage(ctx, pkg)
 		results = append(results, UpdateResult{Key: key, Result: result})
 		if ctx.Err() != nil || result.Code == commandCancelledCode {
+			break
+		}
+		if stopReason := packageUpdateQueueStopReason(result); stopReason != "" {
+			results = append(results, skippedPackageUpdateResults(packages[index+1:], stopReason)...)
 			break
 		}
 	}
@@ -669,7 +749,7 @@ func aggregatePackageUpdateBatchResult(results []UpdateResult, err error) Comman
 		if item.Result.Stderr != "" {
 			stderr = append(stderr, strings.TrimSpace(item.Result.Stderr))
 		}
-		if !item.Result.OK && result.OK {
+		if !item.Result.OK && !commandResultSkipped(item.Result) && result.OK {
 			result.OK = false
 			result.Code = item.Result.Code
 		}
@@ -694,7 +774,9 @@ func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, prog
 		RemoveNewDesktopShortcuts: packageMutationOptionsFromContext(ctx).RemoveNewDesktopShortcuts,
 	}
 	if err := validateWorkerOperationPayloadFromAny(workerOperationPackageUpdateBatch, payload); err != nil {
-		return nil, validationCommandResult(workerOperationPackageUpdateBatch, err)
+		result := validationCommandResult(workerOperationPackageUpdateBatch, err)
+		appendElevatedPackageUpdateBatchLogsContext(ctx, nil, result)
+		return nil, result
 	}
 	response, err := runElevatedWorkerInvocation(ctx, elevatedWorkerInvocation{
 		Operation: workerOperationPackageUpdateBatch,
@@ -712,23 +794,26 @@ func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, prog
 		},
 	})
 	if err != nil {
-		return nil, workerCommandResultError(workerOperationPackageUpdateBatch, err)
+		result := elevatedWorkerCommandResultError(workerOperationPackageUpdateBatch, err)
+		appendElevatedPackageUpdateBatchLogsContext(ctx, nil, result)
+		return nil, result
 	}
-	appendWorkerResultLogsContext(ctx, response.Result)
+	appendElevatedPackageUpdateBatchLogsContext(ctx, response.Results, response.Result)
 	return response.Results, response.Result
 }
 
-func packageUpdateBatchIncludesManager(packages []Package, manager string) bool {
-	for _, pkg := range packages {
-		if pkg.Manager == manager {
-			return true
-		}
+func elevatedWorkerCommandResultError(command string, err error) CommandResult {
+	if errors.Is(err, windows.ERROR_CANCELLED) {
+		return CommandResult{Code: commandCancelledCode, Command: command, Stderr: "Cancelled."}
 	}
-	return false
+	return workerCommandResultError(command, err)
 }
 
 func appendWorkerResultLogsContext(ctx context.Context, result CommandResult) {
-	categories := logCategoriesForCommandLine(result.Command)
+	appendWorkerResultLogsWithCategoriesContext(ctx, result, logCategoriesForCommandLine(result.Command))
+}
+
+func appendWorkerResultLogsWithCategoriesContext(ctx context.Context, result CommandResult, categories []string) {
 	if result.Command != "" {
 		sessionLogs.AppendContext(ctx, "command", result.Command, categories)
 	}
@@ -745,6 +830,22 @@ func appendWorkerResultLogsContext(ctx context.Context, result CommandResult) {
 	if result.Command != "" {
 		sessionLogs.AppendContext(ctx, "exit", fmt.Sprintf("%s exited with code %d", result.Command, result.Code), categories)
 	}
+}
+
+func appendElevatedPackageUpdateBatchLogsContext(ctx context.Context, results []UpdateResult, aggregate CommandResult) {
+	batchCategories := []string{logCategoryApplication, logCategoryUpdates, logCategoryMutations}
+	if len(results) == 0 {
+		appendWorkerResultLogsWithCategoriesContext(ctx, aggregate, batchCategories)
+		return
+	}
+	for _, updateResult := range results {
+		appendWorkerResultLogsContext(ctx, updateResult.Result)
+	}
+	message := fmt.Sprintf("Elevated package batch finished with code %d after %d package result(s).", aggregate.Code, len(results))
+	if aggregate.OK {
+		message = fmt.Sprintf("Elevated package batch completed with %d package result(s).", len(results))
+	}
+	sessionLogs.AppendContext(ctx, "app", message, batchCategories)
 }
 
 func parseRequiredUint32(value string) (uint32, error) {

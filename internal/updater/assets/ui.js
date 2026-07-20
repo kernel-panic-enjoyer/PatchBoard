@@ -67,6 +67,8 @@
     "#application-restart-installed",
     "#update-all-button",
     "#update-selected-button",
+    "#select-all-updates",
+    "#select-no-updates",
     "#confirm-update-job",
     "#cancel-updates-button",
     "#retry-failed-updates",
@@ -1088,10 +1090,31 @@
     });
     return keys;
   }
+  function selectableFilteredUpdateKeys(){
+    return visibleUpdates().filter(packageCanBeIncludedInBulkUpdate).map(function(pkg){ return pkg.key; });
+  }
+  function updateFilteredSelectionActionState(){
+    var keys = selectableFilteredUpdateKeys();
+    var selectionBusy = updateBusy || activeUpdateJobRunning();
+    var hasUnselected = keys.some(function(key){ return !selectedUpdateKeys.has(key); });
+    var hasSelected = keys.some(function(key){ return selectedUpdateKeys.has(key); });
+    var selectAll = control("select-all-updates");
+    var selectNone = control("select-no-updates");
+    if(selectAll){ selectAll.disabled = selectionBusy || keys.length === 0 || !hasUnselected; }
+    if(selectNone){ selectNone.disabled = selectionBusy || keys.length === 0 || !hasSelected; }
+  }
+  function selectAllFilteredUpdates(){
+    selectableFilteredUpdateKeys().forEach(function(key){ selectedUpdateKeys.add(key); });
+    renderPackageTables();
+  }
+  function clearFilteredUpdateSelection(){
+    selectableFilteredUpdateKeys().forEach(function(key){ selectedUpdateKeys.delete(key); });
+    renderPackageTables();
+  }
   function updateSelectedActionState(){
     var button = control("update-selected-button");
-    if(!button){ return; }
-    button.disabled = updateBusy || activeUpdateJobRunning() || selectedUpdatePackageKeys().length === 0;
+    if(button){ button.disabled = updateBusy || activeUpdateJobRunning() || selectedUpdatePackageKeys().length === 0; }
+    updateFilteredSelectionActionState();
   }
   function packageReasonText(pkg){
     return String((pkg && pkg.update_reason) || "").trim();
@@ -3295,6 +3318,8 @@
     else{ selectedUpdateKeys.delete(key); }
     updateSelectedActionState();
   });
+  control("select-all-updates").addEventListener("click", selectAllFilteredUpdates);
+  control("select-no-updates").addEventListener("click", clearFilteredUpdateSelection);
   control("updates-prev").addEventListener("click", function(){
     updatePage--;
     renderUpdatesTable(visibleUpdates(), latestPackagesLoading);

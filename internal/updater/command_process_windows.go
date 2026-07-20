@@ -14,6 +14,9 @@ import (
 const createSuspendedFlag = 0x00000004
 
 var procNtResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
+var procOpenJobObject = windows.NewLazySystemDLL("kernel32.dll").NewProc("OpenJobObjectW")
+
+const jobObjectAssignProcessAccess = 0x0001
 
 type commandProcessOwner struct {
 	jobHandle windows.Handle
@@ -28,6 +31,27 @@ func newCommandProcessOwner(enabled bool) (*commandProcessOwner, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newCommandProcessOwnerFromHandle(jobHandle)
+}
+
+func newNamedCommandProcessOwner(jobName, userSID string) (*commandProcessOwner, error) {
+	jobNamePointer, err := windows.UTF16PtrFromString(jobName)
+	if err != nil {
+		return nil, err
+	}
+	securityAttributes, cleanup, err := elevatedWorkerObjectSecurityAttributes(userSID)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	jobHandle, err := windows.CreateJobObject(securityAttributes, jobNamePointer)
+	if err != nil {
+		return nil, err
+	}
+	return newCommandProcessOwnerFromHandle(jobHandle)
+}
+
+func newCommandProcessOwnerFromHandle(jobHandle windows.Handle) (*commandProcessOwner, error) {
 	processOwner := &commandProcessOwner{jobHandle: jobHandle}
 	killOnCloseLimit := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	killOnCloseLimit.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
@@ -41,6 +65,26 @@ func newCommandProcessOwner(enabled bool) (*commandProcessOwner, error) {
 		return nil, err
 	}
 	return processOwner, nil
+}
+
+func assignCurrentProcessToNamedJob(jobName string) error {
+	jobNamePointer, err := windows.UTF16PtrFromString(jobName)
+	if err != nil {
+		return err
+	}
+	jobHandle, _, callErr := procOpenJobObject.Call(
+		jobObjectAssignProcessAccess,
+		0,
+		uintptr(unsafe.Pointer(jobNamePointer)),
+	)
+	if jobHandle == 0 {
+		return callErr
+	}
+	defer windows.CloseHandle(windows.Handle(jobHandle))
+	// The elevated worker has permission to assign its own process; the
+	// medium-integrity parent retains the only long-lived handle and therefore
+	// remains able to terminate the complete inherited process tree.
+	return windows.AssignProcessToJobObject(windows.Handle(jobHandle), windows.CurrentProcess())
 }
 
 func (processOwner *commandProcessOwner) Assign(command *exec.Cmd) error {

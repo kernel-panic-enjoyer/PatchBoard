@@ -66,6 +66,7 @@ button.icon-only{width:36px;min-width:36px;padding:0}
 input{min-height:36px;border:1px solid var(--line);border-radius:8px;background:var(--input);color:var(--input-text);padding:7px 10px;outline:none}
 input:focus,button:focus-visible,select.table-filter:focus{outline:2px solid color-mix(in srgb,var(--blue) 70%,transparent);outline-offset:2px}
 input[type=checkbox]{min-height:auto;border-radius:4px;padding:0;accent-color:var(--blue)}
+input[type=checkbox]:disabled{cursor:not-allowed;opacity:.48;filter:grayscale(1);accent-color:var(--muted)}
 select.table-filter{min-height:36px;border:1px solid var(--line-strong);border-radius:8px;background-color:var(--input);background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;color:var(--input-text);padding:7px 34px 7px 12px;outline:none;cursor:pointer;font-weight:700;appearance:none;-webkit-appearance:none;transition:background-color .12s ease,border-color .12s ease,box-shadow .12s ease}
 select.table-filter:hover:not(:disabled){border-color:var(--blue);background-color:var(--surface-strong)}
 select.table-filter:disabled{cursor:not-allowed;opacity:.58}
@@ -205,6 +206,8 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .settings-section p{margin:0}
 .preference-toggle{justify-content:space-between;width:100%;color:var(--text);background:transparent}
 .check-control{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-weight:700}
+.check-control:has(input[type=checkbox]:disabled){cursor:not-allowed;color:color-mix(in srgb,var(--muted) 72%,var(--surface));opacity:.72}
+.check-control:has(input[type=checkbox]:disabled) input{cursor:not-allowed}
 .table-panel{padding:0;overflow:hidden}
   .table-panel>.section-heading,.table-panel>p,.table-panel>pre,.table-footer{padding-left:16px;padding-right:16px}
   .table-panel>.section-heading{padding-top:16px}
@@ -252,14 +255,18 @@ pre{white-space:pre-wrap;overflow:auto;background:var(--log-bg);color:var(--log-
 .session-log{height:300px;margin:0;border:1px solid var(--log-border);border-radius:8px;font:12px/1.5 Consolas,"Cascadia Mono","Courier New",monospace}
 .log-panel .section-heading{justify-content:space-between;margin-bottom:12px}
 .log-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
-.log-tab{min-height:32px;padding:5px 10px;background:transparent;color:var(--muted);border-color:var(--line-strong)}
+.log-tab{position:relative;min-height:32px;padding:5px 10px;background:transparent;color:var(--muted);border-color:var(--line-strong)}
 .log-tab.active{background:color-mix(in srgb,var(--blue) 16%,var(--surface));color:var(--text);border-color:var(--blue)}
+.log-tab::after{content:attr(data-tooltip);position:absolute;z-index:8;left:0;top:calc(100% + 8px);width:max-content;max-width:min(360px,calc(100vw - 48px));padding:8px 10px;border:1px solid var(--line-strong);border-radius:6px;background:var(--surface-strong);color:var(--text);box-shadow:var(--shadow-soft);font-size:12px;font-weight:600;line-height:1.45;text-align:left;text-transform:none;white-space:normal;pointer-events:none;opacity:0;visibility:hidden;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease,visibility .12s ease}
+.log-tab:hover::after,.log-tab:focus-visible::after{opacity:1;visibility:visible;transform:translateY(0)}
+.log-tab:nth-last-child(-n+3)::after{left:auto;right:0}
 @media(max-width:1120px){
   .dashboard-hero,.control-grid{grid-template-columns:1fr}
   .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .hero-search{justify-content:stretch}
 }
 @media(max-width:760px){
+  .log-tab::after{position:fixed;left:14px!important;right:14px!important;top:auto;bottom:14px;width:auto;max-width:none}
   .app-header{position:static;display:block;padding:16px}
   .header-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}
   main{padding:14px}

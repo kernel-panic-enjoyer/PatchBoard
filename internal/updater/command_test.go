@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 	"unicode/utf8"
 )
@@ -566,6 +567,77 @@ func TestLogEntryCategoryMetadata(t *testing.T) {
 	}
 }
 
+func TestLogCategorySpecsHaveDescriptions(t *testing.T) {
+	for _, spec := range logCategorySpecs {
+		if strings.TrimSpace(spec.Description) == "" {
+			t.Fatalf("log category %q has no tooltip description", spec.Category)
+		}
+	}
+}
+
+func TestElevatedPackageBatchLogsPerPackageMutationsWithoutAggregateDuplication(t *testing.T) {
+	logs := &LogBuffer{}
+	replaceSessionLogsForTest(t, logs)
+	ctx := withLogMetadata(context.Background(), logMetadata{JobID: "job-batch"})
+	results := []UpdateResult{
+		{
+			Key: "winget:Git.Git",
+			Result: CommandResult{
+				OK:      true,
+				Command: `C:\Users\User\AppData\Local\Microsoft\WindowsApps\winget.exe upgrade --id Git.Git --exact`,
+				Stdout:  "winget package updated",
+			},
+		},
+		{
+			Key: "choco:7zip",
+			Result: CommandResult{
+				OK:      true,
+				Command: `C:\ProgramData\chocolatey\bin\choco.exe upgrade 7zip -y`,
+				Stdout:  "chocolatey package updated",
+			},
+		},
+	}
+	aggregate := CommandResult{
+		OK:      true,
+		Command: workerOperationPackageUpdateBatch,
+		Stdout:  "aggregate output must not be duplicated",
+	}
+
+	appendElevatedPackageUpdateBatchLogsContext(ctx, results, aggregate)
+
+	mutations := joinLogMessages(logs.CategoryQuery(logCategoryMutations, 0).Entries)
+	for _, expected := range []string{"winget.exe upgrade --id Git.Git --exact", "winget package updated", "choco.exe upgrade 7zip -y", "chocolatey package updated"} {
+		if !strings.Contains(mutations, expected) {
+			t.Fatalf("mutations log missing %q:\n%s", expected, mutations)
+		}
+	}
+	if strings.Contains(mutations, aggregate.Stdout) {
+		t.Fatalf("mutations log duplicated aggregate output:\n%s", mutations)
+	}
+	if !strings.Contains(joinLogMessages(logs.CategoryQuery(logCategoryWinget, 0).Entries), "winget package updated") {
+		t.Fatal("winget result was not categorized by manager")
+	}
+	if !strings.Contains(joinLogMessages(logs.CategoryQuery(logCategoryChocolatey, 0).Entries), "chocolatey package updated") {
+		t.Fatal("Chocolatey result was not categorized by manager")
+	}
+}
+
+func TestElevatedPackageBatchLaunchFailureIsMutation(t *testing.T) {
+	logs := &LogBuffer{}
+	replaceSessionLogsForTest(t, logs)
+	result := CommandResult{Command: workerOperationPackageUpdateBatch, Code: 1, Stderr: "worker launch failed"}
+
+	appendElevatedPackageUpdateBatchLogsContext(context.Background(), nil, result)
+
+	mutations := joinLogMessages(logs.CategoryQuery(logCategoryMutations, 0).Entries)
+	if !strings.Contains(mutations, "worker launch failed") {
+		t.Fatalf("batch launch failure missing from mutations log:\n%s", mutations)
+	}
+	if !strings.Contains(joinLogMessages(logs.CategoryQuery(logCategoryUpdates, 0).Entries), "worker launch failed") {
+		t.Fatal("batch launch failure missing from updates log")
+	}
+}
+
 func TestDetectionCommandsAreNotUpdateLogCategory(t *testing.T) {
 	cases := [][]string{
 		managerCommand(managerStore, "show", "OpenAI.Codex_2p2nqsd0c76g0"),
@@ -908,5 +980,21 @@ func TestRunCommandContextLogsWhileWaitingForMutationLock(t *testing.T) {
 	}
 	if !sawCommand || !sawWait {
 		t.Fatalf("expected command and lock-wait logs, sawCommand=%t sawWait=%t entries=%#v", sawCommand, sawWait, entries)
+	}
+}
+
+func TestStreamCommandOutputIgnoresClosedPipeDuringNormalShutdown(t *testing.T) {
+	replaceSessionLogsForTest(t, &LogBuffer{})
+	reader := iotest.ErrReader(os.ErrClosed)
+
+	var output bytes.Buffer
+	var readers sync.WaitGroup
+	readers.Add(1)
+	streamCommandOutputContext(context.Background(), reader, "stdout", &output, &readers, nil, true)
+
+	for _, entry := range sessionLogs.Snapshot() {
+		if strings.Contains(entry.Message, "Error reading stdout stream") {
+			t.Fatalf("normal closed-pipe shutdown should not be logged as an error: %#v", entry)
+		}
 	}
 }

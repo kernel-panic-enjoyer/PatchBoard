@@ -79,6 +79,51 @@ func TestStateDirMigratesLegacyApplicationDirectory(t *testing.T) {
 	assertUserPrivatePermissions(t, filepath.Join(want, "store-scans", "snapshot.json"))
 }
 
+func TestStateDirSerializesConcurrentLegacyMigration(t *testing.T) {
+	replaceSessionLogsForTest(t, &LogBuffer{})
+	root := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", "")
+	t.Setenv("LOCALAPPDATA", root)
+	t.Setenv("APPDATA", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("ProgramData", "")
+
+	legacyDirectory := filepath.Join(root, legacyAppDirName)
+	if err := os.MkdirAll(legacyDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDirectory, "state.json"), []byte(`{"theme":"dark"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 16
+	start := make(chan struct{})
+	results := make(chan error, callers)
+	for index := 0; index < callers; index++ {
+		go func() {
+			<-start
+			_, err := stateDir()
+			results <- err
+		}()
+	}
+	close(start)
+	for index := 0; index < callers; index++ {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	migrationLogs := 0
+	for _, entry := range sessionLogs.Snapshot() {
+		if strings.Contains(entry.Message, "Migrated legacy state") {
+			migrationLogs++
+		}
+	}
+	if migrationLogs != 1 {
+		t.Fatalf("expected exactly one legacy migration log, got %d", migrationLogs)
+	}
+}
+
 func TestAppTempDirOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("UPDATER_TEMP_DIR", dir)

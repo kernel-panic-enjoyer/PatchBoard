@@ -1,5 +1,15 @@
 [PLANS]
 
+- 2026-07-20T20:35:35+02:00 [USER] Active objective: push the validated bulk-update/UI/logging fixes directly to `main` and publish GitHub release `v0.2.2` from the CI-built release workflow.
+
+- 2026-07-20T20:14:42+02:00 [USER] Objective completed locally: diagnose and fix the seven-package elevated batch hanging after UAC/worker connection without running destructive live package updates.
+
+- 2026-07-20T19:36:33+02:00 [USER] Objective completed locally: visually distinguish disabled checkboxes, add filtered all-page Select All/None controls to Updates Available, restore elevated bulk package output to Mutations, and document every Session Log category with accessible tooltips.
+
+- 2026-07-20T19:07:27+02:00 [USER] Follow-up objective completed locally: diagnose the 2026-07-20 bulk-update failure and make the one-UAC elevated worker reach package execution without weakening same-user WinGet or process-tree ownership rules.
+
+- 2026-07-20T18:45:26+02:00 [USER] Active objective completed locally: make each bulk WinGet/Chocolatey update job use one same-binary elevated worker and one UAC decision when same-user elevation is safe, while keeping Store updates separate and stopping the queue after timeout or installer cancellation.
+
 - 2026-07-12T12:16:08+02:00 [USER] Active objective: comprehensively remediate the pinned PatchBoard revision `36c6f471cb3e7f8ae465346cee04acc1bd441cc6` across self-update trust/rollback, Windows process ownership, state recovery, inventory/jobs, package identities, HTTP contracts, architecture, frontend, CI/release, and documentation. Work is isolated on `codex/comprehensive-remediation`; remote writes and releases are forbidden unless separately authorized.
 
 - 2026-07-10T21:45:51+02:00 [USER] Active objective completed locally: resolve the standard-library vulnerability gate exposed after the Windows test repair by requiring Go 1.26.5 in both modules, then republish and monitor `main`.
@@ -89,6 +99,14 @@
 
 [DECISIONS]
 
+- 2026-07-20T20:14:42+02:00 [CODE] After the parent sends an authenticated elevated-worker request, the synchronous named pipe is worker-to-parent only for progress and the final response; cancellation is signalled through a per-invocation ACL-protected named Windows event so no blocking pipe read can prevent worker writes.
+
+- 2026-07-20T19:36:33+02:00 [CODE] Update selection controls operate on every selectable package across all pages in the active manager filter; clearing one filter preserves selections from other filters. Elevated batch logs emit each returned package command/result under real manager/update/mutation categories and retain only a concise aggregate lifecycle summary.
+
+- 2026-07-20T19:07:27+02:00 [CODE] The medium-integrity parent creates and retains a per-request named kill-on-close Job Object; the UAC-elevated worker must open that object and assign itself before connecting to IPC or accepting an operation payload, because Windows forbids the parent from assigning the elevated process after launch.
+
+- 2026-07-20T18:45:26+02:00 [CODE] Bulk WinGet elevation is authorized only when the filtered token's linked token has the exact same user SID and session; Chocolatey remains eligible for elevation, alternate-account WinGet stays in the current-user path, and untouched packages after timeout/cancellation are recorded as skipped.
+
 - 2026-07-12T12:16:08+02:00 [CODE] The remediation will proceed in reviewable fail-first slices tracked in `docs/reports/comprehensive-remediation-matrix.md`; exact Microsoft Store SID+PFN identity and fresh-exact-target authorization remain non-negotiable, and the final executable will be rebuilt under `dist/`.
 
 - 2026-07-10T15:12:22+02:00 [CODE] Staticcheck `v0.7.0` is pinned as a blocking root/browser/release gate. `staticcheck.conf` inherits upstream defaults and temporarily excludes only `U1000` for compatibility/test-seam retirement and `ST1005` for existing user-facing diagnostic casing; correctness, performance, deprecation, and other default checks remain enabled.
@@ -175,6 +193,8 @@
 - 2026-06-28T18:43:24+02:00 [CODE] Repository licensing is now documented as `GPL-3.0-only` via a root `LICENSE` file and README License section; no per-file SPDX headers were added.
 
 [PROGRESS]
+
+- 2026-07-20T20:14:42+02:00 [CODE] Removed the elevated-worker cancel JSON frame and same-pipe cancellation reader, added the `--worker-cancel-event` internal protocol argument/event watcher, and added serialized-pipe plus named-event regressions. The browser settings regression now waits for the fake backend mutation instead of racing its DOM projection.
 
 - 2026-07-13T20:10:00+02:00 [TOOL] Windows CI run `29272453161` failed because `TestStagedSelfUpdateHelperReplacesPortableOriginal` returned while its staged helper executable was still locked, so TempDir cleanup failed. The test now waits for a successful helper outcome and verified file release; its temporary self-replacement behavior is opt-in (`PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION=1`) and enabled only for the Windows CI Go-test step after Bitdefender quarantined the local temporary test executable.
 
@@ -288,6 +308,12 @@
 
 [DISCOVERIES]
 
+- 2026-07-20T20:14:42+02:00 [TOOL] The 2026-07-20 19:22 archive ends after `Elevated worker connected for package_update_batch` at 19:13:59 with no first-package progress or command. The worker had reintroduced a goroutine blocked on `decoder.Decode` for future cancellation; synchronous Windows pipe I/O serialized that read against progress writes and deadlocked before package 1.
+
+- 2026-07-20T19:36:33+02:00 [CODE] The Mutations tab was empty for elevated bulk jobs because the parent logged only the synthetic `package_update_batch` aggregate; the worker response already carried bounded per-package `CommandResult` records, so no protocol change was needed. Absolute tooltip pseudo-elements also caused mobile page-width overflow until narrow-screen tooltips were constrained to a fixed viewport position.
+
+- 2026-07-20T19:07:27+02:00 [TOOL] Archive `2026-07-20_18-49-59_patchboard-logs.zip` showed the package batch stopped immediately after `Launching elevated worker` and before `Elevated worker launched; waiting for connection`; no package command ran. The only intervening operation was the medium parent assigning the UAC-elevated process to a Job Object, which fails across the integrity boundary. Invocation errors were also absent from Session Log because the batch path returned them without appending worker-result logs.
+
 - 2026-07-12T13:11:00+02:00 [TOOL] The default environment has `CGO_ENABLED=0` despite MSYS2 UCRT64 GCC being installed. `CGO_ENABLED=1`, `CC=C:\\msys64\\ucrt64\\bin\\gcc.exe`, and the UCRT64 bin path are required for Windows race runs; the internal updater race suite then passed in 86.303s.
 
 - 2026-07-13T18:16:45+02:00 [USER] Supersedes the local-build signing-key limitation: local and release builds evaluate the same GitHub Release asset contract and do not require self-update signing-key configuration.
@@ -378,6 +404,18 @@
 - 2026-06-25T18:14:00+02:00 [TOOL] System Go is 1.19.4 (too old for this `go 1.26` module); provisioned Go 1.26.4 into the session scratchpad SDK to build/test. `go build ./...`, `go vet ./...`, and `go test -count=1 ./internal/updater` all pass after the cleanup; gofmt clean. Race detector still blocked (cgo/gcc absent).
 
 [OUTCOMES]
+
+- 2026-07-20T20:14:42+02:00 [TOOL] Elevated-worker deadlock validation passed: focused serialized-pipe/event tests, `go test -count=1 ./internal/updater`, `go test -count=1 ./...`, Windows `go test -race -count=1 ./...`, `go vet ./...`, Staticcheck v0.7.0, bundled Node syntax check, full browser tests with `uitestsupport`, `git diff --check`, workspace build, and distribution smoke. Rebuilt `dist\PatchBoard.exe` is 17,056,768 bytes with SHA-256 `FE59AD651057B453B425664A5F230616F51D9C9633D121D054464E60D1CA92DD`; no live package mutation was run.
+
+- 2026-07-20T19:36:33+02:00 [TOOL] Selection/logging/UI regressions, focused and full updater tests, full Windows race suite, `go vet`, Staticcheck v0.7.0, Node syntax validation, focused and full Chromium tests, `git diff --check`, workspace build, and distribution smoke passed. Rebuilt `dist\PatchBoard.exe` SHA-256 is `6E637F161E97CF780EC03DCE343A44344CC2399AD35B4885785D277C82267EC1`.
+
+- 2026-07-20T19:07:27+02:00 [TOOL] Named Job Object self-join regression, updater/full/race test suites, `go vet`, Staticcheck, Node syntax validation, browser tests, workspace build, and distribution smoke passed. The elevated worker now self-joins its parent-owned Job Object before IPC; startup/invocation errors are retained in Session Log. Final rebuilt `dist\PatchBoard.exe` SHA-256 is `C1A4FAA552BE6A18C54150717E84D4211D79860B8BBB786F5E759959442CF6C5`; no destructive live package update was run.
+
+- 2026-07-20T18:45:26+02:00 [TOOL] Single-UAC bulk-update remediation passed focused and full updater tests, the full race suite with MSYS2 GCC, `go vet`, Staticcheck, Node syntax validation, browser tests (one unrelated transient failure passed in isolation and on a full rerun), workspace build, distribution smoke, and `git diff --check`. Rebuilt `dist\PatchBoard.exe` SHA-256 is `B52E0E29BFBAC27813EE92183672230D77E6751873702A46CDD52F44A8A16751`; no live package updates were executed.
+
+- 2026-07-14T21:23:00+02:00 [TOOL] Verified `v0.1.8` remains a complete legacy bridge release with `WindowsUpdaterWebUI.exe`, metadata, and checksum. Restored `v0.2.1` to its original PatchBoard-only asset set after removing three mistakenly attached legacy aliases at the user's direction. [DISCOVERY] A `v0.1.7` client asks GitHub for the single latest stable release, so it cannot automatically select historical `v0.1.8` while `v0.2.1` is latest; supporting automatic `0.1.7` migration requires a compatible newer release or changing latest-release visibility.
+
+- 2026-07-13T22:14:51+02:00 [TOOL] Released PatchBoard `v0.2.1` from `main` commit `5576111193e995a481cb5a1a4a974b551ffb3455` through successful GitHub Actions run `29281268375`. The non-draft, non-prerelease release contains CI-built `PatchBoard.exe`, `PatchBoard.metadata.json`, and `PatchBoard.exe.sha256`; the checksum asset matches the published executable digest `9c03f500c0024d5e4412f277abb369a7962b2739b7ad983bc0556a6d0880c5df`.
 
 - 2026-07-10T21:45:51+02:00 [TOOL] Go 1.26.5 toolchain validation passed for both modules: root and tagged browser tests, root vet, root and browser `govulncheck`, workspace build, distribution smoke, and `git diff --check`. Rebuilt `dist\PatchBoard.exe` SHA-256 is `4C457F14E874166D57CFB5F3CA61687E07F6C5DCE79FCE1BE1B282BD981F1D8C`.
 - 2026-07-10T21:35:36+02:00 [TOOL] Windows CI repair validation passed: focused regressions, `go test -count=1 ./...`, full `go test -race -count=1 ./...` with MSYS2 GCC, `go vet ./...`, Staticcheck `v0.7.0`, bundled Node syntax check, `git diff --check`, `Build-Workspace.ps1`, and distribution smoke. Rebuilt `dist\PatchBoard.exe` SHA-256 is `5F91E6B3E23B2CDD45F6047884C1DDCB70679330D31D3FC0FD519AFB6A25B44A`.

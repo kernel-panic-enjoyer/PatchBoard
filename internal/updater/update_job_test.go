@@ -255,6 +255,98 @@ func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) 
 	}
 }
 
+func TestBulkElevationCapabilityIncludesWingetAndChocolateyForSameUserConsent(t *testing.T) {
+	capability := elevatedPackageUpdateBatchCapability{
+		RequiresElevation:          true,
+		SameUserElevationAvailable: true,
+	}
+
+	for _, manager := range []string{managerWinget, managerChoco} {
+		if !packageEligibleForElevatedUpdateBatch(Package{Manager: manager}, capability) {
+			t.Fatalf("expected %s package to be eligible for the same elevated worker", manager)
+		}
+	}
+	if packageEligibleForElevatedUpdateBatch(Package{Manager: managerStore}, capability) {
+		t.Fatal("Store packages must remain outside the elevated package batch")
+	}
+}
+
+func TestBulkElevationCapabilityKeepsWingetCurrentUserWhenElevationWouldSwitchAccounts(t *testing.T) {
+	capability := elevatedPackageUpdateBatchCapability{
+		RequiresElevation:          true,
+		SameUserElevationAvailable: false,
+	}
+
+	if packageEligibleForElevatedUpdateBatch(Package{Manager: managerWinget}, capability) {
+		t.Fatal("WinGet must not be elevated through alternate administrator credentials")
+	}
+	if !packageEligibleForElevatedUpdateBatch(Package{Manager: managerChoco}, capability) {
+		t.Fatal("Chocolatey should remain eligible for an elevated worker")
+	}
+}
+
+func TestUpdateJobTimeoutStopsQueueAndMarksRemainingPackagesSkipped(t *testing.T) {
+	var calls []string
+	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+		calls = append(calls, packageKey(manager, id))
+		return CommandResult{Code: commandTimeoutCode, Command: "update " + id, Stderr: "Timed out."}
+	})
+	defer restore()
+
+	app := testUpdateJobApp(t)
+	if _, err := app.startUpdateJob([]string{"winget:Git.Git", "choco:gh"}); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForUpdateJobStopped(t, app)
+
+	if len(calls) != 1 || calls[0] != "winget:Git.Git" {
+		t.Fatalf("expected queue to stop after first timeout, calls=%#v", calls)
+	}
+	if status.State != jobStateFailed || len(status.Results) != 2 {
+		t.Fatalf("expected failed timeout plus skipped package, got %#v", status)
+	}
+	if status.Results[0].Result.Code != commandTimeoutCode || status.Results[1].Result.Code != commandSkippedCode {
+		t.Fatalf("unexpected timeout queue results: %#v", status.Results)
+	}
+	if !strings.Contains(status.Results[1].Result.Stdout, "previous package update timed out") {
+		t.Fatalf("skipped package should explain the timeout, got %#v", status.Results[1])
+	}
+}
+
+func TestElevatedBatchInstallerCancellationStopsQueueAndMarksRemainingPackagesSkipped(t *testing.T) {
+	packages := []Package{
+		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
+		updatableTestPackage(managerChoco, "vendor-two", "Vendor Two"),
+		updatableTestPackage(managerWinget, "Vendor.Three", "Vendor Three"),
+	}
+	var calls []string
+	updateRunner := func(ctx context.Context, pkg Package) CommandResult {
+		calls = append(calls, pkg.Key)
+		return CommandResult{
+			Code:    2147943623,
+			Command: "update " + pkg.ID,
+			Stdout:  "The operation was canceled by the user.",
+		}
+	}
+
+	result := executeElevatedPackageUpdateBatchWithRunner(context.Background(), packages, nil, updateRunner)
+
+	if len(calls) != 1 || calls[0] != packages[0].Key {
+		t.Fatalf("expected worker queue to stop after installer cancellation, calls=%#v", calls)
+	}
+	if result.Result.OK || len(result.Results) != len(packages) {
+		t.Fatalf("expected failed cancellation plus skipped rows, got %#v", result)
+	}
+	if result.Results[0].Result.Code != 2147943623 {
+		t.Fatalf("expected installer cancellation result first, got %#v", result.Results)
+	}
+	for _, skipped := range result.Results[1:] {
+		if skipped.Result.Code != commandSkippedCode || !strings.Contains(skipped.Result.Stdout, "installer was cancelled") {
+			t.Fatalf("expected remaining package to be skipped after installer cancellation, got %#v", skipped)
+		}
+	}
+}
+
 func TestUpdateAllBatchesMultipleChocolateyPackages(t *testing.T) {
 	batchCalls := 0
 	restore := replaceBulkUpdateBatchHooks(
@@ -316,6 +408,38 @@ func TestElevatedBatchFailureWithoutPackageRowsFailsJob(t *testing.T) {
 	for _, result := range status.Results {
 		if result.Result.OK || !strings.Contains(result.Result.Stderr, "worker failed") {
 			t.Fatalf("expected synthesized failed batch result, got %#v", result)
+		}
+	}
+}
+
+func TestElevatedBatchUACCancellationCancelsWholeJobWithoutExecutingPackages(t *testing.T) {
+	restore := replaceBulkUpdateBatchHooks(
+		func(pkg Package) bool { return pkg.Manager == managerWinget || pkg.Manager == managerChoco },
+		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
+			return nil, CommandResult{Code: commandCancelledCode, Command: workerOperationPackageUpdateBatch, Stderr: "Cancelled."}
+		},
+		func(ctx context.Context, manager, id string) CommandResult {
+			t.Fatalf("UAC cancellation must not fall back to a direct package command for %s:%s", manager, id)
+			return CommandResult{}
+		},
+	)
+	defer restore()
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
+		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
+		updatableTestPackage(managerChoco, "vendor-two", "Vendor Two"),
+	}}}}}
+	if _, err := app.startUpdateJob(nil); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForUpdateJobStopped(t, app)
+
+	if status.State != jobStateCancelled || !status.CancelRequested || len(status.Results) != 2 {
+		t.Fatalf("expected whole job to be cancelled before package execution, got %#v", status)
+	}
+	for _, result := range status.Results {
+		if result.Result.Code != commandCancelledCode {
+			t.Fatalf("expected UAC cancellation result for every unstarted package, got %#v", status.Results)
 		}
 	}
 }
@@ -436,6 +560,24 @@ func TestElevatedBatchPlanExcludesStorePackages(t *testing.T) {
 	}
 }
 
+func TestElevatedBatchPlanUsesOneEligiblePackageInMultiPackageJob(t *testing.T) {
+	packages := []Package{
+		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
+		{Manager: managerStore, ID: "Vendor.Store_abc123", Key: "store:Vendor.Store_abc123"},
+	}
+
+	batch, remaining := planElevatedPackageUpdateBatch(packages, func(pkg Package) bool {
+		return pkg.Manager == managerWinget
+	})
+
+	if len(batch) != 1 || batch[0].Manager != managerWinget {
+		t.Fatalf("expected the one eligible package to use the worker in a bulk job, got %#v", batch)
+	}
+	if len(remaining) != 1 || remaining[0].Manager != managerStore {
+		t.Fatalf("expected Store package to remain outside the worker, got %#v", remaining)
+	}
+}
+
 func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 	started := make(chan struct{})
 	restore := replaceBulkUpdateBatchHooks(
@@ -467,8 +609,11 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 	}
 	app.cancelUpdateJob()
 	status := waitForUpdateJobStopped(t, app)
-	if status.State != jobStateCancelled || len(status.Results) != 1 || status.Results[0].Key != "winget:Vendor.One" {
-		t.Fatalf("expected completed batch results to be retained on cancellation, got %#v", status)
+	if status.State != jobStateCancelled || len(status.Results) != 2 || status.Results[0].Key != "winget:Vendor.One" {
+		t.Fatalf("expected completed and skipped batch results to be retained on cancellation, got %#v", status)
+	}
+	if status.Results[1].Key != "choco:gh" || status.Results[1].Result.Code != commandSkippedCode {
+		t.Fatalf("expected untouched batch package to be marked skipped, got %#v", status.Results)
 	}
 }
 
@@ -575,8 +720,8 @@ func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 	if !status.CancelRequested || status.Running || status.RefreshStarted {
 		t.Fatalf("unexpected cancelled status: %#v", status)
 	}
-	if len(status.Results) != 1 || status.Results[0].Result.Code != commandCancelledCode {
-		t.Fatalf("expected one cancelled result, got %#v", status.Results)
+	if len(status.Results) != 2 || status.Results[0].Result.Code != commandCancelledCode || status.Results[1].Result.Code != commandSkippedCode {
+		t.Fatalf("expected one cancelled and one skipped result, got %#v", status.Results)
 	}
 	mu.Lock()
 	defer mu.Unlock()

@@ -2,8 +2,10 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,21 +101,22 @@ const (
 )
 
 type LogCategorySpec struct {
-	Category string
-	Filename string
-	Label    string
+	Category    string
+	Filename    string
+	Label       string
+	Description string
 }
 
 var logCategorySpecs = []LogCategorySpec{
-	{logCategoryAll, "all.txt", "All"},
-	{logCategoryApplication, "application.txt", "Application"},
-	{logCategorySearches, "searches.txt", "Searches"},
-	{logCategoryUpdates, "updates.txt", "Updates"},
-	{logCategoryMutations, "mutations.txt", "Mutations"},
-	{logCategoryStoreScan, "store-scan.txt", "Store Scan"},
-	{logCategoryWinget, "winget.txt", "winget"},
-	{logCategoryStore, "store.txt", "Store"},
-	{logCategoryChocolatey, "chocolatey.txt", "Chocolatey"},
+	{logCategoryAll, "all.txt", "All", "Every retained session log entry from PatchBoard and package-manager processes."},
+	{logCategoryApplication, "application.txt", "Application", "PatchBoard lifecycle, API, state, scheduling, worker coordination, and internal diagnostics."},
+	{logCategorySearches, "searches.txt", "Searches", "Package search commands and results from every supported package manager."},
+	{logCategoryUpdates, "updates.txt", "Updates", "Update discovery, available-version checks, execution, and post-update verification."},
+	{logCategoryMutations, "mutations.txt", "Mutations", "Commands that change package-manager state, including installs, upgrades, uninstalls, and source changes."},
+	{logCategoryStoreScan, "store-scan.txt", "Store Scan", "Microsoft Store inventory, update discovery, evidence reconciliation, and scan-health diagnostics."},
+	{logCategoryWinget, "winget.txt", "winget", "All retained command output produced through WinGet, including inventory, searches, and package changes."},
+	{logCategoryStore, "store.txt", "Store", "All retained Microsoft Store command output, including discovery and exact package actions."},
+	{logCategoryChocolatey, "chocolatey.txt", "Chocolatey", "All retained command output produced through Chocolatey, including searches and package changes."},
 }
 
 func nextCommandLogID() string {
@@ -664,7 +667,7 @@ func streamCommandOutputContext(ctx context.Context, reader io.Reader, stream st
 			pendingLine = appendLogChunkContext(ctx, stream, pendingLine, decodedChunk, categories, emitSessionLog)
 		}
 		if readErr != nil {
-			if readErr != io.EOF && ctx.Err() == nil {
+			if readErr != io.EOF && !errors.Is(readErr, os.ErrClosed) && ctx.Err() == nil {
 				appLogContext(ctx, "Error reading %s stream: %s", stream, readErr)
 			}
 			break

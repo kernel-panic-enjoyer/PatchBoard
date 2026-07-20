@@ -189,7 +189,7 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 			}
 		}
 		if ctx.Err() == nil && app.operationJobCanContinue(job) {
-			for _, updatePackage := range remainingPackages {
+			for packageIndex, updatePackage := range remainingPackages {
 				packageCtx := withLogMetadata(ctx, logMetadata{PackageKey: updatePackage.Key, Manager: updatePackage.Manager})
 				nextIndex := app.nextUpdateResultIndex(job)
 				app.mutateOperationJob(job, func(status *OperationJobStatus) {
@@ -217,6 +217,14 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 						status.Notice = "Update cancelled."
 					}
 				})
+				if stopReason := packageUpdateQueueStopReason(result); stopReason != "" && packageIndex+1 < len(remainingPackages) {
+					skippedResults := skippedPackageUpdateResults(remainingPackages[packageIndex+1:], stopReason)
+					app.mutateOperationJob(job, func(status *OperationJobStatus) {
+						status.Results = append(status.Results, skippedResults...)
+						status.Notice = "Remaining package updates were skipped because " + stopReason + "."
+					})
+					break
+				}
 				if packageCtx.Err() != nil || result.Code == commandCancelledCode {
 					break
 				}
@@ -303,9 +311,7 @@ func (app *App) runElevatedPackageUpdateBatchForJob(ctx context.Context, job *Op
 		})
 	})
 	appLogContext(ctx, "Elevated package batch finished with code %d.", batchResult.Code)
-	if !batchResult.OK && len(batchResults) == 0 {
-		batchResults = failedBatchUpdateResults(updatePackages, batchResult)
-	}
+	batchResults = completePartialBatchResults(updatePackages, batchResults, batchResult)
 	app.mutateOperationJob(job, func(status *OperationJobStatus) {
 		status.Results = append(status.Results, batchResults...)
 		status.Result = &batchResult

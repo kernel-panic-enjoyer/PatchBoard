@@ -55,6 +55,13 @@ func stateDir() (string, error) {
 }
 
 func migrateLegacyStateDirectory(newDirectory string) {
+	directoryLock := stateDirectoryMutex(newDirectory)
+	directoryLock.Lock()
+	defer directoryLock.Unlock()
+	migrateLegacyStateDirectoryLocked(newDirectory)
+}
+
+func migrateLegacyStateDirectoryLocked(newDirectory string) {
 	if legacyAppDirName == "" || legacyAppDirName == appDirName {
 		return
 	}

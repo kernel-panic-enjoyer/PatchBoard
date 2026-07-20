@@ -41,6 +41,8 @@ func TestParseCLIElevatedWorkerAllowsInternalProtocolFlags(t *testing.T) {
 		"--worker-capability=test-capability",
 		"--worker-user-sid=S-1-5-21-test-1001",
 		"--worker-session-id=7",
+		"--worker-job=Local\\PatchBoard-Worker-test",
+		"--worker-cancel-event=Local\\PatchBoard-Worker-Cancel-test",
 	})
 	if err != nil {
 		t.Fatalf("parse elevated worker CLI: %v", err)
@@ -93,6 +95,7 @@ func TestParseCLIRejectsWorkerProtocolFlagsOutsideElevatedWorker(t *testing.T) {
 		{"--worker-pipe=\\\\.\\pipe\\PatchBoard-test"},
 		{"--store-inventory-worker", "--worker-capability=test-capability"},
 		{"--store-update-discovery-worker", "--worker-user-sid=S-1-5-21-test-1001"},
+		{"--worker-cancel-event=Local\\PatchBoard-Worker-Cancel-test"},
 	} {
 		_, err := parseCLI(args)
 		if err == nil || !strings.Contains(err.Error(), "worker protocol flags require --elevated-worker") {

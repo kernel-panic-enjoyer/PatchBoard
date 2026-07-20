@@ -4,13 +4,34 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
+
+type serializedWorkerPipe struct {
+	io.ReadWriteCloser
+	mu sync.Mutex
+}
+
+func (pipe *serializedWorkerPipe) Read(buffer []byte) (int, error) {
+	pipe.mu.Lock()
+	defer pipe.mu.Unlock()
+	return pipe.ReadWriteCloser.Read(buffer)
+}
+
+func (pipe *serializedWorkerPipe) Write(buffer []byte) (int, error) {
+	pipe.mu.Lock()
+	defer pipe.mu.Unlock()
+	return pipe.ReadWriteCloser.Write(buffer)
+}
 
 func TestElevatedWorkerProtocolEncodingAndAuthorization(t *testing.T) {
 	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
@@ -278,18 +299,6 @@ func TestElevatedWorkerPackageUpdateBatchRejectsUnsafePayloads(t *testing.T) {
 	}
 }
 
-func TestElevatedWorkerCancelMessageValidation(t *testing.T) {
-	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
-	cancel := newElevatedWorkerCancel(auth, "request-1")
-	if err := validateElevatedWorkerMessage(cancel, auth); err != nil {
-		t.Fatalf("valid cancel rejected: %v", err)
-	}
-	cancel.Operation = workerOperationPackageInstall
-	if err := validateElevatedWorkerMessage(cancel, auth); err == nil {
-		t.Fatal("expected cancel with operation payload to be rejected")
-	}
-}
-
 func TestDecodeWorkerPayloadRejectsMalformedJSON(t *testing.T) {
 	var payload elevatedWorkerPackageInstallPayload
 	if err := decodeWorkerPayload(json.RawMessage(`{"manager":"winget","package_id":`), &payload); err == nil {
@@ -314,7 +323,7 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 	defer server.Close()
 
 	requestRead := make(chan struct{})
-	cancelRead := make(chan struct{})
+	cancelSignalled := make(chan struct{})
 	go func() {
 		decoder := json.NewDecoder(server)
 		decoder.DisallowUnknownFields()
@@ -324,14 +333,7 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 			return
 		}
 		close(requestRead)
-		var gotCancel elevatedWorkerMessage
-		if err := decoder.Decode(&gotCancel); err != nil {
-			return
-		}
-		if gotCancel.Type != workerMessageCancel || gotCancel.RequestID != gotRequest.RequestID {
-			return
-		}
-		close(cancelRead)
+		<-cancelSignalled
 		_ = encoder.Encode(elevatedWorkerResponse{
 			Version:   elevatedWorkerProtocolVersion,
 			RequestID: gotRequest.RequestID,
@@ -341,8 +343,12 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan CommandResult, 1)
+	var signalOnce sync.Once
 	go func() {
-		response, err := exchangeElevatedWorkerRequest(ctx, client, auth, request, nil)
+		response, err := exchangeElevatedWorkerRequest(ctx, client, request, nil, func() error {
+			signalOnce.Do(func() { close(cancelSignalled) })
+			return nil
+		})
 		if err != nil {
 			t.Errorf("exchange returned error: %v", err)
 		}
@@ -355,9 +361,9 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 	}
 	cancel()
 	select {
-	case <-cancelRead:
+	case <-cancelSignalled:
 	case <-time.After(time.Second):
-		t.Fatal("expected authenticated cancel message")
+		t.Fatal("expected cancellation event signal")
 	}
 	select {
 	case result := <-done:
@@ -412,9 +418,9 @@ func TestExchangeElevatedWorkerRequestReportsProgress(t *testing.T) {
 	}()
 
 	progressCh := make(chan elevatedWorkerProgress, 1)
-	response, err := exchangeElevatedWorkerRequest(context.Background(), client, auth, request, func(progress elevatedWorkerProgress) {
+	response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, func(progress elevatedWorkerProgress) {
 		progressCh <- progress
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +434,88 @@ func TestExchangeElevatedWorkerRequestReportsProgress(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected progress callback")
+	}
+}
+
+func TestElevatedWorkerReportsProgressWithoutBlockingOnFutureCancellation(t *testing.T) {
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git", Name: "Git"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, rawServer := net.Pipe()
+	defer client.Close()
+	server := &serializedWorkerPipe{ReadWriteCloser: rawServer}
+	cancellation := make(chan struct{})
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- serveElevatedWorkerConnectionWithExecutor(server, auth, cancellation, func(
+			ctx context.Context,
+			operation string,
+			payload json.RawMessage,
+			auth elevatedWorkerAuthContext,
+			progress func(int, Package),
+		) elevatedWorkerOperationResult {
+			// Give a legacy blocking cancel reader enough time to occupy the
+			// serialized duplex handle before the first progress write.
+			time.Sleep(50 * time.Millisecond)
+			progress(1, Package{Manager: managerWinget, ID: "Git.Git", Name: "Git"})
+			return elevatedWorkerOperationResult{Result: CommandResult{OK: true, Command: operation}}
+		})
+	}()
+
+	if err := json.NewEncoder(client).Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var progressResponse elevatedWorkerResponse
+	if err := json.NewDecoder(client).Decode(&progressResponse); err != nil {
+		t.Fatalf("worker did not report progress before cancellation: %v", err)
+	}
+	if progressResponse.Type != workerResponseProgress || progressResponse.Progress == nil || progressResponse.Progress.CurrentIndex != 1 {
+		t.Fatalf("unexpected first worker response: %#v", progressResponse)
+	}
+
+	_ = client.Close()
+	select {
+	case <-serveDone:
+	case <-time.After(time.Second):
+		t.Fatal("worker connection did not stop after the client closed")
+	}
+}
+
+func TestElevatedWorkerCancellationEventSignalsWatcher(t *testing.T) {
+	userSID, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventName := `Local\PatchBoard-Worker-Cancel-Test-` + shortHash(t.Name()+t.TempDir())
+	ownerEvent, err := createElevatedWorkerCancellationEvent(eventName, userSID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(ownerEvent)
+
+	workerEvent, err := openElevatedWorkerCancellationEvent(eventName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(workerEvent)
+	cancellation, stopWatching := watchElevatedWorkerCancellationEvent(workerEvent)
+	defer stopWatching()
+
+	if err := windows.SetEvent(ownerEvent); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancellation:
+	case <-time.After(time.Second):
+		t.Fatal("worker cancellation watcher did not observe the parent event")
 	}
 }
 
@@ -480,9 +568,9 @@ func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *test
 	done := make(chan elevatedWorkerResponse, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		response, err := exchangeElevatedWorkerRequest(context.Background(), client, auth, request, func(progress elevatedWorkerProgress) {
+		response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, func(progress elevatedWorkerProgress) {
 			progressCh <- progress
-		})
+		}, nil)
 		if err != nil {
 			errCh <- err
 			return

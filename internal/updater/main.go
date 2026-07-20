@@ -122,6 +122,8 @@ func parseCLI(args []string) (cliOptions, error) {
 	workerCapability := set.String("worker-capability", "", "")
 	workerUserSID := set.String("worker-user-sid", "", "")
 	workerSessionID := set.String("worker-session-id", "", "")
+	workerJob := set.String("worker-job", "", "")
+	workerCancelEvent := set.String("worker-cancel-event", "", "")
 	noElevate := set.Bool(strings.TrimPrefix(flagNoElevate, "--"), false, "")
 	if err := set.Parse(args); err != nil {
 		return options, err
@@ -136,7 +138,9 @@ func parseCLI(args []string) (cliOptions, error) {
 	workerProtocolFlagSet := strings.TrimSpace(*workerPipe) != "" ||
 		strings.TrimSpace(*workerCapability) != "" ||
 		strings.TrimSpace(*workerUserSID) != "" ||
-		strings.TrimSpace(*workerSessionID) != ""
+		strings.TrimSpace(*workerSessionID) != "" ||
+		strings.TrimSpace(*workerJob) != "" ||
+		strings.TrimSpace(*workerCancelEvent) != ""
 	if err := validateWorkerProtocolFlags(
 		workerProtocolFlagSet,
 		*elevatedWorker,
@@ -498,6 +502,7 @@ func Main() {
 	case cliModeElevatedWorker:
 		if err := runElevatedWorkerFromArgs(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 		return
 	case cliModeAutoUpdate:

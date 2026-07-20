@@ -1031,6 +1031,86 @@ func TestBrowserUpdateSelectedPersistsAcrossPages(t *testing.T) {
 	}
 }
 
+func TestBrowserSelectAllAndNoneApplyAcrossFilteredPages(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	packages := make([]updater.Package, 0, 12)
+	for i := 1; i <= 11; i++ {
+		id := fmt.Sprintf("Filtered.App%02d", i)
+		packages = append(packages, updater.Package{
+			Key: "winget:" + id, Manager: updater.ManagerWinget, ID: id,
+			Name: fmt.Sprintf("Filtered App %02d", i), Version: "1.0.0", AvailableVersion: "1.1.0",
+			UpdateAvailable: true, UpdateSupported: true, Installed: true,
+			Source: updater.SourceWinget, PreferenceEligible: true, CanUpdateNow: true,
+		})
+	}
+	packages = append(packages, updater.Package{
+		Key: "store:Store.App_abc", Manager: updater.ManagerStore, ID: "Store.App_abc",
+		Name: "Filtered Store App", Version: "1.0.0", UpdateAvailable: true,
+		UpdateState: "available", UpdateSupported: true, Installed: true,
+		Source: "native-appx", PreferenceEligible: true, CanUpdateNow: true,
+	})
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/packages": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, updater.InventoryResponse{
+				Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{Packages: packages}},
+			})
+		},
+	})
+
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#updates-body`, "Filtered App 01")
+	if err := chromedp.Run(ctx,
+		chromedp.Click(`#select-all-updates`, chromedp.ByQuery),
+		chromedp.Click(`#updates-next`, chromedp.ByQuery),
+		chromedp.Poll(`Array.from(document.querySelectorAll('#updates-body input[name="package_key"]')).every((control) => control.checked)`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+		chromedp.SetValue(`#updates-manager-filter`, "winget", chromedp.ByQuery),
+		chromedp.Sleep(100*time.Millisecond),
+		chromedp.Click(`#select-no-updates`, chromedp.ByQuery),
+		chromedp.SetValue(`#updates-manager-filter`, "store", chromedp.ByQuery),
+		chromedp.Sleep(100*time.Millisecond),
+		chromedp.Poll(`document.querySelector('#updates-body input[name="package_key"]')?.checked === true`, nil, chromedp.WithPollingInterval(50*time.Millisecond), chromedp.WithPollingTimeout(3*time.Second)),
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBrowserDisabledCheckboxAndLogCategoryTooltips(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/packages": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, updater.InventoryResponse{Inventory: updater.Inventory{PackageLookup: updater.PackageLookup{Packages: []updater.Package{{
+				Key: "winget:Unknown.App", Manager: updater.ManagerWinget, ID: "Unknown.App", Name: "Unknown App",
+				Version: "Unknown", AvailableVersion: "2.0", UpdateAvailable: true, UpdateSupported: true,
+				Installed: true, Source: updater.SourceWinget, UnknownVersion: true,
+			}}}}})
+		},
+	})
+	ctx, cancel := newBrowserContext(t)
+	defer cancel()
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#updates-body`, "Unknown App")
+	var checkboxStyle struct {
+		Disabled bool   `json:"disabled"`
+		Cursor   string `json:"cursor"`
+		Opacity  string `json:"opacity"`
+	}
+	var missingTooltips []string
+	if err := chromedp.Run(ctx,
+		chromedp.Evaluate(`(() => { const control = document.querySelector('#updates-body input[name="package_key"]'); const style = getComputedStyle(control); return {disabled: control.disabled, cursor: style.cursor, opacity: style.opacity}; })()`, &checkboxStyle),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('.log-tab')).filter((tab) => !tab.dataset.tooltip || !tab.getAttribute('aria-label')).map((tab) => tab.textContent.trim())`, &missingTooltips),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !checkboxStyle.Disabled || checkboxStyle.Cursor != "not-allowed" || checkboxStyle.Opacity == "1" {
+		t.Fatalf("disabled checkbox lacks distinct feedback: %#v", checkboxStyle)
+	}
+	if len(missingTooltips) != 0 {
+		t.Fatalf("log tabs missing accessible tooltips: %#v", missingTooltips)
+	}
+}
+
 func TestBrowserHidesStaleStoreEvidenceFromUpdatesQueue(t *testing.T) {
 	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
@@ -1446,10 +1526,29 @@ func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
 			t.Fatalf("settings modal step %s failed: %v", name, err)
 		}
 	}
+	waitForPreference := func(name string, matches func(updater.StatusSettings) bool) {
+		t.Helper()
+		deadline := time.Now().Add(settingsPreferenceTimeout)
+		for {
+			preferencesMu.Lock()
+			current := preferences
+			preferencesMu.Unlock()
+			if matches(current) {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("settings preference %s was not persisted: %+v", name, current)
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+	}
 	runStep("open", poll(`document.querySelector("#settings-button") && !document.querySelector("#settings-button").disabled`), chromedp.Click(`#settings-button`, chromedp.ByQuery), poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`), poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`))
 	runStep("enable automatic app updates", chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
+	waitForPreference("automatic app updates", func(settings updater.StatusSettings) bool { return settings.AppUpdateAutoInstallEnabled })
 	runStep("disable app update checks", chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
+	waitForPreference("disabled app update checks", func(settings updater.StatusSettings) bool { return !settings.AppUpdateCheckingEnabled })
 	runStep("enable shortcut cleanup", chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
+	waitForPreference("Desktop shortcut cleanup", func(settings updater.StatusSettings) bool { return settings.RemoveNewDesktopShortcuts })
 	runStep("close", chromedp.Evaluate(`document.querySelector("#settings-close").click()`, nil), poll(`document.querySelector("#settings-modal").classList.contains("hidden")`))
 	preferencesMu.Lock()
 	defer preferencesMu.Unlock()
