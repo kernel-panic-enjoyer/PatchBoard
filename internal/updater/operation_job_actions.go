@@ -217,15 +217,14 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 						status.Notice = "Update cancelled."
 					}
 				})
-				if stopReason := packageUpdateQueueStopReason(result); stopReason != "" && packageIndex+1 < len(remainingPackages) {
-					skippedResults := skippedPackageUpdateResults(remainingPackages[packageIndex+1:], stopReason)
+				stop, stopReason, skippedResults := packageQueueStop(packageCtx, result, remainingPackages[packageIndex+1:])
+				if len(skippedResults) > 0 {
 					app.mutateOperationJob(job, func(status *OperationJobStatus) {
 						status.Results = append(status.Results, skippedResults...)
 						status.Notice = "Remaining package updates were skipped because " + stopReason + "."
 					})
-					break
 				}
-				if packageCtx.Err() != nil || result.Code == commandCancelledCode {
+				if stop {
 					break
 				}
 			}
@@ -267,7 +266,8 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 				return
 			}
 			status.State = jobStateSucceeded
-			status.Notice = "Update completed. Refreshing package status..."
+			// RULE-269: the refresh has finished by now.
+			status.Notice = "Update completed."
 		})
 	})
 }

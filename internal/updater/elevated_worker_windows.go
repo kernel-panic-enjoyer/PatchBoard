@@ -776,11 +776,7 @@ func executeElevatedPackageUpdateBatchWithRunner(
 		packageResult := UpdateResult{Key: key, Result: result}
 		results = append(results, packageResult)
 		report.result(packageResult)
-		if ctx.Err() != nil || result.Code == commandCancelledCode {
-			break
-		}
-		if stopReason := packageUpdateQueueStopReason(result); stopReason != "" {
-			skipped := skippedPackageUpdateResults(packages[index+1:], stopReason)
+		if stop, _, skipped := packageQueueStop(ctx, result, packages[index+1:]); stop {
 			for _, skippedResult := range skipped {
 				report.result(skippedResult)
 			}

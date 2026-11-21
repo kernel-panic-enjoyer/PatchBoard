@@ -92,7 +92,10 @@ func isPackageManagerMutationCommand(args []string) bool {
 		}
 		return verb == "install" || verb == "update" || verb == "updates" || verb == "uninstall"
 	case managerChoco:
-		return verb == "install" || verb == "upgrade" || verb == "uninstall" || verb == "pin"
+		if verb == "pin" {
+			return chocoPinSubcommandMutates(remainingArgs)
+		}
+		return verb == "install" || verb == "upgrade" || verb == "uninstall"
 	default:
 		return false
 	}
@@ -103,7 +106,20 @@ func wingetSourceSubcommandMutates(sourceArgs []string) bool {
 		return false
 	}
 	subcommand := strings.ToLower(strings.TrimSpace(sourceArgs[0]))
-	return subcommand == "update" || subcommand == "reset"
+	switch subcommand {
+	case "update", "reset", "add", "remove":
+		return true
+	}
+	return false
+}
+
+// chocoPinSubcommandMutates treats "choco pin list" as read-only and any
+// other pin subcommand (add, remove) as a change.
+func chocoPinSubcommandMutates(pinArgs []string) bool {
+	if len(pinArgs) == 0 {
+		return false
+	}
+	return !strings.EqualFold(strings.TrimSpace(pinArgs[0]), "list")
 }
 
 func wingetUpgradeArgsIncludeMutationTarget(upgradeArgs []string) bool {
@@ -143,6 +159,9 @@ func shouldAcquireWingetCommandLock(args []string) bool {
 
 func commandHasApplyFalse(args []string) bool {
 	for argIndex, arg := range args {
+		if value, ok := strings.CutPrefix(strings.ToLower(arg), "--apply="); ok {
+			return value == "false"
+		}
 		if !strings.EqualFold(arg, "--apply") {
 			continue
 		}

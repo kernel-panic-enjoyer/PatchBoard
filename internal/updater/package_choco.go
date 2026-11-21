@@ -54,7 +54,13 @@ func chocoInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 
 func chocoUpdatesContext(ctx context.Context) (map[string]string, map[string]Package, CommandResult) {
 	result := runReadOnlyCommand(ctx, 120*time.Second, managerCommand(managerChoco, "outdated", "--limit-output", "--no-color")...)
-	return parseChocoOutdated(chocoCombinedOutput(result)), nil, result
+	// parseChocoOutdated keys by bare package ID; the inventory looks updates
+	// up by manager and ID.
+	updates := map[string]string{}
+	for packageID, availableVersion := range parseChocoOutdated(chocoCombinedOutput(result)) {
+		updates[managerUpdateLookupKey(managerChoco, packageID)] = availableVersion
+	}
+	return updates, nil, result
 }
 
 func chocoCombinedOutput(result CommandResult) string {

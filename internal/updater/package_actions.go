@@ -185,7 +185,7 @@ func runPackageActionCommand(ctx context.Context, packageManager string, timeout
 }
 
 func runPackageActionAttempt(ctx context.Context, packageManager string, timeout time.Duration, args ...string) CommandResult {
-	return normalizePackageActionResult(packageManager, packageActionCommandRunner(ctx, timeout, args...))
+	return withPackageOutcome(packageManager, normalizePackageActionResult(packageManager, packageActionCommandRunner(ctx, timeout, args...)))
 }
 
 func retryPackageActionOnTransientFailure(ctx context.Context, packageManager string, timeout time.Duration, currentResult CommandResult, args ...string) CommandResult {

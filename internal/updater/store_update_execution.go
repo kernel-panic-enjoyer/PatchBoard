@@ -650,7 +650,9 @@ func (storeProductIDFirstExactUpdateRunner) RunStoreUpdate(ctx context.Context, 
 		return storeCLIExactUpdateRunner{}.RunStoreUpdate(ctx, request)
 	}
 	wingetResult := runPackageActionCommand(ctx, managerWinget, packageActionTimeout, wingetMSStoreProductIDUpgradeCommand(productID)...)
-	if wingetResult.OK || ctx.Err() != nil || !shouldTryAlternatePackageTarget(wingetResult) {
+	// WinGet's msstore source can miss or reject an offer the Store CLI still
+	// applies, so both "not installed" and "not applicable" fall back.
+	if wingetResult.OK || ctx.Err() != nil || !(shouldTryAlternatePackageTarget(wingetResult) || wingetUpdateNotApplicable(wingetResult)) {
 		return wingetResult
 	}
 	appLog("WinGet msstore exact Product ID target %q was not accepted; trying Store CLI exact targets.", productID)

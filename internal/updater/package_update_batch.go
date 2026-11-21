@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -71,22 +72,29 @@ func packageUpdateQueueStopReason(result CommandResult) string {
 		return "the previous package installer was cancelled"
 	}
 
-	output := strings.ToLower(result.Stdout + "\n" + result.Stderr)
-	for _, cancellationSignal := range []string{
-		"exit code: 1223",
-		"exitcode: 1223",
-		"canceled by the user",
-		"cancelled by the user",
-		"canceled the installation",
-		"cancelled the installation",
-		"durch den benutzer abgebrochen",
-		"sie haben die installation abgebrochen",
-	} {
-		if strings.Contains(output, cancellationSignal) {
-			return "the previous package installer was cancelled"
-		}
+	if result.Outcome == outcomeInstallerCancelled ||
+		(result.Outcome == outcomeUnclassified && outputReportsInstallerCancelled(normalizedCommandOutput(result))) {
+		return "the previous package installer was cancelled"
 	}
 	return ""
+}
+
+// packageQueueStop decides whether a package update queue stops after this
+// result and records the packages after it as skipped. The update job and
+// the elevated worker batch both use it, so they cannot drift apart.
+func packageQueueStop(ctx context.Context, result CommandResult, remaining []Package) (stop bool, reason string, skipped []UpdateResult) {
+	reason = packageUpdateQueueStopReason(result)
+	if reason == "" {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			reason = "the previous package update timed out"
+		case ctx.Err() != nil:
+			reason = "the update batch was cancelled"
+		default:
+			return false, "", nil
+		}
+	}
+	return true, reason, skippedPackageUpdateResults(remaining, reason)
 }
 
 func skippedPackageUpdateResults(packages []Package, reason string) []UpdateResult {

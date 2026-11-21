@@ -72,7 +72,7 @@ func mergeWingetUpdateOutput(availableVersionsByKey map[string]string, updateDet
 		if managerOverride != "" {
 			effectiveManager = managerOverride
 		}
-		key := packageKey(effectiveManager, strings.ToLower(parsedPackage.ID))
+		key := managerUpdateLookupKey(effectiveManager, parsedPackage.ID)
 		parsedPackage.Key = key
 		parsedPackage.Manager = effectiveManager
 		availableVersionsByKey[key] = parsedPackage.AvailableVersion

@@ -44,6 +44,9 @@ type CommandResult struct {
 	Stdout  string `json:"stdout"`
 	Stderr  string `json:"stderr"`
 	Command string `json:"command"`
+	// Outcome is what the last package-manager attempt meant. Only package
+	// actions set it; see package_update_outcome.go.
+	Outcome packageAttemptOutcome `json:"outcome,omitempty"`
 }
 
 type commandActivityWriter struct {

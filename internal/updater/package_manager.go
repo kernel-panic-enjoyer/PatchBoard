@@ -264,6 +264,13 @@ func packageKey(manager, id string) string {
 	return manager + ":" + id
 }
 
+// managerUpdateLookupKey is the one key the update scans are stored under
+// and looked up by. IDs are matched without regard to case. The displayed
+// Package.Key keeps the ID's original case.
+func managerUpdateLookupKey(manager, id string) string {
+	return packageKey(manager, strings.ToLower(strings.TrimSpace(id)))
+}
+
 func packageAutoUpdateEnabled(state State, pkg Package) bool {
 	if pkg.IdentityConflict {
 		return false

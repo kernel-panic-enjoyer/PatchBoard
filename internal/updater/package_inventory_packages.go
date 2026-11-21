@@ -21,8 +21,9 @@ func packageFromManagerInventory(state State, inventory managerInventory, pkg Pa
 	if effectiveManager == managerStore {
 		return Package{}, false
 	}
-	available := inventory.updates[packageKey(effectiveManager, strings.ToLower(pkg.ID))]
-	updateDetail := inventory.updateDetails[packageKey(effectiveManager, strings.ToLower(pkg.ID))]
+	lookupKey := managerUpdateLookupKey(effectiveManager, pkg.ID)
+	available := inventory.updates[lookupKey]
+	updateDetail := inventory.updateDetails[lookupKey]
 	pkg.Key = packageKey(effectiveManager, pkg.ID)
 	pkg.Manager = effectiveManager
 	pkg.AvailableVersion = available

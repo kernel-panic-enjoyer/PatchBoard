@@ -2,28 +2,26 @@ package updater
 
 import "strings"
 
-const (
-	wingetErrorNoApplicationsFound = 0x8A150014
-	wingetErrorUpdateNotApplicable = 0x8A15002B
-)
-
+// shouldTryAlternatePackageTarget reports that the manager found no
+// installed package for the identifier just tried, so another identifier
+// for the same package may still match.
 func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	if !isRetryablePackageActionFailure(result) {
 		return false
 	}
-	normalizedOutput := normalizedCommandOutput(result)
+	if result.Outcome != outcomeUnclassified {
+		return result.Outcome == outcomeNotInstalled
+	}
+	return storeCLIReportsTargetMiss(normalizedCommandOutput(result))
+}
+
+// storeCLIReportsTargetMiss reads Store CLI output, which has no documented
+// exit codes. Phase 4 of the modernization brief replaces it.
+func storeCLIReportsTargetMiss(normalizedOutput string) bool {
 	if strings.Contains(normalizedOutput, "requires explicit user confirmation") {
 		return false
 	}
-	if wingetInstalledPackageMissing(result) {
-		return true
-	}
 	return outputContainsAny(normalizedOutput, []string{
-		"no applicable upgrade",
-		"no available upgrade",
-		"kein anwendbares upgrade",
-		"kein verfügbares upgrade",
-		"keine neueren paketversionen",
 		"no installed package found",
 		"no package found",
 		"no product found",
@@ -38,17 +36,6 @@ func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	})
 }
 
-func wingetOutputReportsNoApplicableUpgrade(normalizedOutput string) bool {
-	return outputContainsAny(normalizedOutput, []string{
-		"no applicable upgrade",
-		"no available upgrade",
-		"no upgrade available",
-		"kein anwendbares upgrade",
-		"kein verfügbares upgrade",
-		"kein upgrade verfügbar",
-	})
-}
-
 func wingetActionabilityCandidate(result CommandResult) bool {
 	return !result.OK && !commandResultSkipped(result) && result.Code != commandCancelledCode && result.Code != commandTimeoutCode
 }
@@ -57,10 +44,7 @@ func wingetActionabilityCandidate(result CommandResult) bool {
 // rejected the offered version. It is safe to act on per attempt because a
 // different target identifier cannot make the same version applicable.
 func wingetUpdateNotApplicable(result CommandResult) bool {
-	if !wingetActionabilityCandidate(result) {
-		return false
-	}
-	return wingetExitCodeMatches(result.Code, wingetErrorUpdateNotApplicable) || wingetOutputReportsNoApplicableUpgrade(normalizedCommandOutput(result))
+	return wingetActionabilityCandidate(result) && packageResultOutcome(managerWinget, result) == outcomeNotApplicable
 }
 
 // wingetInstalledPackageMissing reports that WinGet found no installed package
@@ -68,59 +52,15 @@ func wingetUpdateNotApplicable(result CommandResult) bool {
 // offer (package uninstalled) and for a wrong identifier, so callers must only
 // treat it as a stale offer after every alternate target has missed as well.
 func wingetInstalledPackageMissing(result CommandResult) bool {
-	if !wingetActionabilityCandidate(result) {
-		return false
-	}
-	if wingetExitCodeMatches(result.Code, wingetErrorNoApplicationsFound) {
-		return true
-	}
-	return outputContainsAny(normalizedCommandOutput(result), []string{
-		"no installed package found",
-		"no installed package matching",
-		"kein installiertes paket gefunden",
-		"es wurde kein installiertes paket gefunden",
-	})
-}
-
-func wingetExitCodeMatches(exitCode int, expected uint32) bool {
-	return uint32(exitCode) == expected
-}
-
-func wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput string) bool {
-	return outputContainsAny(normalizedOutput, []string{
-		"installation technology",
-		"install technology",
-		"installer technology",
-		"installationstechnologie",
-		"uninstall the package",
-		"deinstallieren sie das paket",
-	})
+	return wingetActionabilityCandidate(result) && packageResultOutcome(managerWinget, result) == outcomeNotInstalled
 }
 
 func shouldRetryWingetIncludeUnknown(result CommandResult) bool {
-	if !isRetryablePackageActionFailure(result) {
-		return false
-	}
-	normalizedOutput := normalizedCommandOutput(result)
-	if outputContainsAny(normalizedOutput, []string{"--include-unknown", "include unknown", "include-unknown"}) {
-		return true
-	}
-	if (strings.Contains(normalizedOutput, "unknown") || strings.Contains(normalizedOutput, "unbekannt")) &&
-		(strings.Contains(normalizedOutput, "version") || strings.Contains(normalizedOutput, "installed package")) {
-		return true
-	}
-	return false
+	return isRetryablePackageActionFailure(result) && packageResultOutcome(managerWinget, result) == outcomeNeedsUnknownConsent
 }
 
 func shouldRetryWingetIncludePinned(result CommandResult) bool {
-	if !isRetryablePackageActionFailure(result) {
-		return false
-	}
-	normalizedOutput := normalizedCommandOutput(result)
-	if outputContainsAny(normalizedOutput, []string{"--include-pinned", "include-pinned", "include pinned"}) {
-		return true
-	}
-	return outputContainsAny(normalizedOutput, []string{"pinning", "pinned"})
+	return isRetryablePackageActionFailure(result) && packageResultOutcome(managerWinget, result) == outcomeNeedsPinnedConsent
 }
 
 func shouldRetryStoreUpdateWithoutApply(result CommandResult) bool {

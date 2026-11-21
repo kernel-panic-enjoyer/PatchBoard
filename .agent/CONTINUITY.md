@@ -216,6 +216,8 @@
 - 2026-06-28T18:03:34+02:00 [CODE] `reconcileJobs` now clears `updateBusy`, active update keys, current update job ID, row progress, and the global update progress panel whenever no active update jobs remain.
 - 2026-06-28T18:28:51+02:00 [CODE] Added `.gitattributes` with `*.go text eol=lf` so Windows GitHub Actions checkouts do not materialize Go files with CRLF and trip `gofmt -l`.
 - 2026-06-28T18:43:24+02:00 [CODE] Repository licensing is now documented as `GPL-3.0-only` via a root `LICENSE` file and README License section; no per-file SPDX headers were added.
+- 2026-11-21T16:35Z [CODE] WinGet exit codes are taken from microsoft/winget-cli `doc/windows/package-manager/winget/returnCodes.md` (last changed 2026-10-01). Codes win over text; text is matched only when the code says nothing specific. Store CLI attempts stay unclassified except transient codes until Phase 4.
+- 2026-11-21T16:35Z [CODE] Deliberate behavior changes: `0x8A150014` no longer triggers source repair; `0x8A150010` is a failure, not a source failure; transient retries stop when a retry fails for another reason; WinGet `0x8A150109`/`0x8A15010B` count as restart success; `choco upgrade` always passes `--fail-on-not-installed`.
 
 [PROGRESS]
 
@@ -352,6 +354,9 @@
 - 2026-11-21T15:05Z [DECISION] Security 4 implemented as a lock, not a move: before the UAC relaunch the helper opens its own exe with read-only sharing, re-checks the SHA-256, and holds the handle until the elevated copy connects. Moving it to an admin-only folder needs an already-elevated copier (chicken-and-egg). The brief criterion wording is left as is with a Proposed revision line.
 - 2026-11-21T15:20Z [CODE] RULE-103 fail-closed broke the browser suite: its test server never recorded a listen address. Added `App.SetTestListenAddress` (uitestsupport) and `newSafeBrowserTestServer` now sets it. CI staticcheck findings fixed: `GetCurrentProcessToken()` replaces deprecated `OpenCurrentProcessToken`; nil-map write in a goroutine test replaced by `panic`.
 - 2026-11-21T15:20Z [TOOL] Phase 2 verification: Run-Tests.ps1 root PASS and browser PASS; go vet (plain, uitestsupport, tests/browser) and staticcheck v0.7.0 clean; Build-Workspace -SkipTests rebuilt `dist\PatchBoard.exe` (18,556,416 bytes). CI on 01d84a6 was red for the two issues above; re-run pending on the next push.
+- 2026-11-21T16:35Z [USER] "continue modernization": Phase 3 of the brief, run as PR work on the PR #4 branch.
+- 2026-11-21T16:35Z [CODE] Phase 3: every WinGet/Chocolatey/Store CLI attempt gets one `CommandResult.Outcome` right after it runs (`package_update_outcome.go`); retries, fallbacks, source repair, restart success and the queue decide on it. Merged results keep the last attempt's outcome. Decision table: `docs/architecture/package-update-outcomes.md`; tests `package_update_outcome_test.go`. `packageQueueStop` is shared by the update job and the elevated batch. Fixed RULE-001, RULE-269 (final notice "Update completed.") and RULE-380 (winget `source add/remove`, choco `pin add/remove`, `--apply=false`).
+- 2026-11-21T16:35Z [TOOL] Phase 3 verification: gofmt clean; go vet plain and uitestsupport clean; staticcheck (GOTOOLCHAIN=go1.26.11) clean; Run-Tests.ps1 root PASS, browser PASS; Build-Workspace -SkipTests rebuilt `dist\PatchBoard.exe` (18,543,104 bytes). No new crash file in the real logs folder.
 
 [DISCOVERIES]
 
@@ -463,6 +468,8 @@
 - 2026-11-21T15:05Z [TOOL] `store.exe` started directly from its package folder fails with "the process has no package identity" (0x80073D54); `winget.exe` works there (`--version` v1.29.380). Store must run through its App Execution Alias.
 - 2026-11-21T15:05Z [TOOL] `KnownFolderPath(FOLDERID_LocalAppData)` expands `%USERPROFILE%` from the process environment and caches the result per process; machine folders (ProgramFiles, ProgramFilesX86, ProgramData) and `GetSystemWindowsDirectory` ignored a tampered environment in a fresh process.
 - 2026-11-21T15:20Z [TOOL] staticcheck v0.7.0 (the CI pin) fails on local Go 1.27.4 ("export data version 5 is greater than maximum supported version 2"). Run it with `GOTOOLCHAIN=go1.26.11`, matching go.mod and CI.
+- 2026-11-21T16:35Z [TOOL] RULE-001 was a real bug, not just case: `parseChocoOutdated` keyed updates by bare ID (`git`) while the inventory looked them up as `choco:git`, so no Chocolatey update was ever shown or applied. Fixed with `managerUpdateLookupKey` on both sides.
+- 2026-11-21T16:35Z [CODE] Retry decisions re-scanned merged output of all attempts, so text from an earlier attempt (for example a transient 1618) kept retries going after a later real failure. `choco upgrade` without `--fail-on-not-installed` installs a missing package, so variant fallbacks (foo.install) could add packages.
 
 [OUTCOMES]
 

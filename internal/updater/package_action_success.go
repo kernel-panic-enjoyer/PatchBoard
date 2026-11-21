@@ -63,16 +63,16 @@ func isPackageActionRestartSuccessCode(packageManager string, exitCode int) bool
 	switch exitCode {
 	case packageActionRestartInitiatedCode, packageActionRestartRequiredCode:
 		return packageManager == managerWinget || packageManager == managerChoco || packageManager == managerStore
-	default:
-		return false
 	}
+	// WinGet's own codes for an install that finishes after a restart.
+	return packageManager == managerWinget && (exitCodeIs(exitCode, wingetErrorInstallRebootRequired) || exitCodeIs(exitCode, wingetErrorInstallRebootInitiated))
 }
 
 func packageActionRestartNote(exitCode int) string {
-	switch exitCode {
-	case packageActionRestartInitiatedCode:
+	switch {
+	case exitCode == packageActionRestartInitiatedCode || exitCodeIs(exitCode, wingetErrorInstallRebootInitiated):
 		return "Command completed successfully and initiated a restart."
-	case packageActionRestartRequiredCode:
+	case exitCode == packageActionRestartRequiredCode || exitCodeIs(exitCode, wingetErrorInstallRebootRequired):
 		return "Command completed successfully; restart required."
 	default:
 		return ""

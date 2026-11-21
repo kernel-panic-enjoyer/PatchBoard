@@ -231,11 +231,7 @@ func runWingetUpgradePlanWithFallbacks(ctx context.Context, plan wingetUpgradePl
 }
 
 func wingetForceRepairReason(result CommandResult) string {
-	if result.OK {
-		return ""
-	}
-	normalizedOutput := normalizedCommandOutput(result)
-	if wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput) {
+	if !result.OK && packageResultOutcome(managerWinget, result) == outcomeTechnologyMismatch {
 		return "an installer technology mismatch"
 	}
 	return ""
