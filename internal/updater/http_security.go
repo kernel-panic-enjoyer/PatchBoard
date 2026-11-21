@@ -34,10 +34,9 @@ func (app *App) expectedListenPort() int {
 	return defaultPort
 }
 
+// trustedHost fails closed: an App that has not recorded its listen address
+// still only accepts loopback hosts on the default port.
 func (app *App) trustedHost(r *http.Request) bool {
-	if app.webSession.listenHost == "" && app.webSession.listenPort == 0 {
-		return true
-	}
 	hostHeader := strings.TrimSpace(r.Host)
 	if hostHeader == "" {
 		return false

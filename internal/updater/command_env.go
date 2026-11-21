@@ -49,6 +49,9 @@ func launchPath(pathValue string) string {
 }
 
 func launchPathAdditions() []string {
+	if hardenedProcessExecutionMode() {
+		return hardenedLaunchPathAdditions()
+	}
 	pathAdditions := []string{}
 	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
 		pathAdditions = append(pathAdditions,
@@ -65,6 +68,19 @@ func launchPathAdditions() []string {
 		pathAdditions = append(pathAdditions, filepath.Join(programData, "chocolatey", "bin"))
 	}
 	return pathAdditions
+}
+
+// hardenedLaunchPathAdditions takes the same folders from the OS instead of
+// from environment variables the launching user controls.
+func hardenedLaunchPathAdditions() []string {
+	var pathAdditions []string
+	if localAppData, err := currentUserLocalAppDataProvider(); err == nil && strings.TrimSpace(localAppData) != "" {
+		pathAdditions = append(pathAdditions,
+			filepath.Join(localAppData, "Microsoft", "WindowsApps"),
+			filepath.Join(localAppData, "Microsoft", "WinGet", "Links"),
+		)
+	}
+	return append(pathAdditions, filepath.Join(trustedMachineFolders().ProgramData, "chocolatey", "bin"))
 }
 
 func prependExistingPathEntries(pathValue string, candidateEntries ...string) string {
@@ -125,6 +141,9 @@ func resolveExecutablePath(executableName string) (string, bool) {
 }
 
 func knownManagerExecutablePath(executableName string) string {
+	if hardenedProcessExecutionMode() {
+		return hardenedManagerExecutablePath(executableName)
+	}
 	if strings.EqualFold(executableName, "choco") {
 		var candidatePaths []string
 		if userEnvironmentOverridesAllowed() {
@@ -169,6 +188,26 @@ func knownManagerExecutablePath(executableName string) string {
 	return ""
 }
 
+// hardenedManagerExecutablePath resolves package managers for admin-rights
+// runs from OS-provided folders only; see trusted_folders_windows.go.
+func hardenedManagerExecutablePath(executableName string) string {
+	folders := trustedMachineFolders()
+	if strings.EqualFold(executableName, "choco") {
+		return firstExistingPath([]string{filepath.Join(folders.ProgramData, "chocolatey", "bin", "choco.exe")})
+	}
+	if !strings.EqualFold(executableName, "winget") && !strings.EqualFold(executableName, "store") {
+		return ""
+	}
+	executableFileName := strings.ToLower(executableName) + ".exe"
+	if path := firstExistingPath([]string{
+		filepath.Join(folders.Windows, "System32", executableFileName),
+		filepath.Join(folders.Windows, "Sysnative", executableFileName),
+	}); path != "" {
+		return path
+	}
+	return hardenedAliasManagerExecutablePath(executableFileName)
+}
+
 func windowsDirectories() []string {
 	var directories []string
 	for _, envVarName := range []string{"SystemRoot", "windir"} {
@@ -199,7 +238,7 @@ func uniqueCleanPaths(paths []string) []string {
 }
 
 func unresolvedHardenedManagerPath(managerName string) string {
-	return filepath.Join(`C:\Windows`, "System32", "PatchBoard-"+managerName+"-not-resolved.exe")
+	return filepath.Join(trustedMachineFolders().Windows, "System32", "PatchBoard-"+managerName+"-not-resolved.exe")
 }
 
 func firstExistingPath(candidatePaths []string) string {

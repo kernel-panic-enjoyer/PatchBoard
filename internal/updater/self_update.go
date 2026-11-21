@@ -37,7 +37,16 @@ const (
 	utf8ByteOrderMark             = "\xef\xbb\xbf"
 )
 
+// sha256LinePattern finds a digest inside a checksum file line.
 var sha256LinePattern = regexp.MustCompile(`(?i)\b[0-9a-f]{64}\b`)
+
+// sha256ValuePattern accepts a field that is exactly one hex digest.
+var sha256ValuePattern = regexp.MustCompile(`^(?i)[0-9a-f]{64}$`)
+
+func isSHA256Hex(value string) bool {
+	return sha256ValuePattern.MatchString(value)
+}
+
 var gitCommitPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
 type appUpdateChecker interface {
@@ -493,7 +502,7 @@ func validateSelfUpdateMetadataDescriptor(metadata selfUpdateReleaseMetadata, ex
 		return "", "", errors.New("self-update metadata commit is missing or invalid")
 	}
 	metadataSHA256 := strings.ToLower(strings.TrimSpace(metadata.SHA256))
-	if metadataSHA256 == "" || !sha256LinePattern.MatchString(metadataSHA256) {
+	if metadataSHA256 == "" || !isSHA256Hex(metadataSHA256) {
 		return "", "", errors.New("self-update metadata has invalid SHA-256")
 	}
 	metadataVersion, ok := normalizeAppVersion(metadata.Version)

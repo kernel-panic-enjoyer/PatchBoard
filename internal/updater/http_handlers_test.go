@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ func TestAPILogsRequiresTokenAndReturnsEntries(t *testing.T) {
 	sessionLogs.Append("app", "hello")
 	app := testSessionApp(t)
 
-	badRequest := httptest.NewRequest(http.MethodGet, "/api/logs", nil)
+	badRequest := newTestRequest(http.MethodGet, "/api/logs", nil)
 	badResponse := httptest.NewRecorder()
 	app.serveHTTP(badResponse, badRequest)
 	if badResponse.Code != http.StatusUnauthorized {
@@ -79,7 +80,7 @@ func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
 		})
 	})
 
-	badRequest := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+	badRequest := newTestRequest(http.MethodGet, "/api/jobs", nil)
 	badResponse := httptest.NewRecorder()
 	app.serveHTTP(badResponse, badRequest)
 	if badResponse.Code != http.StatusUnauthorized {
@@ -104,7 +105,7 @@ func TestAPIJobsRequiresTokenAndReturnsJobs(t *testing.T) {
 func TestAPIJobLogRequiresTokenAndRejectsUnknownJob(t *testing.T) {
 	app := testSessionApp(t)
 
-	badRequest := httptest.NewRequest(http.MethodGet, "/api/jobs/log?job_id=missing", nil)
+	badRequest := newTestRequest(http.MethodGet, "/api/jobs/log?job_id=missing", nil)
 	badResponse := httptest.NewRecorder()
 	app.serveHTTP(badResponse, badRequest)
 	if badResponse.Code != http.StatusUnauthorized {
@@ -165,7 +166,7 @@ func TestAPILogsExportRequiresTokenAndReturnsZip(t *testing.T) {
 	sessionLogs.AppendCategorized("stdout", "GitHub CLI", logCategoriesForCommand([]string{"winget", "search", "gh"}))
 	app := testSessionApp(t)
 
-	badRequest := httptest.NewRequest(http.MethodGet, "/api/logs/export", nil)
+	badRequest := newTestRequest(http.MethodGet, "/api/logs/export", nil)
 	badResponse := httptest.NewRecorder()
 	app.serveHTTP(badResponse, badRequest)
 	if badResponse.Code != http.StatusUnauthorized {
@@ -212,7 +213,7 @@ func TestLogExportFilenameUsesTimestampPrefix(t *testing.T) {
 
 func TestFaviconServesEmbeddedAppIconWithoutToken(t *testing.T) {
 	app := testSessionApp(t)
-	request := httptest.NewRequest(http.MethodGet, "/favicon.ico", nil)
+	request := newTestRequest(http.MethodGet, "/favicon.ico", nil)
 	response := httptest.NewRecorder()
 
 	app.serveHTTP(response, request)
@@ -250,7 +251,7 @@ func TestRequestShutdownRunsRegisteredCleanupsOnce(t *testing.T) {
 
 func TestBootstrapTokenCreatesHttpOnlySessionAndRedirectsClean(t *testing.T) {
 	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/?token=bootstrap-token", nil)
+	request := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/?token=bootstrap-token", nil)
 	response := httptest.NewRecorder()
 
 	app.serveHTTP(response, request)
@@ -269,21 +270,21 @@ func TestBootstrapTokenCreatesHttpOnlySessionAndRedirectsClean(t *testing.T) {
 		t.Fatalf("unexpected session cookie: %#v", cookie)
 	}
 
-	tokenOnlyAPI := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs?token=bootstrap-token", nil)
+	tokenOnlyAPI := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs?token=bootstrap-token", nil)
 	tokenOnlyResponse := httptest.NewRecorder()
 	app.serveHTTP(tokenOnlyResponse, tokenOnlyAPI)
 	if tokenOnlyResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("query token should not authorize API requests, got %d", tokenOnlyResponse.Code)
 	}
 
-	reuse := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/?token=bootstrap-token", nil)
+	reuse := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/?token=bootstrap-token", nil)
 	reuseResponse := httptest.NewRecorder()
 	app.serveHTTP(reuseResponse, reuse)
 	if reuseResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("bootstrap token should be one-time without an existing session, got %d", reuseResponse.Code)
 	}
 
-	authenticated := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs", nil)
+	authenticated := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs", nil)
 	addTestSessionCookie(app, authenticated)
 	authenticatedResponse := httptest.NewRecorder()
 	app.serveHTTP(authenticatedResponse, authenticated)
@@ -314,7 +315,7 @@ func TestBootstrapTokenDoesNotWaitForInventoryCacheLock(t *testing.T) {
 
 func TestBrowserSecurityHeadersAndNoTokenInRenderedHTML(t *testing.T) {
 	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/", nil)
+	request := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/", nil)
 	addTestSessionCookie(app, request)
 	response := httptest.NewRecorder()
 
@@ -354,7 +355,7 @@ func TestLogExportDoesNotLeakBootstrapOrSessionTokens(t *testing.T) {
 
 	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token-export-route", sessionToken: "session-token-export-route", listenHost: defaultHost, listenPort: 4183}}
 	sessionLogs.Append("app", "bootstrap-token-export-route session-token-export-route")
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs/export", nil)
+	request := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs/export", nil)
 	addTestSessionCookie(app, request)
 	response := httptest.NewRecorder()
 
@@ -412,7 +413,7 @@ func TestAPIRequestBodyLimitUsesRouteMetadata(t *testing.T) {
 func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token", sessionToken: "session-token", listenHost: defaultHost, listenPort: 4183}}
 
-	badHost := httptest.NewRequest(http.MethodGet, "http://evil.test:4183/", nil)
+	badHost := newTestRequest(http.MethodGet, "http://evil.test:4183/", nil)
 	addTestSessionCookie(app, badHost)
 	badHostResponse := httptest.NewRecorder()
 	app.serveHTTP(badHostResponse, badHost)
@@ -420,7 +421,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected bad host rejection, got %d", badHostResponse.Code)
 	}
 
-	badOrigin := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	badOrigin := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badOrigin)
 	badOrigin.Header.Set("Origin", "http://evil.test:4183")
 	badOriginResponse := httptest.NewRecorder()
@@ -429,7 +430,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected bad origin rejection, got %d", badOriginResponse.Code)
 	}
 
-	portlessOrigin := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	portlessOrigin := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, portlessOrigin)
 	portlessOrigin.Header.Set("Origin", "http://127.0.0.1")
 	portlessOriginResponse := httptest.NewRecorder()
@@ -438,7 +439,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected portless origin rejection for configured port, got %d", portlessOriginResponse.Code)
 	}
 
-	nullOriginWithoutUIHeader := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	nullOriginWithoutUIHeader := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, nullOriginWithoutUIHeader)
 	nullOriginWithoutUIHeader.Header.Set("Origin", "null")
 	nullOriginWithoutUIHeaderResponse := httptest.NewRecorder()
@@ -447,7 +448,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected null origin without UI header rejection, got %d", nullOriginWithoutUIHeaderResponse.Code)
 	}
 
-	missingUIHeader := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	missingUIHeader := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, missingUIHeader)
 	missingUIHeaderResponse := httptest.NewRecorder()
 	app.serveHTTP(missingUIHeaderResponse, missingUIHeader)
@@ -455,7 +456,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected mutating request without UI header rejection, got %d", missingUIHeaderResponse.Code)
 	}
 
-	missingCSRFToken := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	missingCSRFToken := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, missingCSRFToken)
 	missingCSRFToken.Header.Set(trustedUIRequestHeader, "1")
 	missingCSRFTokenResponse := httptest.NewRecorder()
@@ -464,7 +465,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected mutating request without CSRF token rejection, got %d", missingCSRFTokenResponse.Code)
 	}
 
-	badCSRFToken := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	badCSRFToken := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badCSRFToken)
 	badCSRFToken.Header.Set(trustedUIRequestHeader, "1")
 	badCSRFToken.Header.Set(csrfRequestHeader, "wrong-token")
@@ -474,7 +475,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected mutating request with wrong CSRF token rejection, got %d", badCSRFTokenResponse.Code)
 	}
 
-	nullOriginUIRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/shutdown", nil)
+	nullOriginUIRequest := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/shutdown", nil)
 	addTestSessionCookie(app, nullOriginUIRequest)
 	nullOriginUIRequest.Header.Set("Origin", "null")
 	nullOriginUIRequest.Header.Set(trustedUIRequestHeader, "1")
@@ -485,7 +486,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected trusted UI null origin request to pass boundary, got %d: %s", nullOriginUIRequestResponse.Code, nullOriginUIRequestResponse.Body.String())
 	}
 
-	badOriginWithUIHeader := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	badOriginWithUIHeader := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badOriginWithUIHeader)
 	badOriginWithUIHeader.Header.Set("Origin", "http://evil.test:4183")
 	badOriginWithUIHeader.Header.Set(trustedUIRequestHeader, "1")
@@ -496,7 +497,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected bad origin with UI header rejection, got %d", badOriginWithUIHeaderResponse.Code)
 	}
 
-	badFetch := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
+	badFetch := newTestRequest(http.MethodPost, "http://127.0.0.1:4183/api/scan", nil)
 	addTestSessionCookie(app, badFetch)
 	badFetch.Header.Set(trustedUIRequestHeader, "1")
 	badFetch.Header.Set(csrfRequestHeader, csrfTokenForSession(app.webSession.sessionToken))
@@ -507,7 +508,7 @@ func TestRequestBoundaryRejectsBadHostOriginAndFetchMetadata(t *testing.T) {
 		t.Fatalf("expected bad fetch metadata rejection, got %d", badFetchResponse.Code)
 	}
 
-	shutdownGet := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4183/shutdown", nil)
+	shutdownGet := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/shutdown", nil)
 	addTestSessionCookie(app, shutdownGet)
 	shutdownGetResponse := httptest.NewRecorder()
 	app.serveHTTP(shutdownGetResponse, shutdownGet)
@@ -525,6 +526,9 @@ func TestShutdownRouteStopsServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(app.serveHTTP))
 	app.server = server.Config
 	defer server.Close()
+	listenAddress := server.Listener.Addr().(*net.TCPAddr)
+	app.webSession.listenHost = listenAddress.IP.String()
+	app.webSession.listenPort = listenAddress.Port
 
 	request, err := http.NewRequest(http.MethodPost, server.URL+"/shutdown", nil)
 	if err != nil {
@@ -588,7 +592,7 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	request := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader("manager=winget&package_id=Git.Git")).WithContext(ctx)
+	request := newTestRequest(http.MethodPost, "/api/update", strings.NewReader("manager=winget&package_id=Git.Git")).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set(trustedUIRequestHeader, "1")
 	addTestSessionCookie(app, request)
@@ -676,62 +680,62 @@ func TestAPIRejectsInvalidRequests(t *testing.T) {
 }
 
 func TestSettingsJSONRequestParsers(t *testing.T) {
-	updateRequest := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader(`{"manager":"winget","package_id":"Vendor.Unknown","allow_unknown_version":true,"allow_pinned":true}`))
+	updateRequest := newTestRequest(http.MethodPost, "/api/update", strings.NewReader(`{"manager":"winget","package_id":"Vendor.Unknown","allow_unknown_version":true,"allow_pinned":true}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
 	manager, packageID, updateOptions, invalidUpdate := parsePackageUpdateAction(updateRequest)
 	if invalidUpdate != nil || manager != managerWinget || packageID != "Vendor.Unknown" || !updateOptions.AllowUnknownVersion || !updateOptions.AllowPinned {
 		t.Fatalf("unexpected update JSON parse: manager=%q packageID=%q options=%#v invalid=%#v", manager, packageID, updateOptions, invalidUpdate)
 	}
 
-	updateAllRequest := httptest.NewRequest(http.MethodPost, "/api/update-all", strings.NewReader(`{"package_keys":["winget:Vendor.Unknown"],"allow_unknown_version":true,"allow_pinned":true}`))
+	updateAllRequest := newTestRequest(http.MethodPost, "/api/update-all", strings.NewReader(`{"package_keys":["winget:Vendor.Unknown"],"allow_unknown_version":true,"allow_pinned":true}`))
 	updateAllRequest.Header.Set("Content-Type", "application/json")
 	updateAllKeys, updateAllOptions, invalidUpdateAll := parseUpdateAllRequest(updateAllRequest)
 	if invalidUpdateAll != nil || len(updateAllKeys) != 1 || updateAllKeys[0] != "winget:Vendor.Unknown" || !updateAllOptions.AllowUnknownVersion || !updateAllOptions.AllowPinned {
 		t.Fatalf("unexpected update-all JSON parse: keys=%#v options=%#v invalid=%#v", updateAllKeys, updateAllOptions, invalidUpdateAll)
 	}
 
-	startupRequest := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(`{"enabled":true}`))
+	startupRequest := newTestRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(`{"enabled":true}`))
 	startupRequest.Header.Set("Content-Type", "application/json")
 	enabled, invalidStartup := parseStartupRequest(startupRequest)
 	if invalidStartup != nil || !enabled {
 		t.Fatalf("expected enabled startup JSON parse, enabled=%t invalid=%#v", enabled, invalidStartup)
 	}
 
-	autoRequest := httptest.NewRequest(http.MethodPost, "/api/settings/auto-update", strings.NewReader(`{"global":true,"package_keys":["winget:Git.Git"],"package_enabled":false}`))
+	autoRequest := newTestRequest(http.MethodPost, "/api/settings/auto-update", strings.NewReader(`{"global":true,"package_keys":["winget:Git.Git"],"package_enabled":false}`))
 	autoRequest.Header.Set("Content-Type", "application/json")
 	global, keys, packageEnabled, invalidAuto := parseAutoUpdateRequest(autoRequest)
 	if invalidAuto != nil || global == nil || !*global || packageEnabled == nil || *packageEnabled || len(keys) != 1 || keys[0] != "winget:Git.Git" {
 		t.Fatalf("unexpected auto-update JSON parse: global=%v keys=%#v packageEnabled=%v invalid=%#v", global, keys, packageEnabled, invalidAuto)
 	}
 
-	themeRequest := httptest.NewRequest(http.MethodPost, "/api/settings/theme", strings.NewReader(`{"theme":"light"}`))
+	themeRequest := newTestRequest(http.MethodPost, "/api/settings/theme", strings.NewReader(`{"theme":"light"}`))
 	themeRequest.Header.Set("Content-Type", "application/json")
 	theme, err := parseThemeRequest(themeRequest)
 	if err != nil || theme != "light" {
 		t.Fatalf("unexpected theme JSON parse: theme=%q err=%v", theme, err)
 	}
 
-	appUpdatePromptRequest := httptest.NewRequest(http.MethodPost, "/api/settings/app-update-prompt", strings.NewReader(`{"version":"1.2.3"}`))
+	appUpdatePromptRequest := newTestRequest(http.MethodPost, "/api/settings/app-update-prompt", strings.NewReader(`{"version":"1.2.3"}`))
 	appUpdatePromptRequest.Header.Set("Content-Type", "application/json")
 	version, err := parseAppUpdatePromptRequest(appUpdatePromptRequest)
 	if err != nil || version != "1.2.3" {
 		t.Fatalf("unexpected app update prompt JSON parse: version=%q err=%v", version, err)
 	}
 
-	preferencesRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_auto_install_enabled":true,"app_update_checking_enabled":false,"remove_new_desktop_shortcuts":true}`))
+	preferencesRequest := newTestRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_auto_install_enabled":true,"app_update_checking_enabled":false,"remove_new_desktop_shortcuts":true}`))
 	preferencesRequest.Header.Set("Content-Type", "application/json")
 	preferences, err := parseApplicationPreferencesRequest(preferencesRequest)
 	if err != nil || preferences.AppUpdateAutoInstallEnabled == nil || !*preferences.AppUpdateAutoInstallEnabled || preferences.AppUpdateCheckingEnabled == nil || *preferences.AppUpdateCheckingEnabled || preferences.RemoveNewDesktopShortcuts == nil || !*preferences.RemoveNewDesktopShortcuts {
 		t.Fatalf("unexpected preferences JSON parse: preferences=%#v err=%v", preferences, err)
 	}
 
-	unknownPreferenceRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":true,"unknown":true}`))
+	unknownPreferenceRequest := newTestRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":true,"unknown":true}`))
 	unknownPreferenceRequest.Header.Set("Content-Type", "application/json")
 	if _, err := parseApplicationPreferencesRequest(unknownPreferenceRequest); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("expected unknown preference field rejection, got %v", err)
 	}
 
-	nullPreferenceRequest := httptest.NewRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":null,"app_update_auto_install_enabled":true}`))
+	nullPreferenceRequest := newTestRequest(http.MethodPost, "/api/settings/preferences", strings.NewReader(`{"app_update_checking_enabled":null,"app_update_auto_install_enabled":true}`))
 	nullPreferenceRequest.Header.Set("Content-Type", "application/json")
 	if _, err := parseApplicationPreferencesRequest(nullPreferenceRequest); err == nil || !strings.Contains(err.Error(), "invalid app_update_checking_enabled setting") {
 		t.Fatalf("expected null preference rejection, got %v", err)
@@ -739,13 +743,13 @@ func TestSettingsJSONRequestParsers(t *testing.T) {
 }
 
 func TestJSONRequestParsersRejectTrailingData(t *testing.T) {
-	updateRequest := httptest.NewRequest(http.MethodPost, "/api/update", strings.NewReader(`{"manager":"winget","package_id":"Git.Git"}{"manager":"choco","package_id":"gh"}`))
+	updateRequest := newTestRequest(http.MethodPost, "/api/update", strings.NewReader(`{"manager":"winget","package_id":"Git.Git"}{"manager":"choco","package_id":"gh"}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
 	if _, _, _, invalidUpdate := parsePackageUpdateAction(updateRequest); invalidUpdate == nil || !strings.Contains(invalidUpdate.Stderr, "trailing data") {
 		t.Fatalf("expected trailing JSON to be rejected, got %#v", invalidUpdate)
 	}
 
-	themeRequest := httptest.NewRequest(http.MethodPost, "/api/settings/theme", strings.NewReader(`{"theme":"light"}{"theme":"dark"}`))
+	themeRequest := newTestRequest(http.MethodPost, "/api/settings/theme", strings.NewReader(`{"theme":"light"}{"theme":"dark"}`))
 	themeRequest.Header.Set("Content-Type", "application/json")
 	if _, err := parseThemeRequest(themeRequest); err == nil || !strings.Contains(err.Error(), "trailing data") {
 		t.Fatalf("expected trailing theme JSON to be rejected, got %v", err)
@@ -849,7 +853,7 @@ func TestAPIRejectsOversizedRequestBodies(t *testing.T) {
 }
 
 func TestParseFormRequestIsBoundedWithoutServerWrapper(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader("enabled=true&padding="+strings.Repeat("x", int(maxSmallJSONBodyBytes))))
+	request := newTestRequest(http.MethodPost, "/api/settings/startup", strings.NewReader("enabled=true&padding="+strings.Repeat("x", int(maxSmallJSONBodyBytes))))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	if err := parseFormRequest(request); err == nil || !strings.Contains(err.Error(), "request body too large") {
@@ -859,7 +863,7 @@ func TestParseFormRequestIsBoundedWithoutServerWrapper(t *testing.T) {
 
 func TestParsePackageListFormRequestUsesPackageListLimit(t *testing.T) {
 	body := "package_key=winget:Git.Git&padding=" + strings.Repeat("x", int(maxSmallJSONBodyBytes))
-	request := httptest.NewRequest(http.MethodPost, "/api/update-all", strings.NewReader(body))
+	request := newTestRequest(http.MethodPost, "/api/update-all", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	if err := parsePackageListFormRequest(request); err != nil {
@@ -871,7 +875,7 @@ func TestParsePackageListFormRequestUsesPackageListLimit(t *testing.T) {
 }
 
 func TestParseFormRequestPreservesBodyBeforeQueryOrdering(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/api/settings/startup?enabled=false", strings.NewReader("enabled=true"))
+	request := newTestRequest(http.MethodPost, "/api/settings/startup?enabled=false", strings.NewReader("enabled=true"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	if err := parseFormRequest(request); err != nil {
@@ -908,7 +912,7 @@ func TestStartupSettingsRequireExplicitStrictBoolean(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(tc.body))
+			request := newTestRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(tc.body))
 			if tc.json {
 				request.Header.Set("Content-Type", "application/json")
 			} else {
@@ -921,7 +925,7 @@ func TestStartupSettingsRequireExplicitStrictBoolean(t *testing.T) {
 		})
 	}
 
-	request := httptest.NewRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(`enabled=false`))
+	request := newTestRequest(http.MethodPost, "/api/settings/startup", strings.NewReader(`enabled=false`))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	enabled, invalid := parseStartupRequest(request)
 	if invalid != nil || enabled {

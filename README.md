@@ -92,7 +92,7 @@ PatchBoard.exe --task auto-update
 | --- | --- |
 | `--no-browser` | Start the local WebUI and print the URL instead of opening a browser. |
 | `--port PORT` | Bind the WebUI to a specific local port. Startup fails if the port is unavailable. |
-| `--token TOKEN` | Use a caller-provided bootstrap token instead of generating one. |
+| `--token TOKEN` | Use a caller-provided bootstrap token instead of generating one. It must be at least 32 characters of letters, digits and `-._~`. |
 | `--task auto-update` | Run the scheduled auto-update task once and print JSON results. |
 | `--help`, `-h` | Print usage. |
 

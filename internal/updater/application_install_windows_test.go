@@ -190,8 +190,11 @@ func configureApplicationInstallTestRoot(t *testing.T, sourceContents []byte) st
 	if err := os.WriteFile(source, sourceContents, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ProgramFiles", filepath.Join(dir, "Program Files"))
-	t.Setenv("ProgramData", filepath.Join(dir, "ProgramData"))
+	setTrustedMachineFoldersForTest(t, machineFolders{
+		ProgramFiles: filepath.Join(dir, "Program Files"),
+		ProgramData:  filepath.Join(dir, "ProgramData"),
+		Windows:      `C:\Windows`,
+	})
 	originalExecutable := applicationInstallCurrentExecutable
 	applicationInstallCurrentExecutable = func() (string, error) { return source, nil }
 	t.Cleanup(func() { applicationInstallCurrentExecutable = originalExecutable })

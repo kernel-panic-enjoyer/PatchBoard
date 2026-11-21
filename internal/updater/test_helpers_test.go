@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -142,7 +141,7 @@ func addTestSessionCookie(app *App, request *http.Request) {
 }
 
 func authenticatedRequest(app *App, method, target string, body io.Reader) *http.Request {
-	request := httptest.NewRequest(method, target, body)
+	request := newTestRequest(method, target, body)
 	addTestSessionCookie(app, request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set(trustedUIRequestHeader, "1")

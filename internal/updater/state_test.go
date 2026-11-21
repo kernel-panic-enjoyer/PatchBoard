@@ -26,7 +26,9 @@ func TestStateDirOverrideIgnoredInHardenedMode(t *testing.T) {
 	overrideDirectory := t.TempDir()
 	localAppData := t.TempDir()
 	t.Setenv("UPDATER_STATE_DIR", overrideDirectory)
-	t.Setenv("LOCALAPPDATA", localAppData)
+	// Hardened runs take Local AppData from the OS, never from the environment.
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	setCurrentUserLocalAppDataForTest(t, localAppData)
 	setProcessExecutionModeForTest(t, processModeScheduledAutoUpdate)
 
 	got, err := stateDir()

@@ -178,7 +178,7 @@ func TestRunServerDoesNotStartTrayOrBrowserAfterBindFailure(t *testing.T) {
 	defer occupied.Close()
 	port := listenerTestPort(t, occupied)
 	var trayStarted, browserOpened bool
-	err := runServerWithOptions(cliOptions{Mode: cliModeServer, NoBrowser: false, Token: "abc", Port: port, PortSet: true}, serverHooks{
+	err := runServerWithOptions(cliOptions{Mode: cliModeServer, NoBrowser: false, Token: "0123456789abcdef0123456789abcdef", Port: port, PortSet: true}, serverHooks{
 		startTray: func(*App, string) (trayController, error) {
 			trayStarted = true
 			return nil, nil

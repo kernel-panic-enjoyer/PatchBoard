@@ -37,13 +37,7 @@ func stateDir() (string, error) {
 		return override, nil
 	}
 
-	var candidates []string
-	for _, env := range []string{"LOCALAPPDATA", "APPDATA", "USERPROFILE", "ProgramData"} {
-		if value := os.Getenv(env); value != "" {
-			candidates = append(candidates, filepath.Join(value, appDirName))
-		}
-	}
-	candidates = append(candidates, filepath.Join(appRoot(), ".state"))
+	candidates := stateDirCandidates()
 
 	for _, candidate := range candidates {
 		migrateLegacyStateDirectory(candidate)
@@ -52,6 +46,24 @@ func stateDir() (string, error) {
 		}
 	}
 	return "", errors.New("could not create a state directory")
+}
+
+func stateDirCandidates() []string {
+	var candidates []string
+	if hardenedProcessExecutionMode() {
+		// Admin-rights runs take the folders from the OS, not the environment.
+		if localAppData, err := currentUserLocalAppDataProvider(); err == nil && strings.TrimSpace(localAppData) != "" {
+			candidates = append(candidates, filepath.Join(localAppData, appDirName))
+		}
+		candidates = append(candidates, filepath.Join(trustedMachineFolders().ProgramData, appDirName))
+	} else {
+		for _, env := range []string{"LOCALAPPDATA", "APPDATA", "USERPROFILE", "ProgramData"} {
+			if value := os.Getenv(env); value != "" {
+				candidates = append(candidates, filepath.Join(value, appDirName))
+			}
+		}
+	}
+	return append(candidates, filepath.Join(appRoot(), ".state"))
 }
 
 func migrateLegacyStateDirectory(newDirectory string) {

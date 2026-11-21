@@ -89,7 +89,7 @@ func acknowledgePendingSelfUpdateHealth() error {
 		}
 		return err
 	}
-	if len(entries) > maxPendingHealthRequests {
+	if countPendingSelfUpdateHealthRequests(entries) > maxPendingHealthRequests {
 		return errors.New("too many pending self-update startup health requests")
 	}
 	currentExecutable, err := os.Executable()
@@ -114,7 +114,7 @@ func acknowledgePendingSelfUpdateHealth() error {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "health-") || !strings.HasSuffix(entry.Name(), selfUpdateHealthRequestFileSuffix) {
+		if !isSelfUpdateHealthRequestEntry(entry) {
 			continue
 		}
 		requestPath := filepath.Join(directory, entry.Name())
@@ -154,12 +154,29 @@ func acknowledgePendingSelfUpdateHealth() error {
 	return nil
 }
 
+func isSelfUpdateHealthRequestEntry(entry os.DirEntry) bool {
+	return !entry.IsDir() && strings.HasPrefix(entry.Name(), "health-") && strings.HasSuffix(entry.Name(), selfUpdateHealthRequestFileSuffix)
+}
+
+// countPendingSelfUpdateHealthRequests counts health request files only. The
+// directory also holds staged downloads, checksums and acks, which must not
+// push a legitimate restart over the limit.
+func countPendingSelfUpdateHealthRequests(entries []os.DirEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if isSelfUpdateHealthRequestEntry(entry) {
+			count++
+		}
+	}
+	return count
+}
+
 func readSelfUpdateStartupHealthRequest(path string) (selfUpdateStartupHealthRequest, error) {
 	var healthRequest selfUpdateStartupHealthRequest
 	if err := decodeSelfUpdateHealthJSON(path, &healthRequest); err != nil {
 		return healthRequest, err
 	}
-	if healthRequest.ProtocolVersion != selfUpdateApplyProtocolVersion || strings.TrimSpace(healthRequest.RequestID) == "" || strings.TrimSpace(healthRequest.TargetPath) == "" || !sha256LinePattern.MatchString(healthRequest.ExpectedSHA256) || strings.TrimSpace(healthRequest.UserSID) == "" || healthRequest.DeadlineUnixMS <= 0 {
+	if healthRequest.ProtocolVersion != selfUpdateApplyProtocolVersion || strings.TrimSpace(healthRequest.RequestID) == "" || strings.TrimSpace(healthRequest.TargetPath) == "" || !isSHA256Hex(healthRequest.ExpectedSHA256) || strings.TrimSpace(healthRequest.UserSID) == "" || healthRequest.DeadlineUnixMS <= 0 {
 		return healthRequest, errors.New("self-update startup health request is invalid")
 	}
 	return healthRequest, nil
@@ -170,7 +187,7 @@ func readSelfUpdateStartupHealthAck(path string) (selfUpdateStartupHealthAck, er
 	if err := decodeSelfUpdateHealthJSON(path, &ack); err != nil {
 		return ack, err
 	}
-	if ack.ProtocolVersion != selfUpdateApplyProtocolVersion || strings.TrimSpace(ack.RequestID) == "" || !sha256LinePattern.MatchString(ack.ExecutableSHA256) || strings.TrimSpace(ack.AcknowledgedAt) == "" {
+	if ack.ProtocolVersion != selfUpdateApplyProtocolVersion || strings.TrimSpace(ack.RequestID) == "" || !isSHA256Hex(ack.ExecutableSHA256) || strings.TrimSpace(ack.AcknowledgedAt) == "" {
 		return ack, errors.New("self-update startup health acknowledgement is invalid")
 	}
 	return ack, nil

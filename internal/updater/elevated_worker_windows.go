@@ -505,6 +505,11 @@ func runElevatedWorkerFromArgs() error {
 	return serveElevatedWorkerConnection(pipeConn, authContext, cancellation)
 }
 
+// elevatedWorkerPipeClientFlags lets the pipe's server identify the admin
+// client but never impersonate it: a server at a lower integrity level must
+// not be able to act with the elevated token.
+const elevatedWorkerPipeClientFlags = windows.FILE_ATTRIBUTE_NORMAL | windows.SECURITY_SQOS_PRESENT | windows.SECURITY_IDENTIFICATION
+
 func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadWriteCloser, error) {
 	deadline := time.Now().Add(timeout)
 	pipeNameUTF16, err := windows.UTF16PtrFromString(pipeName)
@@ -518,7 +523,7 @@ func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadW
 			0,
 			nil,
 			windows.OPEN_EXISTING,
-			windows.FILE_ATTRIBUTE_NORMAL,
+			elevatedWorkerPipeClientFlags,
 			0,
 		)
 		if err == nil {

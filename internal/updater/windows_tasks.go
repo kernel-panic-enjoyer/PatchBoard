@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -254,11 +253,8 @@ func validateAutoUpdateTaskExecutable(exe string) error {
 }
 
 func trustedAutoUpdateTaskRoots() []string {
-	return []string{
-		os.Getenv("ProgramFiles"),
-		os.Getenv("ProgramFiles(x86)"),
-		os.Getenv("SystemRoot"),
-	}
+	folders := trustedMachineFolders()
+	return []string{folders.ProgramFiles, folders.ProgramFilesX86, folders.Windows}
 }
 
 func pathWithinAnyRoot(path string, roots []string) bool {

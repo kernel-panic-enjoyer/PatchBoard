@@ -78,7 +78,7 @@ func validateSelfUpdateApplyRequest(request selfUpdateApplyRequest) error {
 	if _, err := os.Stat(sourcePath); err != nil {
 		return fmt.Errorf("self-update source is not readable: %w", err)
 	}
-	if request.ExpectedSHA256 == "" || !sha256LinePattern.MatchString(request.ExpectedSHA256) {
+	if request.ExpectedSHA256 == "" || !isSHA256Hex(request.ExpectedSHA256) {
 		return errors.New("self-update expected SHA-256 is invalid")
 	}
 	return nil

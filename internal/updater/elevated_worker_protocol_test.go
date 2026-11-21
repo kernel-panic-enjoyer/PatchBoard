@@ -245,8 +245,7 @@ func validApplicationInstallPayloadForTest(t *testing.T) elevatedWorkerApplicati
 	}
 	programFiles := filepath.Join(dir, "Program Files")
 	programData := filepath.Join(dir, "ProgramData")
-	t.Setenv("ProgramFiles", programFiles)
-	t.Setenv("ProgramData", programData)
+	setTrustedMachineFoldersForTest(t, machineFolders{ProgramFiles: programFiles, ProgramData: programData, Windows: `C:\Windows`})
 	originalExecutable := applicationInstallCurrentExecutable
 	applicationInstallCurrentExecutable = func() (string, error) { return source, nil }
 	t.Cleanup(func() { applicationInstallCurrentExecutable = originalExecutable })
