@@ -340,6 +340,7 @@
 - 2026-11-21T14:01Z [TOOL] Verified: gofmt clean, `go vet ./...`, `Run-Tests.ps1` root + browser PASS (2 new tests), `Build-Workspace.ps1` rebuilt `dist\PatchBoard.exe` (18,476,032 bytes).
 - 2026-11-21T14:20Z [USER] "bro stop bugging me just do your stuff": fix, verify, commit and push reliability fixes to the PR branch without check-in questions. Elevated-worker fix committed and pushed as e66aea3.
 - 2026-11-21T14:20Z [CODE] Self-update no longer reports failure when only the `.bak` cleanup fails: after a verified restart, and after a successful rollback, `removeSelfUpdateBackupBestEffort` retries for up to 5 s and then leaves the backup (ReplaceFileW overwrites it on the next update). Verified: vet, self-update tests incl. a locked-backup test, `Build-Workspace.ps1`.
+- 2026-11-21T14:40Z [TOOL] CI `browser` failed on edf1575 in `TestBrowserSettingsModalPersistsApplicationPreferences` (shortcut-cleanup step timeout): the test clicked a preference toggle while the post-save status refresh had it disabled, so the click was dropped. The test now waits for each toggle to be enabled before clicking. Verified: the test 5x and `Run-Tests.ps1` root and browser PASS.
 
 [DISCOVERIES]
 

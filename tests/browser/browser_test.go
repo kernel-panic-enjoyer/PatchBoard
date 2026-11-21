@@ -1617,11 +1617,11 @@ func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
 		}
 	}
 	runStep("open", poll(`document.querySelector("#settings-button") && !document.querySelector("#settings-button").disabled`), chromedp.Click(`#settings-button`, chromedp.ByQuery), poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`), poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`))
-	runStep("enable automatic app updates", chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
+	runStep("enable automatic app updates", poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
 	waitForPreference("automatic app updates", func(settings updater.StatusSettings) bool { return settings.AppUpdateAutoInstallEnabled })
-	runStep("disable app update checks", chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
+	runStep("disable app update checks", poll(`!document.querySelector("#app-update-checking-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
 	waitForPreference("disabled app update checks", func(settings updater.StatusSettings) bool { return !settings.AppUpdateCheckingEnabled })
-	runStep("enable shortcut cleanup", chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
+	runStep("enable shortcut cleanup", poll(`!document.querySelector("#desktop-shortcut-cleanup-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
 	waitForPreference("Desktop shortcut cleanup", func(settings updater.StatusSettings) bool { return settings.RemoveNewDesktopShortcuts })
 	runStep("close", chromedp.Evaluate(`document.querySelector("#settings-close").click()`, nil), poll(`document.querySelector("#settings-modal").classList.contains("hidden")`))
 	preferencesMu.Lock()
