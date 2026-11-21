@@ -23,9 +23,6 @@ func packageFromManagerInventory(state State, inventory managerInventory, pkg Pa
 	}
 	available := inventory.updates[packageKey(effectiveManager, strings.ToLower(pkg.ID))]
 	updateDetail := inventory.updateDetails[packageKey(effectiveManager, strings.ToLower(pkg.ID))]
-	if available == "" && inventory.manager == managerWinget {
-		available = pkg.AvailableVersion
-	}
 	pkg.Key = packageKey(effectiveManager, pkg.ID)
 	pkg.Manager = effectiveManager
 	pkg.AvailableVersion = available
@@ -38,5 +35,25 @@ func packageFromManagerInventory(state State, inventory managerInventory, pkg Pa
 	if pkg.ActionBackend == "" {
 		pkg.ActionBackend = effectiveManager
 	}
+	if effectiveManager == managerWinget {
+		suppressRejectedWingetOffer(state, &pkg)
+		quarantineKnownWingetIdentityConflict(&pkg)
+	}
 	return pkg, true
+}
+
+// WinGet/Brave issue #57356 documents the stable Brave Origin ARP entry being
+// correlated with the Nightly manifest. Keep that ambiguous identity visible
+// for diagnostics, but never authorize a cross-channel mutation from it.
+func quarantineKnownWingetIdentityConflict(pkg *Package) {
+	if !strings.EqualFold(strings.TrimSpace(pkg.ID), "Brave.BraveOrigin.Nightly") ||
+		!strings.EqualFold(strings.TrimSpace(pkg.Name), "Brave Origin") {
+		return
+	}
+	pkg.IdentityConflict = true
+	pkg.IdentityReason = "WinGet correlated the stable Brave Origin installation with Brave Origin Nightly. Automatic updates are disabled to avoid changing release channels."
+	pkg.AvailableVersion = ""
+	pkg.UpdateAvailable = false
+	pkg.UpdateSupported = false
+	pkg.AutoUpdate = false
 }

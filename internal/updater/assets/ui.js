@@ -45,6 +45,13 @@
   var reconnectingAnimationBaseMessage = "Reconnecting to backend";
   var currentBackendConnectionState = "reconnecting";
   var backendHasConnected = false;
+  // Update jobs are rendered only from backend job events, so a backend that
+  // exits mid-job would leave the last snapshot spinning forever. After this
+  // grace period without contact the update card switches to a lost state.
+  var backendLostGraceMs = 5000;
+  var backendLostTimer = null;
+  var updateProgressBackendLost = false;
+  var backendLostUpdateMessage = "Lost connection to PatchBoard. The update may have stopped. Restart PatchBoard and check for updates to see which packages finished.";
   var backendActionControlSelector = [
     "#theme-toggle",
     "#shutdown-button",
@@ -466,12 +473,69 @@
       if(state === "reconnecting"){
         startReconnectingAnimation(message || "Reconnecting to backend");
         applyBackendAvailabilityState();
+        syncUpdateProgressWithBackendState();
         return;
       }
       stopReconnectingAnimation();
       target.textContent = message || state;
     }
     applyBackendAvailabilityState();
+    syncUpdateProgressWithBackendState();
+  }
+  function clearBackendLostTimer(){
+    if(backendLostTimer){
+      clearTimeout(backendLostTimer);
+      backendLostTimer = null;
+    }
+  }
+  function updateProgressVisible(){
+    var panel = $("update-progress");
+    return !!panel && !panel.classList.contains("hidden");
+  }
+  function updateProgressNeedsBackend(){
+    return activeUpdateJobs().length > 0 || updateProgressVisible();
+  }
+  function syncUpdateProgressWithBackendState(){
+    if(backendIsConnected()){
+      clearBackendLostTimer();
+      if(updateProgressBackendLost){
+        updateProgressBackendLost = false;
+        var panel = $("update-progress");
+        if(panel){ panel.classList.remove("backend-lost"); }
+        reconcileJobs(serverJobs);
+        checkActiveUpdateJob();
+      }
+      return;
+    }
+    if(!backendHasConnected || updateProgressBackendLost || backendLostTimer || !updateProgressNeedsBackend()){ return; }
+    backendLostTimer = setTimeout(function(){
+      backendLostTimer = null;
+      if(!backendIsConnected()){ markUpdateProgressBackendLost(); }
+    }, backendLostGraceMs);
+  }
+  function markUpdateProgressBackendLost(){
+    if(!updateProgressNeedsBackend()){ return; }
+    updateProgressBackendLost = true;
+    var panel = $("update-progress");
+    if(!panel){ return; }
+    var active = activeUpdateJobs();
+    var lastStatus = active.length ? updateJobMessage(active[active.length - 1]) : "";
+    var message = backendLostUpdateMessage + (lastStatus ? " Last status: " + lastStatus : "");
+    panel.classList.add("backend-lost");
+    panel.classList.remove("hidden");
+    panel.setAttribute("aria-busy", "false");
+    var title = panel.querySelector(".progress-title");
+    if(title){ setLoadingContent(title, message, false); }
+    var bar = panel.querySelector("[role=progressbar]");
+    if(bar){
+      bar.setAttribute("aria-label", "Update job connection lost");
+      bar.setAttribute("aria-valuetext", "Connection lost");
+    }
+    var cancel = control("cancel-updates-button");
+    if(cancel){
+      cancel.classList.add("hidden");
+      cancel.disabled = true;
+    }
   }
   function backendIsConnected(){
     return currentBackendConnectionState === "connected";
@@ -1651,15 +1715,16 @@
 
 
   function packageNameCell(pkg){
-    var secondary = pkg.action_backend === "appx-inventory" ? "Store app" : pkg.id;
+    var secondary = pkg.identity_conflict ? "WinGet identity conflict" : (pkg.action_backend === "appx-inventory" ? "Store app" : pkg.id);
     if(pkg.unknown_version){
       secondary += " - unknown installed version";
     }
     if(pkg.pinned){
       secondary += " - pinned";
     }
+    var secondaryTitle = pkg.identity_conflict ? (pkg.identity_reason || secondary) : secondary;
     var name = pkg.name || "Store app";
-    return '<div class="package-name-cell"><strong title="' + attr(name) + '">' + html(name) + '</strong><span class="muted" title="' + attr(secondary) + '">' + html(secondary) + '</span></div>';
+    return '<div class="package-name-cell"><strong title="' + attr(name) + '">' + html(name) + '</strong><span class="muted" title="' + attr(secondaryTitle) + '">' + html(secondary) + '</span></div>';
   }
   function managerCell(pkg, options){
     options = options || {};
@@ -1786,7 +1851,7 @@
   function packageMatchesInstalledSearch(pkg){
     var query = installedSearchQuery.trim().toLowerCase();
     if(!query){ return true; }
-    return [pkg.name, pkg.id, pkg.manager, pkg.version, pkg.available_version, pkg.update_state, pkg.update_reason, pkg.installed_package_family_name, pkg.store_product_id].some(function(value){
+    return [pkg.name, pkg.id, pkg.manager, pkg.version, pkg.available_version, pkg.update_state, pkg.update_reason, pkg.identity_reason, pkg.installed_package_family_name, pkg.store_product_id].some(function(value){
       return String(value || "").toLowerCase().indexOf(query) !== -1;
     });
   }
@@ -1834,7 +1899,7 @@
     var page = pagedItems(visiblePackages, installedPage, installedPageSize);
     installedPage = page.page;
 	target.innerHTML = page.items.map(function(pkg){
-		var rowStatus = pkg.manager === "store" ? stateBadge(pkg) : (pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : ((pkg.unknown_version || pkg.pinned) && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>')));
+		var rowStatus = pkg.manager === "store" ? stateBadge(pkg) : (pkg.identity_conflict ? '<span class="badge warn" title="' + attr(pkg.identity_reason || "WinGet identity conflict") + '">Identity conflict</span>' : (pkg.update_supported === false ? '<span class="badge">Inventory only</span>' : ((pkg.unknown_version || pkg.pinned) && pkg.update_available ? '<span class="badge warn">Explicit update</span>' : (pkg.update_available ? '<span class="badge warn">Update</span>' : '<span class="badge ok">Current</span>'))));
     var rowClass = rowUpdateState(pkg.key) === "active" ? ' class="updating-current"' : '';
 		return '<tr data-key="' + attr(pkg.key) + '"' + rowClass + '><td>' + packageNameCell(pkg) + '</td><td>' + managerCell(pkg, {compact:true}) + '</td><td>' + clippedCellText(pkg.version) + '</td><td>' + packageAvailableCell(pkg, {statusBadge:false, compact:true}) + '</td><td>' + rowStatus + '</td><td>' + autoButton(pkg) + '</td><td class="action-cell">' + installedAction(pkg) + '</td></tr>';
 	}).join("");
@@ -2718,6 +2783,10 @@
     var message = updateJobMessage(status);
     var active = !!(status && !jobComplete(status));
     setUpdateBusy(active, activeUpdateKeys, status ? status.current_key : "");
+    if(active && updateProgressBackendLost){
+      markUpdateProgressBackendLost();
+      return;
+    }
     setGlobalProgress(active, message, active && !status.cancel_requested);
     if(active){
       showNotice("");
@@ -2732,14 +2801,19 @@
       return;
     }
     var results = status.results || [];
-    var failed = results.filter(function(item){ return !(item.result && item.result.ok) && !(item.result && item.result.code === 202); });
+    var failed = results.filter(function(item){ return !(item.result && item.result.ok) && !(item.result && (item.result.code === 202 || item.result.code === 204)); });
     var unverified = results.filter(function(item){ return item.result && item.result.code === 202; });
+    var skipped = results.filter(function(item){ return item.result && item.result.code === 204; });
     if(unverified.length > 0){
       showToast(unverified.length + " Store update request(s) were accepted but not verified. See Session Log for diagnostics.", "error");
       return;
     }
     if(failed.length > 0){
       showToast(failed.length + " update command(s) finished with errors. See Session Log for full output.", "error");
+      return;
+    }
+    if(skipped.length > 0){
+      showToast("Update job finished: " + (results.length - skipped.length) + " succeeded, " + skipped.length + " skipped because they were no longer actionable.", "info");
       return;
     }
     if(results.length > 0){

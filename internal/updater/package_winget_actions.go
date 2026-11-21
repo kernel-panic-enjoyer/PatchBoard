@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func wingetSourceArg(packageManager string) string {
@@ -71,19 +72,60 @@ func wingetInstallNameCommand(packageManager, packageName string, force bool) []
 }
 
 func runWingetUpgradePackageWithInstallFallbackContext(ctx context.Context, packageManager string, pkg Package) CommandResult {
+	// "Update not applicable" is final per attempt. "No installed package found"
+	// is only final once every ID target and the exact-name fallback missed,
+	// because WinGet reports a wrong identifier the same way. The last raw
+	// attempt is tracked so earlier misses in the merged output cannot
+	// reclassify a different final failure as a stale offer.
+	var finalAttempt CommandResult
 	targetResult := runPackageUpdateCandidates(ctx, wingetUpdateTargetCandidates(pkg), "winget target", func(target string) CommandResult {
-		return runWingetUpgradeTargetWithInstallFallbackContext(ctx, packageManager, target, pkg.AllowUnknownVersionUpdate, pkg.AllowPinnedUpdate)
+		finalAttempt = skipWingetUpdateWhen(wingetUpdateNotApplicable, runWingetUpgradeTargetWithInstallFallbackContext(ctx, packageManager, target, pkg.AllowUnknownVersionUpdate, pkg.AllowPinnedUpdate))
+		return finalAttempt
 	})
-	if targetResult.OK || ctx.Err() != nil || !shouldTryAlternatePackageTarget(targetResult) {
+	if targetResult.OK || commandResultSkipped(targetResult) || ctx.Err() != nil {
 		return targetResult
 	}
-	fallbackName := wingetNameFallbackTarget(pkg)
+	fallbackName := ""
+	if shouldTryAlternatePackageTarget(targetResult) {
+		fallbackName = wingetNameFallbackTarget(pkg)
+	}
 	if fallbackName == "" {
-		return targetResult
+		return skipWingetUpdateIfInstalledPackageMissing(targetResult, finalAttempt)
 	}
 	appLog("Winget update targets for %s missed; trying exact package name %q.", updateJobPackageName(pkg), fallbackName)
-	nameResult := runWingetUpgradeNameWithInstallFallbackContext(ctx, packageManager, fallbackName, pkg.AllowUnknownVersionUpdate, pkg.AllowPinnedUpdate)
-	return mergeCommandAttemptsWithFinalResult(targetResult, nameResult, "winget name fallback")
+	nameResult := skipWingetUpdateWhen(wingetUpdateNotApplicable, runWingetUpgradeNameWithInstallFallbackContext(ctx, packageManager, fallbackName, pkg.AllowUnknownVersionUpdate, pkg.AllowPinnedUpdate))
+	mergedResult := mergeCommandAttemptsWithFinalResult(targetResult, nameResult, "winget name fallback")
+	if ctx.Err() != nil {
+		return mergedResult
+	}
+	return skipWingetUpdateIfInstalledPackageMissing(mergedResult, nameResult)
+}
+
+func skipWingetUpdateWhen(noLongerActionable func(CommandResult) bool, result CommandResult) CommandResult {
+	if !noLongerActionable(result) {
+		return result
+	}
+	return markWingetUpdateNoLongerActionable(result)
+}
+
+func skipWingetUpdateIfInstalledPackageMissing(result, finalAttempt CommandResult) CommandResult {
+	if result.OK || !wingetInstalledPackageMissing(finalAttempt) {
+		return result
+	}
+	return markWingetUpdateNoLongerActionable(result)
+}
+
+func markWingetUpdateNoLongerActionable(result CommandResult) CommandResult {
+	originalCode := result.Code
+	result.OK = false
+	result.Code = commandSkippedCode
+	diagnostic := fmt.Sprintf("%s (original code %d).", rejectedWingetOfferDiagnostic, originalCode)
+	if strings.TrimSpace(result.Stdout) == "" {
+		result.Stdout = diagnostic
+	} else {
+		result.Stdout = strings.TrimRight(result.Stdout, "\r\n") + "\n" + diagnostic
+	}
+	return result
 }
 
 func runWingetUpgradeTargetWithInstallFallbackContext(ctx context.Context, packageManager, packageID string, allowUnknownVersionRetry bool, allowPinnedRetry bool) CommandResult {
@@ -195,9 +237,6 @@ func wingetForceRepairReason(result CommandResult) string {
 	normalizedOutput := normalizedCommandOutput(result)
 	if wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput) {
 		return "an installer technology mismatch"
-	}
-	if wingetOutputReportsNoApplicableUpgrade(normalizedOutput) {
-		return "no applicable upgrade"
 	}
 	return ""
 }

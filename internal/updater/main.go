@@ -512,7 +512,10 @@ func Main() {
 		return
 	}
 
+	stopDiagnosticLogFiles := startDiagnosticLogFiles()
+	defer stopDiagnosticLogFiles()
 	if err := runServerWithOptions(options, productionServerHooks); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		appLog("Server stopped with error: %s.", err)
 		fmt.Fprintln(os.Stderr, err)
 	}
 }

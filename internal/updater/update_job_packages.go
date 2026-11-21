@@ -131,6 +131,33 @@ func (app *App) revalidateUpdatePackagesForJob(ctx context.Context, requestedPac
 	return revalidatedPackages, skippedResults
 }
 
+// executeLatestPublishedStoreUpdateForJob binds a queued Store package to the
+// latest published assessment immediately before execution. The scan/action
+// lock keeps that generation stable until the exact Store action finishes.
+func (app *App) executeLatestPublishedStoreUpdateForJob(ctx context.Context, requestedPackage Package, execute func(Package) CommandResult) CommandResult {
+	command := "update " + updateJobPackageName(requestedPackage)
+	if !lockMutexContextWithWait(ctx, &app.inventoryService.storeAssessmentActionMu, func() {
+		appLogContext(ctx, "Waiting for Microsoft Store scan to finish before updating %s.", updateJobPackageName(requestedPackage))
+	}) {
+		return commandContextDoneResult(ctx, command, "while waiting for Microsoft Store scan", []string{
+			logCategoryAll,
+			logCategoryUpdates,
+			logCategoryMutations,
+			logCategoryStore,
+		})
+	}
+	defer app.inventoryService.storeAssessmentActionMu.Unlock()
+
+	revalidatedPackages, skippedResults := app.revalidateUpdatePackagesForJob(ctx, []Package{requestedPackage})
+	if len(skippedResults) > 0 {
+		return skippedResults[0].Result
+	}
+	if len(revalidatedPackages) != 1 {
+		return skippedUpdateResult(requestedPackage, "No current exact Store update assessment is available.").Result
+	}
+	return execute(revalidatedPackages[0])
+}
+
 func skippedUpdateResult(pkg Package, reason string) UpdateResult {
 	key := normalizedJobPackageKey(pkg)
 	if key == "" {

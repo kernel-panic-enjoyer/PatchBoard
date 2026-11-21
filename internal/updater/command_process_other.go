@@ -26,4 +26,8 @@ func (*commandProcessOwner) Resume(command *exec.Cmd) error {
 
 func (*commandProcessOwner) Terminate() {}
 
+func (*commandProcessOwner) ActivitySnapshot() (commandProcessActivitySnapshot, bool) {
+	return commandProcessActivitySnapshot{}, false
+}
+
 func (*commandProcessOwner) Close() {}

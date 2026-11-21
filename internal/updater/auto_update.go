@@ -234,6 +234,9 @@ func runAutoUpdateWithStore(ctx context.Context, store StateStore) []UpdateResul
 		actionErr := actionCtx.Err()
 		cancelAction()
 		results = append(results, UpdateResult{Key: inventoryKey, Result: actionResult})
+		if err := recordRejectedWingetOffersWithStore(ctx, store, []Package{pkg}, results[len(results)-1:]); err != nil {
+			appLogContext(ctx, "Could not remember rejected WinGet offer for %s: %s", inventoryKey, err)
+		}
 		if actionErr != nil || actionResult.Code == commandCancelledCode || actionResult.Code == 124 {
 			runStopReason = firstNonEmpty(errorMessage(actionErr), packageActionStopReason(actionResult), "package action stopped")
 			break

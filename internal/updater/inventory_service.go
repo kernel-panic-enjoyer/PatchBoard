@@ -11,6 +11,10 @@ import (
 // effective snapshots.
 type inventoryService struct {
 	mu sync.RWMutex
+	// storeAssessmentActionMu serializes Store snapshot publication with exact
+	// Store update authorization and execution. When both locks are needed,
+	// acquire this mutex before mu.
+	storeAssessmentActionMu sync.Mutex
 
 	cache             Inventory
 	loading           bool

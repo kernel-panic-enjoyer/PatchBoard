@@ -292,6 +292,14 @@ func (buffer *LogBuffer) AppendCategorized(stream, message string, categories []
 }
 
 func (buffer *LogBuffer) AppendContext(ctx context.Context, stream, message string, categories []string) LogEntry {
+	entry := buffer.appendContextLocked(ctx, stream, message, categories)
+	if buffer == sessionLogs {
+		writeSessionLogFileEntry(entry)
+	}
+	return entry
+}
+
+func (buffer *LogBuffer) appendContextLocked(ctx context.Context, stream, message string, categories []string) LogEntry {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	buffer.ensureLocked()

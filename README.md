@@ -242,6 +242,21 @@ updates.
 - Use **Export Store Diagnostics** from the Store scan-health panel when Store
   updates appear missing or stale.
 - Use **Export Logs** from Session Log when package-manager commands fail.
+- If PatchBoard stops unexpectedly, look in `%LOCALAPPDATA%\PatchBoard\logs`.
+  `session-*.log` mirrors the Session Log to disk with the same redaction as
+  **Export Logs** (4 MiB per file, newest 8 kept), and `crash-*.log` holds the
+  Go panic and stack trace of a process that crashed (newest 10 kept; files from
+  clean exits are removed). Every intentional shutdown logs its source, such as
+  `Tray quit requested.`, so a session file that simply stops with no quit line
+  and no crash file points to the process being killed from outside.
+- If the WebUI loses its backend while an update job is running, the update
+  card turns red and reads "Lost connection to PatchBoard" with the last
+  reported package. Restart PatchBoard and check for updates to see which
+  packages finished; the in-memory job does not survive the restart.
+- If WinGet rejects an exact update as inapplicable, PatchBoard marks it skipped
+  and hides that same installed/target version pair for 24 hours. A changed
+  version is checked again immediately; `winget list` alone is not treated as
+  proof that an update can be installed.
 
 More detail:
 

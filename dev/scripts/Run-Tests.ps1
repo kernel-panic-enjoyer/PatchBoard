@@ -16,6 +16,21 @@
     UPDATER_RUN_STORE_LIVE_* / UPDATER_APPLY_STORE_LIVE_UPDATE environment
     variables and self-skip unless those gates are set.
 
+    With -SelfUpdateIntegration, additionally compiles and runs the staged
+    self-update replacement test. The test is excluded from default test
+    binaries because its temporary self-replacing executable can trigger
+    endpoint-security heuristics.
+
+    With -ProcessIntegration, additionally runs the Windows Job Object tests.
+    Those tests start hidden child processes and terminate their process trees,
+    so they are excluded from default test binaries to avoid endpoint-security
+    false positives on developer workstations.
+
+    With -CrashIntegration, additionally runs the crash-log capture test. It
+    relaunches the test binary as a hidden child that deliberately panics, so
+    it is excluded from default test binaries for the same endpoint-security
+    reason.
+
     Requires Go >= 1.26.5 on PATH (the module targets go 1.26.5).
 
 .EXAMPLE
@@ -26,10 +41,19 @@
 
 .EXAMPLE
     $env:UPDATER_RUN_STORE_LIVE_TESTS = '1'; .\dev\scripts\Run-Tests.ps1 -Live
+
+.EXAMPLE
+    .\dev\scripts\Run-Tests.ps1 -SelfUpdateIntegration
+
+.EXAMPLE
+    .\dev\scripts\Run-Tests.ps1 -ProcessIntegration
 #>
 [CmdletBinding()]
 param(
+    [switch]$CrashIntegration,
     [switch]$Live,
+    [switch]$ProcessIntegration,
+    [switch]$SelfUpdateIntegration,
     [switch]$SkipBrowser
 )
 
@@ -99,6 +123,46 @@ if ($Live) {
         & go test -tags storelive ./internal/updater/ -run TestLive -count=1 -v
         $results['live'] = $LASTEXITCODE
     } finally {
+        Pop-Location
+    }
+}
+
+if ($ProcessIntegration) {
+    Write-Host '== Windows process-tree integration tests ==' -ForegroundColor Cyan
+    Push-Location $root
+    try {
+        & go test -tags processintegration ./internal/updater -run '^Test(NamedCommandProcessOwnerLetsWorkerJoinItself|CommandProcessOwnerTerminatesGrandchildProcessTree|CommandProcessOwnerAssignsBeforeResumingMutableCommand|RunCommandContextCancellationTerminatesOwnedPackageProcessTree)$' -count=1
+        $results['process'] = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+}
+
+if ($CrashIntegration) {
+    Write-Host '== Crash log capture integration test ==' -ForegroundColor Cyan
+    Push-Location $root
+    try {
+        & go test -tags crashintegration ./internal/updater -run '^TestCrashOutputFileCapturesUnrecoveredPanic$' -count=1
+        $results['crash'] = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+}
+
+if ($SelfUpdateIntegration) {
+    Write-Host '== Self-update replacement integration test ==' -ForegroundColor Cyan
+    $previousGate = $env:PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION
+    Push-Location $root
+    try {
+        $env:PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION = '1'
+        & go test -tags selfupdateintegration ./internal/updater -run '^Test(SelfUpdateHelperMustAcknowledgeReadiness|StagedSelfUpdateHelperReplacesPortableOriginal)$' -count=1
+        $results['self-update'] = $LASTEXITCODE
+    } finally {
+        if ($null -eq $previousGate) {
+            Remove-Item Env:PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION -ErrorAction SilentlyContinue
+        } else {
+            $env:PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION = $previousGate
+        }
         Pop-Location
     }
 }

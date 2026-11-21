@@ -2,6 +2,11 @@ package updater
 
 import "strings"
 
+const (
+	wingetErrorNoApplicationsFound = 0x8A150014
+	wingetErrorUpdateNotApplicable = 0x8A15002B
+)
+
 func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	if !isRetryablePackageActionFailure(result) {
 		return false
@@ -9,6 +14,9 @@ func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	normalizedOutput := normalizedCommandOutput(result)
 	if strings.Contains(normalizedOutput, "requires explicit user confirmation") {
 		return false
+	}
+	if wingetInstalledPackageMissing(result) {
+		return true
 	}
 	return outputContainsAny(normalizedOutput, []string{
 		"no applicable upgrade",
@@ -30,20 +38,52 @@ func shouldTryAlternatePackageTarget(result CommandResult) bool {
 	})
 }
 
-func shouldRetryWingetForceUpgrade(result CommandResult) bool {
-	if result.OK {
-		return false
-	}
-	normalizedOutput := normalizedCommandOutput(result)
-	return wingetOutputReportsNoApplicableUpgrade(normalizedOutput) ||
-		wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput)
-}
-
 func wingetOutputReportsNoApplicableUpgrade(normalizedOutput string) bool {
 	return outputContainsAny(normalizedOutput, []string{
 		"no applicable upgrade",
+		"no available upgrade",
+		"no upgrade available",
 		"kein anwendbares upgrade",
+		"kein verfügbares upgrade",
+		"kein upgrade verfügbar",
 	})
+}
+
+func wingetActionabilityCandidate(result CommandResult) bool {
+	return !result.OK && !commandResultSkipped(result) && result.Code != commandCancelledCode && result.Code != commandTimeoutCode
+}
+
+// wingetUpdateNotApplicable reports that WinGet found the installed package but
+// rejected the offered version. It is safe to act on per attempt because a
+// different target identifier cannot make the same version applicable.
+func wingetUpdateNotApplicable(result CommandResult) bool {
+	if !wingetActionabilityCandidate(result) {
+		return false
+	}
+	return wingetExitCodeMatches(result.Code, wingetErrorUpdateNotApplicable) || wingetOutputReportsNoApplicableUpgrade(normalizedCommandOutput(result))
+}
+
+// wingetInstalledPackageMissing reports that WinGet found no installed package
+// for the attempted identifier. WinGet uses the same code and text for a stale
+// offer (package uninstalled) and for a wrong identifier, so callers must only
+// treat it as a stale offer after every alternate target has missed as well.
+func wingetInstalledPackageMissing(result CommandResult) bool {
+	if !wingetActionabilityCandidate(result) {
+		return false
+	}
+	if wingetExitCodeMatches(result.Code, wingetErrorNoApplicationsFound) {
+		return true
+	}
+	return outputContainsAny(normalizedCommandOutput(result), []string{
+		"no installed package found",
+		"no installed package matching",
+		"kein installiertes paket gefunden",
+		"es wurde kein installiertes paket gefunden",
+	})
+}
+
+func wingetExitCodeMatches(exitCode int, expected uint32) bool {
+	return uint32(exitCode) == expected
 }
 
 func wingetOutputReportsInstallerTechnologyMismatch(normalizedOutput string) bool {

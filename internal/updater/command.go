@@ -2,7 +2,9 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -42,6 +44,18 @@ type CommandResult struct {
 	Stdout  string `json:"stdout"`
 	Stderr  string `json:"stderr"`
 	Command string `json:"command"`
+}
+
+type commandActivityWriter struct {
+	Writer   io.Writer
+	Activity func()
+}
+
+func (writer commandActivityWriter) Write(data []byte) (int, error) {
+	if len(data) > 0 && writer.Activity != nil {
+		writer.Activity()
+	}
+	return writer.Writer.Write(data)
 }
 
 func validationCommandResult(command string, err error) CommandResult {
@@ -144,6 +158,13 @@ func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
 	commandProcess.SysProcAttr = hiddenSysProcAttrWithFlags(processOwner != nil)
 	stdoutTail := newBoundedOutputTail(commandResultStreamLimitBytes)
 	stderrTail := newBoundedOutputTail(commandResultStreamLimitBytes)
+	commandActivity := make(chan struct{}, 1)
+	reportCommandActivity := func() {
+		select {
+		case commandActivity <- struct{}{}:
+		default:
+		}
+	}
 	stdoutPipe, err := commandProcess.StdoutPipe()
 	if err != nil {
 		return launchFailureResult(err.Error())
@@ -178,9 +199,13 @@ func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
 	var outputReaders sync.WaitGroup
 	emitStdoutToSessionLog := !suppressCommandStdoutInSessionLog(args)
 	outputReaders.Add(2)
-	go streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", stdoutTail, &outputReaders, logCategories, emitStdoutToSessionLog)
-	go streamCommandOutputContext(commandCtx, stderrPipe, "stderr", stderrTail, &outputReaders, logCategories, true)
-	commandExitErr := waitForStartedCommandWithTermination(commandCtx, commandProcess, processOwner, func() {
+	go streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", commandActivityWriter{Writer: stdoutTail, Activity: reportCommandActivity}, &outputReaders, logCategories, emitStdoutToSessionLog)
+	go streamCommandOutputContext(commandCtx, stderrPipe, "stderr", commandActivityWriter{Writer: stderrTail, Activity: reportCommandActivity}, &outputReaders, logCategories, true)
+	stallTimeout := time.Duration(0)
+	if packageMutation && isWingetCommand(args) {
+		stallTimeout = wingetMutationStallTimeout
+	}
+	commandExitErr := waitForStartedCommandWithActivity(commandCtx, commandProcess, processOwner, commandActivity, stallTimeout, func() {
 		logCommand("app", fmt.Sprintf("Command cancellation requested (pid=%d).", processID))
 		logCommand("app", fmt.Sprintf("Command termination requested (pid=%d, job_owned=%t).", processID, processOwner != nil))
 	})
@@ -221,6 +246,15 @@ func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
 		logCommand("stderr", "Cancelled.")
 		logDetectionSummaryIfStdoutSuppressed()
 		logCommand("exit", fmt.Sprintf("%s cancelled with code %d", result.Command, result.Code))
+		return result
+	}
+	var stallErr *commandStallError
+	if errors.As(commandExitErr, &stallErr) {
+		result.Code = commandTimeoutCode
+		result.Stderr = appendDiagnostic(result.Stderr, "Stopped stalled WinGet command: "+stallErr.Error()+".")
+		logCommand("stderr", "Stopped stalled WinGet command: "+stallErr.Error()+".")
+		logDetectionSummaryIfStdoutSuppressed()
+		logCommand("exit", fmt.Sprintf("%s stopped as stalled with code %d", result.Command, commandTimeoutCode))
 		return result
 	}
 	if commandExitErr != nil || outputDrainErr != nil {

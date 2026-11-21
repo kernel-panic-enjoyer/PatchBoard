@@ -208,6 +208,7 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 					break
 				}
 				result := app.updatePackageForJob(packageCtx, job, updatePackage)
+				recordRejectedWingetOffers(packageCtx, []Package{updatePackage}, []UpdateResult{{Key: updatePackage.Key, Result: result}})
 				app.mutateOperationJob(job, func(status *OperationJobStatus) {
 					status.Results = append(status.Results, UpdateResult{Key: updatePackage.Key, Result: result})
 					status.Result = &result
@@ -312,6 +313,7 @@ func (app *App) runElevatedPackageUpdateBatchForJob(ctx context.Context, job *Op
 	})
 	appLogContext(ctx, "Elevated package batch finished with code %d.", batchResult.Code)
 	batchResults = completePartialBatchResults(updatePackages, batchResults, batchResult)
+	recordRejectedWingetOffers(ctx, updatePackages, batchResults)
 	app.mutateOperationJob(job, func(status *OperationJobStatus) {
 		status.Results = append(status.Results, batchResults...)
 		status.Result = &batchResult
@@ -347,25 +349,27 @@ func packageForUpdateResultKey(updatePackages []Package, resultKey string) Packa
 
 func (app *App) updatePackageForJob(ctx context.Context, job *OperationJob, updatePackage Package) CommandResult {
 	if updatePackage.Manager == managerStore && updatePackage.UpdateState != "" {
-		return storeExactUpdateExecutor.ExecuteWithCallbacks(ctx, updatePackage, StoreExactUpdateCallbacks{
-			Starting: func(StoreExactUpdateRequest) {
-				app.mutateOperationJob(job, func(status *OperationJobStatus) {
-					status.State = jobStateStarting
-					status.Notice = "Starting exact Store update for " + updateJobPackageName(updatePackage) + "..."
-				})
-			},
-			Accepted: func(StoreExactUpdateRequest, CommandResult) {
-				app.mutateOperationJob(job, func(status *OperationJobStatus) {
-					status.State = jobStateAccepted
-					status.Notice = "Store update accepted for " + updateJobPackageName(updatePackage) + "."
-				})
-			},
-			Verifying: func(StoreExactUpdateRequest) {
-				app.mutateOperationJob(job, func(status *OperationJobStatus) {
-					status.State = jobStateVerifying
-					status.Notice = "Verifying exact Store update for " + updateJobPackageName(updatePackage) + "..."
-				})
-			},
+		return app.executeLatestPublishedStoreUpdateForJob(ctx, updatePackage, func(revalidatedPackage Package) CommandResult {
+			return storeExactUpdateExecutor.ExecuteWithCallbacks(ctx, revalidatedPackage, StoreExactUpdateCallbacks{
+				Starting: func(StoreExactUpdateRequest) {
+					app.mutateOperationJob(job, func(status *OperationJobStatus) {
+						status.State = jobStateStarting
+						status.Notice = "Starting exact Store update for " + updateJobPackageName(revalidatedPackage) + "..."
+					})
+				},
+				Accepted: func(StoreExactUpdateRequest, CommandResult) {
+					app.mutateOperationJob(job, func(status *OperationJobStatus) {
+						status.State = jobStateAccepted
+						status.Notice = "Store update accepted for " + updateJobPackageName(revalidatedPackage) + "."
+					})
+				},
+				Verifying: func(StoreExactUpdateRequest) {
+					app.mutateOperationJob(job, func(status *OperationJobStatus) {
+						status.State = jobStateVerifying
+						status.Notice = "Verifying exact Store update for " + updateJobPackageName(revalidatedPackage) + "..."
+					})
+				},
+			})
 		})
 	}
 	return app.updatePackageWithInventoryRetry(ctx, updatePackage)

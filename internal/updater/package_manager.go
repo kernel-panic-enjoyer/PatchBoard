@@ -34,6 +34,8 @@ type Package struct {
 	Match            string `json:"match,omitempty"`
 	MatchReason      string `json:"match_reason,omitempty"`
 	ActionBackend    string `json:"action_backend,omitempty"`
+	IdentityConflict bool   `json:"identity_conflict,omitempty"`
+	IdentityReason   string `json:"identity_reason,omitempty"`
 
 	UpdateState                string                        `json:"update_state,omitempty"`
 	UpdateReason               string                        `json:"update_reason,omitempty"`
@@ -263,6 +265,9 @@ func packageKey(manager, id string) string {
 }
 
 func packageAutoUpdateEnabled(state State, pkg Package) bool {
+	if pkg.IdentityConflict {
+		return false
+	}
 	if pkg.Manager == managerStore {
 		storeAutoUpdateKey := storePackageAutoUpdateKey(pkg)
 		return storeAutoUpdateKey != "" && state.AutoUpdatePackages[storeAutoUpdateKey]

@@ -36,9 +36,12 @@ jobs:
           }
 
       - name: Go tests
+        run: go test -count=1 ./...
+
+      - name: Self-update replacement integration test
         env:
           PATCHBOARD_RUN_SELF_UPDATE_INTEGRATION: "1"
-        run: go test -count=1 ./...
+        run: go test -count=1 -tags selfupdateintegration ./internal/updater -run '^Test(SelfUpdateHelperMustAcknowledgeReadiness|StagedSelfUpdateHelperReplacesPortableOriginal)$'
 
       - name: Set up GCC for the race detector
         shell: pwsh
@@ -89,8 +92,8 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run check:js
 
-      - name: Windows process-tree helper test
-        run: go test -count=1 ./internal/updater -run TestWindowsCommandProcessOwnerTerminatesGrandchild
+      - name: Windows process-tree integration tests
+        run: go test -count=1 -tags processintegration ./internal/updater -run '^Test(NamedCommandProcessOwnerLetsWorkerJoinItself|CommandProcessOwnerTerminatesGrandchildProcessTree|CommandProcessOwnerAssignsBeforeResumingMutableCommand|RunCommandContextCancellationTerminatesOwnedPackageProcessTree)$'
 
       - name: StateStore helper-process test
         run: go test -count=1 ./internal/updater -run TestStateStoreHelperProcessesUpdateDifferentFields

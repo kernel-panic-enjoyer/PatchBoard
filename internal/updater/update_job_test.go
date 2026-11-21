@@ -255,6 +255,53 @@ func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) 
 	}
 }
 
+func TestElevatedBatchHidesExactRejectedWingetOfferAfterRefresh(t *testing.T) {
+	pkg := updatableTestPackage(managerWinget, "ZedIndustries.Zed", "Zed")
+	other := updatableTestPackage(managerChoco, "gh", "GitHub CLI")
+	restore := replaceBulkUpdateBatchHooks(
+		func(candidate Package) bool {
+			return candidate.Manager == managerWinget || candidate.Manager == managerChoco
+		},
+		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
+			if len(packages) != 2 || packages[0].Key != pkg.Key || packages[1].Key != other.Key {
+				t.Errorf("unexpected elevated batch: %#v", packages)
+				return nil, CommandResult{Code: 1, Command: "package_update_batch"}
+			}
+			progress(1, packages[0])
+			return []UpdateResult{{Key: pkg.Key, Result: CommandResult{
+				Code:   commandSkippedCode,
+				Stdout: rejectedWingetOfferDiagnostic + " (original code 2316632107).",
+			}}, {Key: other.Key, Result: CommandResult{OK: true, Command: "batch gh"}}}, CommandResult{OK: true, Command: "package_update_batch"}
+		},
+		func(ctx context.Context, manager, id string) CommandResult {
+			t.Errorf("%s:%s unexpectedly ran outside the elevated batch", manager, id)
+			return CommandResult{Code: 1}
+		},
+	)
+	defer restore()
+
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{pkg, other}}}}}
+	if _, err := app.startUpdateJob(nil); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForUpdateJobStopped(t, app)
+	if status.State != jobStateSucceeded || len(status.Results) != 2 || status.Results[0].Result.Code != commandSkippedCode {
+		t.Fatalf("expected a skipped exact update, got %#v", status)
+	}
+	state := loadStateContext(context.Background())
+	if _, ok := state.RejectedWingetOffers[rejectedWingetOfferKey(pkg)]; !ok {
+		t.Fatalf("rejected offer was not persisted: %#v", state.RejectedWingetOffers)
+	}
+	inventory, err := app.effectiveInventorySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Packages) != 2 || inventory.Packages[0].UpdateAvailable || !inventory.Packages[1].UpdateAvailable {
+		t.Fatalf("same rejected offer reappeared in the update queue: %#v", inventory.Packages)
+	}
+}
+
 func TestBulkElevationCapabilityIncludesWingetAndChocolateyForSameUserConsent(t *testing.T) {
 	capability := elevatedPackageUpdateBatchCapability{
 		RequiresElevation:          true,
@@ -876,6 +923,95 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 	}
 	if status.Results[1].Key != "winget:Fresh.App" || !status.Results[1].Result.OK {
 		t.Fatalf("expected second package to update, got %#v", status.Results[1])
+	}
+}
+
+func TestExecuteLatestPublishedStoreUpdateForJobRebindsScanGeneration(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-latest"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), nil)
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	var executedPackage Package
+	result := app.executeLatestPublishedStoreUpdateForJob(context.Background(), queuedPackage, func(pkg Package) CommandResult {
+		executedPackage = pkg
+		return CommandResult{OK: true, Command: "store update " + pkg.ID}
+	})
+
+	if !result.OK {
+		t.Fatalf("latest Store generation should execute, got %#v", result)
+	}
+	if executedPackage.ScanID != "scan-latest" {
+		t.Fatalf("queued Store package was not rebound to latest scan: %#v", executedPackage)
+	}
+}
+
+func TestExecuteLatestPublishedStoreUpdateForJobSkipsSupersededOffer(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-current"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), func(snapshot *StoreScanSnapshot) {
+		snapshot.Assessments[0].State = StoreUpdateCurrent
+		snapshot.Assessments[0].AvailableVersion = ""
+	})
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	executed := false
+	result := app.executeLatestPublishedStoreUpdateForJob(context.Background(), queuedPackage, func(Package) CommandResult {
+		executed = true
+		return CommandResult{OK: true}
+	})
+
+	if executed {
+		t.Fatal("superseded Store offer must not execute")
+	}
+	if result.Code != commandSkippedCode || !strings.Contains(result.Stdout, "No longer actionable after refresh") {
+		t.Fatalf("superseded Store offer should be recorded as skipped, got %#v", result)
+	}
+}
+
+func TestStoreUpdateJobTreatsSupersededOfferAsSkipped(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+	restoreHooks := replaceUpdateJobHooksWithRefresh(
+		func(context.Context, string, string) CommandResult {
+			t.Fatal("superseded Store offer must not reach the package runner")
+			return CommandResult{}
+		},
+		func(context.Context, *App, []Package) error { return nil },
+	)
+	defer restoreHooks()
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-current"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), func(snapshot *StoreScanSnapshot) {
+		snapshot.Assessments[0].State = StoreUpdateCurrent
+		snapshot.Assessments[0].AvailableVersion = ""
+	})
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	app.startUpdatePackagesOperation(jobTypeUpdateAll, updateJobModeSelected, []Package{queuedPackage})
+	status := waitForUpdateJobStopped(t, app)
+
+	if status.State != jobStateSucceeded || len(status.Results) != 1 {
+		t.Fatalf("superseded Store offer should complete as one skipped result: %#v", status)
+	}
+	if status.Results[0].Result.Code != commandSkippedCode || !strings.Contains(status.Results[0].Result.Stdout, "No longer actionable after refresh") {
+		t.Fatalf("superseded Store job result should be skipped, got %#v", status.Results[0])
 	}
 }
 

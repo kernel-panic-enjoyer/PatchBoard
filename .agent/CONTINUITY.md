@@ -1,5 +1,13 @@
 [PLANS]
 
+- 2026-11-21T12:00:00+01:00 [USER] Objective completed locally on branch `fix/update-card-lost-backend-and-crash-log` (uncommitted): make the update card show a lost-backend state instead of spinning forever, and persist crash output plus a redacted session-log mirror to `%LOCALAPPDATA%\PatchBoard\logs`. Superseded 2026-11-21T12:56+01:00 [TOOL]: with GOTMPDIR inside the Bitdefender-excluded repo (`.tmp\go-build`, locally ignored via `.git\info\exclude`), `internal/updater` tests ran without quarantine (all new tests pass; 2 pre-existing failures from uncommitted WinGet stale-offer work: `TestWingetUpdateTriesAlternatePackageIDTarget`, `TestWingetUpdateTriesExactNameFallbackAfterIDMisses`), vet/UI validation passed, `dist\PatchBoard.exe` rebuilt, browser suite 23/23 pass.
+
+- 2026-09-18T13:51:45+02:00 [USER] Objective completed locally: prevent mixed update jobs from failing exact Microsoft Store actions when a newer Store scan publishes after the job captured its package list.
+
+- 2026-09-18T13:35:26+02:00 [USER] Objective completed locally: prevent WinGet's documented Brave Origin stable-to-Nightly correlation from appearing as an actionable PatchBoard update while retaining the package as diagnostic inventory.
+
+- 2026-09-18T13:14:00+02:00 [USER] Objective completed locally: stale WinGet offers now become skipped instead of failed/forced repairs, and a silent sole-process WinGet mutation is stopped after a bounded no-progress interval so a hung package cannot consume the full batch timeout.
+
 - 2026-07-20T20:51:29+02:00 [USER] Objective completed: pushed the validated bulk-update/UI/logging fixes to `main` and published GitHub release `v0.2.2` from the CI-built release workflow.
 
 - 2026-07-20T20:35:35+02:00 [USER] Active objective: push the validated bulk-update/UI/logging fixes directly to `main` and publish GitHub release `v0.2.2` from the CI-built release workflow.
@@ -101,6 +109,19 @@
 
 [DECISIONS]
 
+- 2026-11-21T13:01:43+01:00 [USER] Supersedes the 2026-09-18T13:14 "no display-name fallback" rule for missing packages: WinGet `0x8A15002B` and no-applicable-upgrade text stay per-attempt code-204 skips, but `0x8A150014` and localized "no installed package found" are skips only after every ID target and the exact-name fallback missed (`skipWingetUpdateIfInstalledPackageMissing`, judged on the last raw attempt, not merged output). Reason: WinGet reports a wrong ID and an uninstalled package identically. `shouldTryAlternatePackageTarget` now also accepts those codes and German text. Still no `--force`/forced install for these.
+- 2026-11-21T12:00:00+01:00 [CODE] Update jobs render only from `/api/events` job snapshots, so `ui.js` now switches the update card to a red, non-spinning "Lost connection to PatchBoard" state after `backendLostGraceMs` (5 s) without backend contact, keeps the last reported status, hides Cancel, and re-reconciles via `/api/jobs` on reconnect.
+- 2026-11-21T12:00:00+01:00 [CODE] Server mode calls `startDiagnosticLogFiles()` in `Main`: `debug.SetCrashOutput` writes fatal runtime output to `logs\crash-<UTC>-<pid>.log` (empty files removed on clean exit and pruned at startup, newest 10 kept); `sessionLogs` entries are mirrored unbuffered to `logs\session-<UTC>-<pid>-<seq>.log` with `sanitizeLogText` redaction, 4 MiB rotation, newest 8 kept. Elevated-worker mode does not write these files (UNCONFIRMED whether worker crash capture is wanted).
+- 2026-11-21T12:00:00+01:00 [CODE] The subprocess crash-capture test lives behind build tag `crashintegration` (`Run-Tests.ps1 -CrashIntegration`), matching the processintegration/selfupdateintegration exclusion for endpoint-security heuristics.
+
+- 2026-09-18T13:51:45+02:00 [CODE] Exact Store job execution re-resolves the queued SID+PFN against the latest published assessment immediately before execution; Store snapshot publication and exact authorization/execution share an in-process assessment-action mutex so the selected generation cannot change between those steps. Superseded offers are code-204 skips, not failures.
+
+- 2026-09-18T13:35:26+02:00 [CODE] The mitigation is deliberately scoped to `Brave.BraveOrigin.Nightly` reported with installed display name `Brave Origin`; a generic Nightly-name heuristic would create false negatives for legitimate nightly installers with channel-neutral ARP names. Identity conflicts clear the offer, disable manual/automatic updates, and preserve the raw WinGet ID only internally.
+
+- 2026-09-18T13:14:00+02:00 [CODE] WinGet `no applications found`/`update not applicable` codes and localized no-upgrade/no-installed-package output are terminal code-204 skips; they must not trigger display-name fallback, `--force`, or forced install. The WinGet stall watchdog applies only to package mutations with Job Object ownership and only when one process remains with unchanged CPU, process count, and output for three minutes.
+
+- 2026-09-18T13:14:00+02:00 [CODE] Self-replacing and Windows process-tree tests are explicit `selfupdateintegration`/`processintegration` suites; Windows CI runs both separately. Default test binaries retain pure/unit coverage without intentionally executing hidden child-process termination or self-replacement scenarios.
+
 - 2026-07-20T20:14:42+02:00 [CODE] After the parent sends an authenticated elevated-worker request, the synchronous named pipe is worker-to-parent only for progress and the final response; cancellation is signalled through a per-invocation ACL-protected named Windows event so no blocking pipe read can prevent worker writes.
 
 - 2026-07-20T19:36:33+02:00 [CODE] Update selection controls operate on every selectable package across all pages in the active manager filter; clearing one filter preserves selections from other filters. Elevated batch logs emit each returned package command/result under real manager/update/mutation categories and retain only a concise aggregate lifecycle summary.
@@ -195,6 +216,8 @@
 - 2026-06-28T18:43:24+02:00 [CODE] Repository licensing is now documented as `GPL-3.0-only` via a root `LICENSE` file and README License section; no per-file SPDX headers were added.
 
 [PROGRESS]
+
+- 2026-09-18T13:14:00+02:00 [CODE] Added Job Object activity accounting and output activity tracking, stale-offer normalization, skipped-result UI messaging, focused regressions, and corrected the previously non-matching Windows CI process-tree test selector.
 
 - 2026-07-20T20:14:42+02:00 [CODE] Removed the elevated-worker cancel JSON frame and same-pipe cancellation reader, added the `--worker-cancel-event` internal protocol argument/event watcher, and added serialized-pipe plus named-event regressions. The browser settings regression now waits for the fake backend mutation instead of racing its DOM projection.
 
@@ -310,6 +333,17 @@
 
 [DISCOVERIES]
 
+- 2026-11-21T12:00:00+01:00 [TOOL] Update All (22 packages) appeared stuck at "Elevated package batch running 2/22: Cryptomator": MsiInstaller events show Cryptomator 1.19.7 installed successfully at 11:36:19, but no PatchBoard process remained (the elevated worker dies with its parent through the named Job Object). There was no WER crash event and no RestartManager 10010 shutdown event, and session logs were memory-only, so the exit cause is UNCONFIRMED; an unrecovered Go panic is the leading hypothesis.
+- 2026-11-21T12:00:00+01:00 [TOOL] Bitdefender quarantined a `go test` binary (`...\gotmp\go-build*\b236\test.test.exe`) during the full `Build-Workspace.ps1` run; the package/test that triggered it is UNCONFIRMED. Targeted runs of the new unit tests and the new browser test passed beforehand. The user's global `go env` points GOTMPDIR/GOCACHE at a nonexistent `Documents\Hoplight\outputs` path; override both per process when running checks.
+
+- 2026-09-18T13:51:45+02:00 [CODE] Mixed jobs intentionally skipped the general preflight refresh when Store packages were present, then ran WinGet/Chocolatey before Store. A background Store scan could therefore replace the queued Store package's `ScanID`; the strict executor correctly rejected it as not the latest published generation, but the job caller had failed to rebind the package first.
+
+- 2026-09-18T13:35:26+02:00 [TOOL] Local uninstall registry evidence identifies the installed product as stable Brave Origin at `C:\Program Files\BraveSoftware\Brave-Origin\Application`; the official Brave tracker independently documents WinGet cross-correlating this stable product with `Brave.BraveOrigin.Nightly`.
+
+- 2026-09-18T13:14:00+02:00 [TOOL] The reported Bitdefender detection targeted Go's temporary `test.test.exe`, not `dist\PatchBoard.exe`. Test-package compilation succeeds, but local execution is blocked after a few seconds even when invasive tests are excluded; the rebuilt production GUI binary remained present and passed distribution smoke. Full local test execution is therefore antivirus-limited and UNCONFIRMED locally; CI must execute the tagged integration suites.
+
+- 2026-09-18T13:14:00+02:00 [CODE] The failed Edge result combined WinGet's multiple-match exit code with localized `no available upgrade` output, while Thunderbird returned `0x8A150014` (`no applications found`); both describe stale/non-actionable offers rather than failed mutations. TeamSpeak left only an idle WinGet process and no installer child, so output plus Job Object accounting can distinguish that hang from a legitimately silent child installer.
+
 - 2026-07-20T20:14:42+02:00 [TOOL] The 2026-07-20 19:22 archive ends after `Elevated worker connected for package_update_batch` at 19:13:59 with no first-package progress or command. The worker had reintroduced a goroutine blocked on `decoder.Decode` for future cancellation; synchronous Windows pipe I/O serialized that read against progress writes and deadlocked before package 1.
 
 - 2026-07-20T19:36:33+02:00 [CODE] The Mutations tab was empty for elevated bulk jobs because the parent logged only the synthetic `package_update_batch` aggregate; the worker response already carried bounded per-package `CommandResult` records, so no protocol change was needed. Absolute tooltip pseudo-elements also caused mobile page-width overflow until narrow-screen tooltips were constrained to a fixed viewport position.
@@ -406,6 +440,12 @@
 - 2026-06-25T18:14:00+02:00 [TOOL] System Go is 1.19.4 (too old for this `go 1.26` module); provisioned Go 1.26.4 into the session scratchpad SDK to build/test. `go build ./...`, `go vet ./...`, and `go test -count=1 ./internal/updater` all pass after the cleanup; gofmt clean. Race detector still blocked (cgo/gcc absent).
 
 [OUTCOMES]
+
+- 2026-09-18T13:51:45+02:00 [TOOL] Store generation-rebinding, superseded-offer skipping, scan/action serialization, and broader Store/update-job regressions passed; `go vet ./...`, Node syntax validation, `git diff --check`, workspace build, and distribution smoke passed. Rebuilt `dist\PatchBoard.exe` is 18,378,752 bytes with SHA-256 `EB61605E079AB1D88EBC748A81CCD8AB44AB06F6DFC5E868ACFAAE3C48FECB82`. The full unfiltered Go runtime suite remains intentionally unrun because Bitdefender quarantines its generated `test.test.exe`.
+
+- 2026-09-18T13:35:26+02:00 [TOOL] Brave identity-conflict regressions and the UI hook test passed, as did `go vet ./...`, Node syntax validation, TypeScript checking, `git diff --check`, workspace build with tests skipped, and distribution smoke. Final rebuilt `dist\PatchBoard.exe` is 18,371,072 bytes with SHA-256 `322F20A2C9045A4070C17951AC9595ECBFB17935600EB07FAA081C2E6059DEB0`; the full Go runtime suite remains intentionally unrun because Bitdefender quarantines its generated `test.test.exe`.
+
+- 2026-09-18T13:14:00+02:00 [TOOL] Focused WinGet/watchdog tests passed before the antivirus block; default plus tagged updater test binaries compile, `go vet ./...`, Node syntax, TypeScript, PowerShell parsing, and `git diff --check` passed. Canonical build with tests skipped only because Bitdefender blocks the local Go test executable produced `dist\PatchBoard.exe` at 18,364,416 bytes, SHA-256 `964ab949da240e71a1456d353a1c52c6a833588f8d513f1eb890ef6ddee2bcc8`; distribution smoke passed with 77 packages and no live package mutation.
 
 - 2026-07-20T20:51:29+02:00 [TOOL] Commit `5feae6f54570a225f0226b066f2527b5a7e3cfe6` was fast-forward pushed to `main`; Windows CI, Browser UI CI, CodeQL, and Non-Windows Guard passed. Release run `29769115020` published non-draft/non-prerelease `v0.2.2` with CI-built stripped `PatchBoard.exe`, metadata, and checksum; downloaded asset SHA-256 `01194f7b763ac23de18492a41c44aa2b20ad5c8336e0a29977e6d4742b9fe2aa` matched the checksum file and metadata commit/version.
 

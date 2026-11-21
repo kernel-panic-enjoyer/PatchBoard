@@ -781,6 +781,80 @@ func TestBrowserUpdateProgressNoticeShowsPackageCounter(t *testing.T) {
 	waitForText(t, ctx, `#update-progress-status`, "Starting exact Store update for Codex (1/3)...")
 }
 
+func TestBrowserUpdateProgressShowsLostConnectionWhenBackendStops(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	updateStatus := updater.OperationJobStatus{
+		JobID:          "elevated-batch-job",
+		Type:           "update-all",
+		Mode:           "all",
+		State:          "running",
+		Running:        true,
+		CurrentPackage: "Cryptomator",
+		CurrentKey:     "winget:Cryptomator.Cryptomator",
+		PackageKeys:    []string{"winget:Proton.ProtonMailBridge", "winget:Cryptomator.Cryptomator", "winget:Vendor.Third"},
+		CurrentIndex:   2,
+		Total:          3,
+		Notice:         "Elevated package batch running 2/3: Cryptomator.",
+	}
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/jobs": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, map[string]any{
+				"jobs":     []updater.OperationJobStatus{updateStatus},
+				"revision": 1,
+			})
+		},
+	})
+	ctx, cancel := newBrowserContextWithTimeout(t, 45*time.Second)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#log-connection-status`, "Connected")
+	// The page reconciles active jobs from /api/jobs on load; wait for the card.
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const panel = document.querySelector("#update-progress");
+		  return !!panel && !panel.classList.contains("hidden");
+		})()`, nil, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(10*time.Second)),
+	); err != nil {
+		t.Fatalf("update card never appeared for the active job: %v", err)
+	}
+
+	server.CloseClientConnections()
+	server.Close()
+
+	var state struct {
+		Text         string `json:"text"`
+		Spinner      bool   `json:"spinner"`
+		Lost         bool   `json:"lost"`
+		CancelHidden bool   `json:"cancelHidden"`
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const status = document.querySelector("#update-progress-status");
+		  return !!status && status.innerText.includes("Lost connection to PatchBoard");
+		})()`, nil, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(25*time.Second)),
+		chromedp.Evaluate(`(() => {
+		  const panel = document.querySelector("#update-progress");
+		  const status = document.querySelector("#update-progress-status");
+		  const cancel = document.querySelector("#cancel-updates-button");
+		  return {
+		    text: status.innerText,
+		    spinner: !!status.querySelector(".spinner"),
+		    lost: panel.classList.contains("backend-lost"),
+		    cancelHidden: !cancel || cancel.classList.contains("hidden")
+		  };
+		})()`, &state),
+	); err != nil {
+		t.Fatalf("update card did not report the lost backend: %v", err)
+	}
+	if state.Spinner || !state.Lost || !state.CancelHidden {
+		t.Fatalf("lost-connection card still looks active: %+v", state)
+	}
+	if !strings.Contains(state.Text, "Cryptomator") {
+		t.Fatalf("lost-connection card dropped the last known status: %q", state.Text)
+	}
+}
+
 func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
 	app := updater.NewBrowserTestApp()
 	var packageRequests atomic.Int32
