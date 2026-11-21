@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -242,6 +243,18 @@ func exchangeElevatedWorkerRequest(
 	finalResponseCh := make(chan elevatedWorkerResponse, 1)
 	decodeErrCh := make(chan error, 1)
 	go func() {
+		// A panic here (for example in the progress callback) would otherwise
+		// end the whole PatchBoard process mid-batch. Fail the request instead;
+		// the caller terminates the worker when this returns an error.
+		defer func() {
+			if panicValue := recover(); panicValue != nil {
+				appLog("Elevated worker response reader panicked: %v\n%s", panicValue, debug.Stack())
+				select {
+				case decodeErrCh <- fmt.Errorf("elevated worker response reader failed: %s", sanitizedPanicDiagnostic(panicValue)):
+				default:
+				}
+			}
+		}()
 		for {
 			var workerResponse elevatedWorkerResponse
 			if err := decoder.Decode(&workerResponse); err != nil {
@@ -461,6 +474,10 @@ func watchElevatedWorkerCancellationEvent(event windows.Handle) (<-chan struct{}
 }
 
 func runElevatedWorkerFromArgs() error {
+	// The worker has no session log; route fatal runtime output to a crash
+	// file so a worker that dies mid-batch leaves evidence behind.
+	stopCrashOutput := startWorkerCrashOutputFile()
+	defer stopCrashOutput()
 	pipeName, _ := argValue("--worker-pipe")
 	capability, _ := argValue("--worker-capability")
 	userSID, _ := argValue("--worker-user-sid")
@@ -583,7 +600,7 @@ func serveElevatedWorkerConnectionWithExecutor(
 			},
 		})
 	}
-	operationResult := execute(ctx, workerRequest.Operation, workerRequest.Payload, authContext, progress)
+	operationResult := executeElevatedWorkerOperationSafely(ctx, execute, workerRequest.Operation, workerRequest.Payload, authContext, progress)
 	workerResponse := elevatedWorkerResponse{
 		Version:   elevatedWorkerProtocolVersion,
 		RequestID: workerRequest.RequestID,
@@ -596,6 +613,30 @@ func serveElevatedWorkerConnectionWithExecutor(
 	}
 	_ = encoder.Encode(workerResponse)
 	return nil
+}
+
+// executeElevatedWorkerOperationSafely turns a panic in an operation into a
+// failed result, so the parent receives an explicit error instead of a broken
+// pipe. The stack is kept in a crash report file.
+func executeElevatedWorkerOperationSafely(
+	ctx context.Context,
+	execute elevatedWorkerOperationExecutor,
+	operation string,
+	payload json.RawMessage,
+	auth elevatedWorkerAuthContext,
+	progress func(int, Package),
+) (operationResult elevatedWorkerOperationResult) {
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			writeRecoveredPanicReport("elevated worker operation "+operation, panicValue, debug.Stack())
+			operationResult = elevatedWorkerOperationResult{Result: CommandResult{
+				Code:    1,
+				Stderr:  "elevated worker operation failed: " + sanitizedPanicDiagnostic(panicValue),
+				Command: operation,
+			}}
+		}
+	}()
+	return execute(ctx, operation, payload, auth, progress)
 }
 
 func executeElevatedWorkerOperation(ctx context.Context, operation string, payload json.RawMessage, auth elevatedWorkerAuthContext, progress func(int, Package)) elevatedWorkerOperationResult {

@@ -72,6 +72,34 @@ func startDiagnosticLogFiles() func() {
 	}
 }
 
+// startWorkerCrashOutputFile routes fatal runtime output of a helper process
+// (such as the elevated worker) to its own crash file.
+func startWorkerCrashOutputFile() func() {
+	directory, err := diagnosticLogDir()
+	if err != nil {
+		return func() {}
+	}
+	return startCrashOutputFile(directory, time.Now(), os.Getpid())
+}
+
+// writeRecoveredPanicReport keeps the stack of a recovered panic in a crash
+// file. It is for processes without a session log file, where appLog output
+// would otherwise be lost.
+func writeRecoveredPanicReport(source string, panicValue any, stack []byte) {
+	directory, err := diagnosticLogDir()
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	path := filepath.Join(directory, diagnosticLogFileName(crashLogFilePrefix, now, os.Getpid(), 1))
+	file, err := createDiagnosticLogFile(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = fmt.Fprintf(file, "Recovered panic in %s at %s: %v\n\n%s", source, now.UTC().Format(time.RFC3339), panicValue, stack)
+}
+
 func writeSessionLogFileEntry(entry LogEntry) {
 	if sink := activeSessionLogFileSink.Load(); sink != nil {
 		sink.write(entry)

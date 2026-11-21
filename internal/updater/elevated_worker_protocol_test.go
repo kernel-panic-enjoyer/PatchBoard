@@ -597,3 +597,92 @@ func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *test
 		t.Fatal("expected progress callback")
 	}
 }
+
+func TestExchangeElevatedWorkerRequestFailsInsteadOfCrashingWhenProgressPanics(t *testing.T) {
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	go func() {
+		decoder := json.NewDecoder(server)
+		encoder := json.NewEncoder(server)
+		var gotRequest elevatedWorkerMessage
+		if err := decoder.Decode(&gotRequest); err != nil {
+			return
+		}
+		_ = encoder.Encode(elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			Type:      workerResponseProgress,
+			RequestID: gotRequest.RequestID,
+			Progress:  &elevatedWorkerProgress{CurrentIndex: 1, Total: 1, PackageKey: "winget:Git.Git"},
+		})
+	}()
+
+	_, err = exchangeElevatedWorkerRequest(context.Background(), client, request, func(elevatedWorkerProgress) {
+		panic("progress callback failed")
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "reader failed: internal job panic: progress callback failed") {
+		t.Fatalf("expected reader panic error, got %v", err)
+	}
+}
+
+func TestElevatedWorkerReturnsFailedResultWhenOperationPanics(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", stateDir)
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git", Name: "Git"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- serveElevatedWorkerConnectionWithExecutor(server, auth, make(chan struct{}), func(
+			context.Context, string, json.RawMessage, elevatedWorkerAuthContext, func(int, Package),
+		) elevatedWorkerOperationResult {
+			panic("operation failed")
+		})
+	}()
+
+	response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || !strings.Contains(response.Result.Stderr, "operation failed: internal job panic: operation failed") {
+		t.Fatalf("expected failed result describing the panic, got %#v", response)
+	}
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatalf("worker connection returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker connection did not finish")
+	}
+
+	reports, err := filepath.Glob(filepath.Join(stateDir, diagnosticLogDirectoryName, crashLogFilePrefix+"*"+diagnosticLogFileSuffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("expected one crash report, got %v", reports)
+	}
+	data, err := os.ReadFile(reports[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Recovered panic in elevated worker operation package_update_batch") || !strings.Contains(string(data), "goroutine") {
+		t.Fatalf("crash report lacks panic and stack: %q", data)
+	}
+}
