@@ -31,7 +31,7 @@
     it is excluded from default test binaries for the same endpoint-security
     reason.
 
-    Requires Go >= 1.26.5 on PATH (the module targets go 1.26.5).
+    Requires Go >= 1.26.11 on PATH (the module targets go 1.26.11).
 
 .EXAMPLE
     .\dev\scripts\Run-Tests.ps1
