@@ -320,10 +320,26 @@ func applySelfUpdateReplacementTransactionWithRestart(request selfUpdateApplyReq
 		}
 		return rollbackSelfUpdateAfterStartupFailure(request, restart, "verify restarted application", err)
 	}
-	if err := os.Remove(request.TargetPath + ".bak"); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove verified self-update backup: %w", err)
-	}
+	// The update is installed and verified at this point. A backup that cannot
+	// be deleted (still mapped, or held by a scanner) must not turn that into a
+	// reported failure; the next update overwrites it.
+	removeSelfUpdateBackupBestEffort(request.TargetPath + ".bak")
 	return nil
+}
+
+// selfUpdateBackupRemoveTimeout bounds how long cleanup waits for a backup
+// that is briefly locked. It is a variable so tests can shorten it.
+var selfUpdateBackupRemoveTimeout = 5 * time.Second
+
+func removeSelfUpdateBackupBestEffort(backupPath string) {
+	deadline := time.Now().Add(selfUpdateBackupRemoveTimeout)
+	for {
+		err := os.Remove(backupPath)
+		if err == nil || errors.Is(err, os.ErrNotExist) || !time.Now().Before(deadline) {
+			return
+		}
+		time.Sleep(selfUpdateReplacementRetryInterval)
+	}
 }
 
 func (process selfUpdateRestartedProcess) Close() {
@@ -413,9 +429,8 @@ func restoreSelfUpdateBackup(targetPath string) error {
 		return err
 	}
 	cleanup = false
-	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
+	// The previous executable is back in place; a leftover backup is harmless.
+	removeSelfUpdateBackupBestEffort(backupPath)
 	return nil
 }
 
