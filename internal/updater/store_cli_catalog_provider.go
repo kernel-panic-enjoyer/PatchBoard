@@ -106,12 +106,8 @@ func (provider storeCLIUpdatesCatalogProvider) Observe(ctx context.Context, scan
 		return run
 	}
 	coverageComplete := result.OK && parsed.CompleteCoverage && parseErr == nil && ctx.Err() == nil
+	// coverageComplete already requires result.OK (RULE-274).
 	if parsed.NoUpdates && coverageComplete {
-		if !result.OK {
-			run.Health = StoreProviderIncomplete
-			run.Error = sanitizeProviderDiagnostic(firstNonEmpty(result.Stderr, result.Stdout, "Store CLI aggregate update check failed"))
-			return run
-		}
 		observedAt := provider.now()
 		for _, family := range productFamilies {
 			run.Observations = append(run.Observations, StoreProviderObservation{

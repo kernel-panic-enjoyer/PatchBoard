@@ -29,6 +29,10 @@ the Windows Runtime ABI while remaining in the interactive user's session.
 - Stale or incomplete negative evidence cannot clear a fresh positive update observation.
 - Store update execution requires a fresh `Available` assessment and exact verified action target.
 - Store command success means accepted. Final success requires post-action verification.
+- `Available` comes from an exact, verified offer for that package from a healthy provider. A failed or incomplete *other* provider (for example the aggregate `store updates` check) does not hide it, because replaying 66 real scans showed that would hide confirmed updates whenever the aggregate check fails. An offer from a provider that also failed for the same package is `Unknown`. Incomplete coverage still blocks `Current`.
+- An incomplete scan keeps a previous `Available` as stale, diagnostic-only evidence. It keeps nothing else: before 2026-11-21 any previous assessment was republished as `Available`, so an incomplete scan listed every Store app as updatable (seen in real scans on 2026-06-23, 2026-09-18 and 2026-11-21).
+- An identity conflict blocks "update now" for Store packages as it does for other packages.
+- Replay: `TestReplayStoreScanSnapshots` re-runs the decision code over saved snapshots (`PATCHBOARD_STORE_SNAPSHOT_DIR`, `PATCHBOARD_STORE_REPLAY_OUT`); diff two runs to see every changed decision. Snapshots list installed apps, so they are kept outside the repository.
 
 ## Providers
 

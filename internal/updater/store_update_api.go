@@ -76,6 +76,11 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 		policy.CannotUpdateReason = "Store package identity is not exact."
 		return policy
 	}
+	// RULE-122: an identity conflict blocks Store updates as it does others.
+	if pkg.IdentityConflict {
+		policy.CannotUpdateReason = firstNonEmpty(pkg.IdentityReason, "Package identity conflicts with its reported release channel.")
+		return policy
+	}
 	if !strings.EqualFold(strings.TrimSpace(pkg.UpdateState), string(StoreUpdateAvailable)) {
 		state := strings.TrimSpace(pkg.UpdateState)
 		if state == "" {

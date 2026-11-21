@@ -58,162 +58,46 @@ type storeInventoryWorkerResponse struct {
 }
 
 func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan StoreScanGeneration) (StorePackagedAppInventory, CommandResult) {
-	timeout := provider.Timeout
-	if timeout <= 0 {
-		timeout = storePackagedInventoryTimeout
-	}
 	if !provider.SkipElevationCheck && isAdmin() {
 		err := errors.New("Store inventory worker requires the non-elevated interactive user context")
 		result := CommandResult{Command: winrtInventoryCommand, Code: 1, Stderr: err.Error()}
 		return incompleteStorePackagedInventory(scan, err), result
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel, deadline := storeWorkerContext(ctx, provider.Timeout, storePackagedInventoryTimeout)
 	defer cancel()
-
-	executable := provider.Executable
-	if executable == "" {
-		var err error
-		executable, err = os.Executable()
-		if err != nil {
-			result := CommandResult{Command: winrtInventoryCommand, Code: 127, Stderr: err.Error()}
-			return incompleteStorePackagedInventory(scan, err), result
-		}
+	executable, err := storeWorkerExecutable(provider.Executable)
+	if err != nil {
+		result := CommandResult{Command: winrtInventoryCommand, Code: 127, Stderr: err.Error()}
+		return incompleteStorePackagedInventory(scan, err), result
 	}
 	args := provider.Args
 	if len(args) == 0 {
 		args = []string{storeInventoryWorkerFlag}
 	}
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().UTC().Add(timeout)
-	}
-	request := storeInventoryWorkerRequest{
+	requestBytes, err := encodeStoreInventoryWorkerRequest(storeInventoryWorkerRequest{
 		ProtocolVersion: storeInventoryWorkerProtocolVersion,
 		ScanID:          scan.ScanID,
 		UserSID:         scan.UserSID,
-		Deadline:        deadline.UTC(),
-	}
-	requestBytes, err := encodeStoreInventoryWorkerRequest(request)
+		Deadline:        deadline,
+	})
 	if err != nil {
 		result := CommandResult{Command: winrtInventoryCommand, Code: 2, Stderr: err.Error()}
 		return incompleteStorePackagedInventory(scan, err), result
 	}
 
-	commandText := strings.Join(append([]string{executable}, args...), " ")
-	result := CommandResult{Command: commandText}
-	cmd := exec.Command(executable, args...)
-	cmd.Env = launchEnv()
-	if len(provider.Env) > 0 {
-		cmd.Env = append(cmd.Env, provider.Env...)
-	}
-	cmd.SysProcAttr = hiddenSysProcAttrWithFlags(true)
-	stdin, err := cmd.StdinPipe()
+	out, err := runStoreWorkerProcess(ctx, storeWorkerLaunch{
+		Name:          "Store inventory worker",
+		Executable:    executable,
+		Args:          args,
+		Env:           provider.Env,
+		Request:       requestBytes,
+		ResponseLimit: storeInventoryWorkerResponseLimit,
+	})
+	result := out.Result
 	if err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
 		return incompleteStorePackagedInventory(scan, err), result
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-
-	owner, err := newCommandProcessOwner(true)
-	if err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-	defer owner.Close()
-
-	if err := startCommandInJobObject(cmd, owner); err != nil {
-		result.Code = 127
-		result.Stderr = err.Error()
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-
-	writeDone := make(chan error, 1)
-	goSafe("Store worker request writer", func() {
-		_, writeErr := stdin.Write(requestBytes)
-		closeErr := stdin.Close()
-		if writeErr != nil {
-			writeDone <- writeErr
-			return
-		}
-		writeDone <- closeErr
-	}, func(err error) { writeDone <- err })
-	stdoutDone := make(chan []byte, 1)
-	stderrTail := newBoundedOutputTail(commandResultStreamLimitBytes)
-	stderrDone := make(chan struct{})
-	goSafe("Store worker response reader", func() {
-		stdoutDone <- readBoundedPipe(stdout, storeInventoryWorkerResponseLimit)
-	}, func(error) { stdoutDone <- nil })
-	goSafe("Store worker stderr reader", func() {
-		_, _ = io.Copy(stderrTail, stderr)
-		close(stderrDone)
-	}, func(error) { close(stderrDone) })
-
-	type workerIOResult struct {
-		writeErr    error
-		stdoutBytes []byte
-	}
-	workerIODone := make(chan workerIOResult, 1)
-	goSafe("Store worker I/O collector", func() {
-		workerIO := workerIOResult{
-			writeErr:    <-writeDone,
-			stdoutBytes: <-stdoutDone,
-		}
-		<-stderrDone
-		workerIODone <- workerIO
-	}, func(err error) { workerIODone <- workerIOResult{writeErr: err} })
-
-	waitErr := waitForStartedCommand(ctx, cmd, owner)
-	workerIO, workerIOErr := waitForCommandChannel(workerIODone, func() {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
-	}, ctx.Err(), commandOutputDrainTimeout)
-	result.Stderr = stderrTail.String()
-	if ctx.Err() == context.DeadlineExceeded {
-		err := errors.New("Store inventory worker timed out and was terminated")
-		result.Code = 124
-		result.Stderr = appendDiagnostic(result.Stderr, err.Error())
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-	if ctx.Err() == context.Canceled {
-		err := errors.New("Store inventory worker was cancelled and terminated")
-		result.Code = commandCancelledCode
-		result.Stderr = appendDiagnostic(result.Stderr, err.Error())
-		return incompleteStorePackagedInventory(scan, err), result
-	}
-	if workerIOErr != nil {
-		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
-		result.Stderr = appendDiagnostic(result.Stderr, workerIOErr.Error())
-		return incompleteStorePackagedInventory(scan, workerIOErr), result
-	}
-	if workerIO.writeErr != nil {
-		result.Code = firstNonZero(result.Code, commandLaunchFailureCode)
-		result.Stderr = appendDiagnostic(result.Stderr, workerIO.writeErr.Error())
-		return incompleteStorePackagedInventory(scan, workerIO.writeErr), result
-	}
-	stdoutBytes := workerIO.stdoutBytes
-
-	response, parseErr := decodeStoreInventoryWorkerResponse(stdoutBytes)
-	var exitCode int
-	if waitErr != nil {
-		exitCode = commandExitCode(waitErr)
-		result.Code = exitCode
-		result.Stderr = appendDiagnostic(result.Stderr, waitErr.Error())
-	}
+	response, parseErr := decodeStoreInventoryWorkerResponse(out.Stdout)
 	if parseErr != nil {
 		result.Code = firstNonZero(result.Code, 2)
 		err := fmt.Errorf("invalid Store inventory worker response: %w", parseErr)
@@ -228,8 +112,8 @@ func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan
 		return incompleteStorePackagedInventory(scan, validationErr), result
 	}
 	result.Stdout = fmt.Sprintf("Store inventory worker returned %d package record(s), %d family group(s).", len(inventory.Records), len(inventory.Families))
-	if waitErr != nil {
-		err := fmt.Errorf("Store inventory worker exited with code %d", exitCode)
+	if out.WaitErr != nil {
+		err := fmt.Errorf("Store inventory worker exited with code %d", out.ExitCode)
 		inventory.Partial = true
 		inventory.Errors = appendBoundedDiagnostics(inventory.Errors, err.Error())
 		inventory.Scan.CompletionStatus = StoreScanIncomplete

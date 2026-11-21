@@ -946,7 +946,10 @@ func reconcileStoreScanAssessments(scan StoreScanGeneration, families []StorePac
 			RequiredProviders: required,
 			Observations:      observations,
 		})
-		if previousAssessment, ok := previous[identity]; ok && shouldRetainPreviousPositive(scan, assessment) && !hasCurrentHealthyRetraction(scan, identity, providerRuns) {
+		// Only a previous Available is a positive worth keeping. Before
+		// 2026-11-21 any previous entry was kept, so an incomplete scan
+		// published every Store app as Available.
+		if previousAssessment, ok := previous[identity]; ok && previousAssessment.State == StoreUpdateAvailable && shouldRetainPreviousPositive(scan, assessment) && !hasCurrentHealthyRetraction(scan, identity, providerRuns) {
 			// Why: incomplete scans should not erase a previously seen positive,
 			// but retained evidence is marked stale so it stays diagnostic and
 			// cannot authorize Store execution.

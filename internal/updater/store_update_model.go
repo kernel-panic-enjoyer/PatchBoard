@@ -256,6 +256,7 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 	blockedRequiredProvider := ""
 	firstBlockingProvider := ""
 	var firstBlockingObservation StoreProviderObservation
+	blockedProviders := map[string]bool{}
 
 	var exactUpdateOffers []StoreProviderObservation
 	var offersWithoutExactTarget []StoreProviderObservation
@@ -276,6 +277,9 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 			Kind:     observation.Kind,
 		})
 		blocksAssessment := observationBlocksAssessment(observation)
+		if blocksAssessment {
+			blockedProviders[providerKey] = true
+		}
 		if blocksAssessment && firstBlockingProvider == "" {
 			firstBlockingProvider = providerKey
 			firstBlockingObservation = observation
@@ -313,6 +317,17 @@ func ReconcileStoreUpdate(input StoreReconciliationInput) StoreUpdateAssessment 
 
 	if len(exactUpdateOffers) > 0 && (len(noApplicableInstaller) > 0 || !negativeEvidenceCanYieldToExactPositive(exactUpdateOffers, authoritativeNegatives)) {
 		return storeAssessmentDecision(assessment, StoreUpdateConflict, exactUpdateOffers[0], "healthy providers disagree")
+	}
+	// RULE-278: an exact offer is self-sufficient evidence for its package,
+	// so a failed aggregate check does not hide it (replaying real scans
+	// showed that would hide confirmed updates whenever "store updates"
+	// fails). An offer from a provider that also failed for this package is
+	// not trusted. Incomplete coverage still blocks Current below.
+	for _, offer := range exactUpdateOffers {
+		if provider := storeProviderKey(offer.Provider); blockedProviders[provider] {
+			assessment.Reason = "provider incomplete or failed: " + provider
+			return assessment
+		}
 	}
 	if len(exactUpdateOffers) > 0 {
 		consensus, err := reconcileExactStoreUpdateOffers(input.Identity, exactUpdateOffers)
