@@ -13,25 +13,6 @@ func replaceUpdateJobHooks(runner func(context.Context, string, string) CommandR
 	return replaceUpdateJobHooksWithRefresh(runner, func(ctx context.Context, app *App, packages []Package) error { return nil })
 }
 
-func replaceUpdateJobHooksWithRefresh(runner func(context.Context, string, string) CommandResult, refresh func(context.Context, *App, []Package) error) func() {
-	oldRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldRefresh := refreshInventoryAfterUpdateJob
-	oldEligible := elevatedPackageUpdateBatchEligible
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
-		return runner(ctx, pkg.Manager, pkg.ID)
-	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	refreshInventoryAfterUpdateJob = refresh
-	elevatedPackageUpdateBatchEligible = func(Package) bool { return false }
-	return func() {
-		updatePackageRunner = oldRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldRefresh
-		elevatedPackageUpdateBatchEligible = oldEligible
-	}
-}
-
 func replaceBulkUpdateBatchHooks(
 	eligible func(Package) bool,
 	batchRunner func(context.Context, []Package, func(int, Package)) ([]UpdateResult, CommandResult),

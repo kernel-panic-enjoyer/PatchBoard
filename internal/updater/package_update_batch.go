@@ -108,18 +108,31 @@ func skippedPackageUpdateResults(packages []Package, reason string) []UpdateResu
 	return results
 }
 
+// completePartialBatchResults gives every package of a batch exactly one
+// result. Packages the worker never reported are skipped when the batch
+// stopped on purpose, and otherwise fail with the batch's own result, for
+// example when the elevated worker died partway through.
 func completePartialBatchResults(packages []Package, results []UpdateResult, batchResult CommandResult) []UpdateResult {
 	if len(results) == 0 {
 		return failedBatchUpdateResults(packages, batchResult)
 	}
-	if len(results) >= len(packages) {
+	reported := map[string]bool{}
+	for _, result := range results {
+		reported[result.Key] = true
+	}
+	var missing []Package
+	for _, pkg := range packages {
+		if !reported[pkg.Key] && !reported[normalizedJobPackageKey(pkg)] {
+			missing = append(missing, pkg)
+		}
+	}
+	if len(missing) == 0 {
 		return results
 	}
-	reason := packageUpdateQueueStopReason(batchResult)
-	if reason == "" {
-		return results
+	if reason := packageUpdateQueueStopReason(batchResult); reason != "" {
+		return append(results, skippedPackageUpdateResults(missing, reason)...)
 	}
-	return append(results, skippedPackageUpdateResults(packages[len(results):], reason)...)
+	return append(results, failedBatchUpdateResults(missing, batchResult)...)
 }
 
 func packageUpdateBatchIncludesManager(packages []Package, manager string) bool {

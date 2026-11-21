@@ -59,12 +59,8 @@ func knownFolderOr(id *windows.KNOWNFOLDERID, fallback string) string {
 // expands %USERPROFILE% from the environment and caches the result.
 // Replaced in tests.
 var currentUserLocalAppDataProvider = func() (string, error) {
-	token, err := windows.OpenCurrentProcessToken()
-	if err != nil {
-		return "", err
-	}
-	defer token.Close()
-	profile, err := token.GetUserProfileDirectory()
+	// A pseudo-handle with TOKEN_QUERY access; it needs no Close.
+	profile, err := windows.GetCurrentProcessToken().GetUserProfileDirectory()
 	if err != nil {
 		return "", err
 	}

@@ -35,8 +35,7 @@ func TestGoSafeRecoversPanicAndUnblocksWaiter(t *testing.T) {
 	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
 	result := make(chan error, 1)
 	goSafe("waiter fixture", func() {
-		var values map[string]int
-		values["boom"] = 1
+		panic("waiter fixture exploded")
 	}, func(err error) { result <- err })
 	select {
 	case err := <-result:

@@ -376,7 +376,7 @@ func TestElevatedBatchInstallerCancellationStopsQueueAndMarksRemainingPackagesSk
 		}
 	}
 
-	result := executeElevatedPackageUpdateBatchWithRunner(context.Background(), packages, nil, updateRunner)
+	result := executeElevatedPackageUpdateBatchWithRunner(context.Background(), packages, elevatedWorkerReport{}, updateRunner)
 
 	if len(calls) != 1 || calls[0] != packages[0].Key {
 		t.Fatalf("expected worker queue to stop after installer cancellation, calls=%#v", calls)

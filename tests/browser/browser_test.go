@@ -116,7 +116,7 @@ func startBrowserTestServer(t *testing.T, app *updater.App) *httptest.Server {
 func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map[string]http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	appHandler := app.TestHandler()
-	server := newSafeBrowserTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newSafeBrowserTestServer(t, app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if route := routes[r.URL.Path]; route != nil {
 			route(w, r)
 			return
@@ -127,7 +127,7 @@ func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map
 	return server
 }
 
-func newSafeBrowserTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+func newSafeBrowserTestServer(t *testing.T, app *updater.App, handler http.Handler) *httptest.Server {
 	t.Helper()
 	for attempt := 0; attempt < 50; attempt++ {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -142,6 +142,8 @@ func newSafeBrowserTestServer(t *testing.T, handler http.Handler) *httptest.Serv
 			_ = listener.Close()
 			continue
 		}
+		// The app only trusts Host headers that name its own listen address.
+		app.SetTestListenAddress("127.0.0.1", port)
 		server := httptest.NewUnstartedServer(handler)
 		server.Listener = listener
 		server.Start()
@@ -284,7 +286,7 @@ func TestBrowserStopButtonUsesAsyncShutdownRequest(t *testing.T) {
 
 func TestBrowserConnectionBadgeExpiresWhenBackendStops(t *testing.T) {
 	app := updater.NewBrowserTestApp()
-	server := newSafeBrowserTestServer(t, app.TestHandler())
+	server := newSafeBrowserTestServer(t, app, app.TestHandler())
 	t.Cleanup(func() {
 		server.CloseClientConnections()
 		server.Close()

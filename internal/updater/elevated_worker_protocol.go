@@ -17,6 +17,10 @@ const (
 	workerMessageRequest = "request"
 
 	workerResponseProgress = "progress"
+	// workerResponsePackageResult carries one finished package of a batch as
+	// soon as it is done, so a worker that dies later in the batch cannot
+	// take the outcome of packages it already changed with it.
+	workerResponsePackageResult = "package_result"
 
 	workerOperationPackageInstall     = "package_install"
 	workerOperationPackageUpdate      = "package_update"
@@ -47,6 +51,27 @@ type elevatedWorkerResponse struct {
 	Result    CommandResult           `json:"result"`
 	Results   []UpdateResult          `json:"results,omitempty"`
 	Progress  *elevatedWorkerProgress `json:"progress,omitempty"`
+	// PackageResult is set on workerResponsePackageResult frames.
+	PackageResult *UpdateResult `json:"package_result,omitempty"`
+}
+
+// elevatedWorkerReport streams batch events from an operation to the parent.
+// Either function may be nil.
+type elevatedWorkerReport struct {
+	Progress func(index int, pkg Package)
+	Result   func(result UpdateResult)
+}
+
+func (report elevatedWorkerReport) progress(index int, pkg Package) {
+	if report.Progress != nil {
+		report.Progress(index, pkg)
+	}
+}
+
+func (report elevatedWorkerReport) result(result UpdateResult) {
+	if report.Result != nil {
+		report.Result(result)
+	}
 }
 
 type elevatedWorkerProgress struct {

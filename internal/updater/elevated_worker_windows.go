@@ -27,6 +27,8 @@ type elevatedWorkerInvocation struct {
 	Operation string
 	Payload   any
 	Progress  func(elevatedWorkerProgress)
+	// PackageResult receives each finished package of a batch as it arrives.
+	PackageResult func(UpdateResult)
 }
 
 type elevatedWorkerOperationResult struct {
@@ -163,7 +165,7 @@ func runElevatedWorkerInvocation(ctx context.Context, invocation elevatedWorkerI
 	defer pipeConn.Close()
 	appLogContext(ctx, "Elevated worker connected for %s.", invocation.Operation)
 
-	response, err := exchangeElevatedWorkerRequest(ctx, pipeConn, workerRequest, invocation.Progress, func() error {
+	response, err := exchangeElevatedWorkerRequest(ctx, pipeConn, workerRequest, invocation.Progress, invocation.PackageResult, func() error {
 		return windows.SetEvent(cancelEvent)
 	})
 	if err != nil {
@@ -230,6 +232,7 @@ func exchangeElevatedWorkerRequest(
 	pipeConn io.ReadWriteCloser,
 	request elevatedWorkerMessage,
 	progress func(elevatedWorkerProgress),
+	packageResult func(UpdateResult),
 	signalCancellation func() error,
 ) (elevatedWorkerResponse, error) {
 	encoder := json.NewEncoder(pipeConn)
@@ -258,6 +261,12 @@ func exchangeElevatedWorkerRequest(
 			if workerResponse.Type == workerResponseProgress {
 				if workerResponse.Progress != nil && progress != nil {
 					progress(*workerResponse.Progress)
+				}
+				continue
+			}
+			if workerResponse.Type == workerResponsePackageResult {
+				if workerResponse.PackageResult != nil && packageResult != nil {
+					packageResult(*workerResponse.PackageResult)
 				}
 				continue
 			}
@@ -309,7 +318,7 @@ func validateElevatedWorkerResponse(response elevatedWorkerResponse, requestID s
 	if response.RequestID != requestID {
 		return errors.New("elevated worker response request_id mismatch")
 	}
-	if response.Type != "" && response.Type != workerResponseProgress {
+	if response.Type != "" && response.Type != workerResponseProgress && response.Type != workerResponsePackageResult {
 		return fmt.Errorf("unknown elevated worker response type %q", response.Type)
 	}
 	return nil
@@ -536,7 +545,7 @@ func connectElevatedWorkerPipe(pipeName string, timeout time.Duration) (io.ReadW
 	}
 }
 
-type elevatedWorkerOperationExecutor func(context.Context, string, json.RawMessage, elevatedWorkerAuthContext, func(int, Package)) elevatedWorkerOperationResult
+type elevatedWorkerOperationExecutor func(context.Context, string, json.RawMessage, elevatedWorkerAuthContext, elevatedWorkerReport) elevatedWorkerOperationResult
 
 func serveElevatedWorkerConnection(pipeConn io.ReadWriteCloser, authContext elevatedWorkerAuthContext, cancellation <-chan struct{}) error {
 	return serveElevatedWorkerConnectionWithExecutor(pipeConn, authContext, cancellation, executeElevatedWorkerOperation)
@@ -585,22 +594,32 @@ func serveElevatedWorkerConnectionWithExecutor(
 	}()
 	batchProgressTotal := packageUpdateBatchProgressTotal(workerRequest.Operation, workerRequest.Payload)
 
-	progress := func(index int, pkg Package) {
-		_ = encoder.Encode(elevatedWorkerResponse{
-			Version:   elevatedWorkerProtocolVersion,
-			Type:      workerResponseProgress,
-			RequestID: workerRequest.RequestID,
-			Progress: &elevatedWorkerProgress{
-				CurrentIndex:   index,
-				Total:          batchProgressTotal,
-				PackageKey:     normalizedJobPackageKey(pkg),
-				PackageName:    updateJobPackageName(pkg),
-				PackageID:      pkg.ID,
-				PackageManager: pkg.Manager,
-			},
-		})
+	report := elevatedWorkerReport{
+		Progress: func(index int, pkg Package) {
+			_ = encoder.Encode(elevatedWorkerResponse{
+				Version:   elevatedWorkerProtocolVersion,
+				Type:      workerResponseProgress,
+				RequestID: workerRequest.RequestID,
+				Progress: &elevatedWorkerProgress{
+					CurrentIndex:   index,
+					Total:          batchProgressTotal,
+					PackageKey:     normalizedJobPackageKey(pkg),
+					PackageName:    updateJobPackageName(pkg),
+					PackageID:      pkg.ID,
+					PackageManager: pkg.Manager,
+				},
+			})
+		},
+		Result: func(result UpdateResult) {
+			_ = encoder.Encode(elevatedWorkerResponse{
+				Version:       elevatedWorkerProtocolVersion,
+				Type:          workerResponsePackageResult,
+				RequestID:     workerRequest.RequestID,
+				PackageResult: &result,
+			})
+		},
 	}
-	operationResult := executeElevatedWorkerOperationSafely(ctx, execute, workerRequest.Operation, workerRequest.Payload, authContext, progress)
+	operationResult := executeElevatedWorkerOperationSafely(ctx, execute, workerRequest.Operation, workerRequest.Payload, authContext, report)
 	workerResponse := elevatedWorkerResponse{
 		Version:   elevatedWorkerProtocolVersion,
 		RequestID: workerRequest.RequestID,
@@ -624,7 +643,7 @@ func executeElevatedWorkerOperationSafely(
 	operation string,
 	payload json.RawMessage,
 	auth elevatedWorkerAuthContext,
-	progress func(int, Package),
+	report elevatedWorkerReport,
 ) (operationResult elevatedWorkerOperationResult) {
 	defer func() {
 		if panicValue := recover(); panicValue != nil {
@@ -636,10 +655,10 @@ func executeElevatedWorkerOperationSafely(
 			}}
 		}
 	}()
-	return execute(ctx, operation, payload, auth, progress)
+	return execute(ctx, operation, payload, auth, report)
 }
 
-func executeElevatedWorkerOperation(ctx context.Context, operation string, payload json.RawMessage, auth elevatedWorkerAuthContext, progress func(int, Package)) elevatedWorkerOperationResult {
+func executeElevatedWorkerOperation(ctx context.Context, operation string, payload json.RawMessage, auth elevatedWorkerAuthContext, report elevatedWorkerReport) elevatedWorkerOperationResult {
 	if err := validateWorkerOperationPayload(operation, payload); err != nil {
 		return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
 	}
@@ -670,7 +689,7 @@ func executeElevatedWorkerOperation(ctx context.Context, operation string, paylo
 			return elevatedWorkerOperationResult{Result: validationCommandResult(operation, err)}
 		}
 		operationCtx := withPackageMutationOptions(ctx, packageMutationOptions{RemoveNewDesktopShortcuts: decoded.RemoveNewDesktopShortcuts})
-		return executeElevatedPackageUpdateBatch(operationCtx, decoded.Packages, progress)
+		return executeElevatedPackageUpdateBatch(operationCtx, decoded.Packages, report)
 	case workerOperationManagerInstall:
 		var decoded elevatedWorkerManagerInstallPayload
 		if err := decodeWorkerPayload(payload, &decoded); err != nil {
@@ -732,14 +751,14 @@ func packageUpdateBatchProgressTotal(operation string, payload json.RawMessage) 
 	return len(decoded.Packages)
 }
 
-func executeElevatedPackageUpdateBatch(ctx context.Context, packages []Package, progress func(int, Package)) elevatedWorkerOperationResult {
-	return executeElevatedPackageUpdateBatchWithRunner(ctx, packages, progress, updatePackageWithMetadataContext)
+func executeElevatedPackageUpdateBatch(ctx context.Context, packages []Package, report elevatedWorkerReport) elevatedWorkerOperationResult {
+	return executeElevatedPackageUpdateBatchWithRunner(ctx, packages, report, updatePackageWithMetadataContext)
 }
 
 func executeElevatedPackageUpdateBatchWithRunner(
 	ctx context.Context,
 	packages []Package,
-	progress func(int, Package),
+	report elevatedWorkerReport,
 	updatePackage func(context.Context, Package) CommandResult,
 ) elevatedWorkerOperationResult {
 	results := make([]UpdateResult, 0, len(packages))
@@ -752,16 +771,20 @@ func executeElevatedPackageUpdateBatchWithRunner(
 			key = packageKey(pkg.Manager, pkg.ID)
 		}
 		pkg.Key = key
-		if progress != nil {
-			progress(index+1, pkg)
-		}
+		report.progress(index+1, pkg)
 		result := updatePackage(ctx, pkg)
-		results = append(results, UpdateResult{Key: key, Result: result})
+		packageResult := UpdateResult{Key: key, Result: result}
+		results = append(results, packageResult)
+		report.result(packageResult)
 		if ctx.Err() != nil || result.Code == commandCancelledCode {
 			break
 		}
 		if stopReason := packageUpdateQueueStopReason(result); stopReason != "" {
-			results = append(results, skippedPackageUpdateResults(packages[index+1:], stopReason)...)
+			skipped := skippedPackageUpdateResults(packages[index+1:], stopReason)
+			for _, skippedResult := range skipped {
+				report.result(skippedResult)
+			}
+			results = append(results, skipped...)
 			break
 		}
 	}
@@ -809,6 +832,9 @@ func aggregatePackageUpdateBatchResult(results []UpdateResult, err error) Comman
 	return result
 }
 
+// elevatedWorkerBatchInvocationRunner launches the worker; replaced in tests.
+var elevatedWorkerBatchInvocationRunner = runElevatedWorkerInvocation
+
 func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 	payload := elevatedWorkerPackageUpdateBatchPayload{
 		Packages:                  packages,
@@ -819,9 +845,18 @@ func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, prog
 		appendElevatedPackageUpdateBatchLogsContext(ctx, nil, result)
 		return nil, result
 	}
-	response, err := runElevatedWorkerInvocation(ctx, elevatedWorkerInvocation{
+	// received keeps the packages the worker already finished. If the worker
+	// dies later, those keep their real outcome and only the rest fail.
+	var received []UpdateResult
+	var receivedMu sync.Mutex
+	response, err := elevatedWorkerBatchInvocationRunner(ctx, elevatedWorkerInvocation{
 		Operation: workerOperationPackageUpdateBatch,
 		Payload:   payload,
+		PackageResult: func(result UpdateResult) {
+			receivedMu.Lock()
+			received = append(received, result)
+			receivedMu.Unlock()
+		},
 		Progress: func(workerProgress elevatedWorkerProgress) {
 			index := workerProgress.CurrentIndex
 			if index < 1 || index > len(packages) || progress == nil {
@@ -834,10 +869,17 @@ func runElevatedPackageUpdateBatch(ctx context.Context, packages []Package, prog
 			progress(index, pkg)
 		},
 	})
+	receivedMu.Lock()
+	finished := append([]UpdateResult(nil), received...)
+	receivedMu.Unlock()
 	if err != nil {
 		result := elevatedWorkerCommandResultError(workerOperationPackageUpdateBatch, err)
-		appendElevatedPackageUpdateBatchLogsContext(ctx, nil, result)
-		return nil, result
+		appendElevatedPackageUpdateBatchLogsContext(ctx, finished, result)
+		// The caller fills in the packages that have no result with this failure.
+		return finished, result
+	}
+	if len(response.Results) == 0 && len(finished) > 0 {
+		response.Results = finished
 	}
 	appendElevatedPackageUpdateBatchLogsContext(ctx, response.Results, response.Result)
 	return response.Results, response.Result

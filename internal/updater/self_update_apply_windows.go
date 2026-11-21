@@ -4,6 +4,8 @@ package updater
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -594,7 +596,41 @@ func relaunchSelfUpdateApplyElevated(request selfUpdateApplyRequest) error {
 	request.DeadlineUnixMS = time.Now().Add(selfUpdateApplyTimeout + selfUpdateApplyStartupTimeout).UnixMilli()
 	request.Elevated = true
 	request.Delegated = true
+	// The elevated copy of this helper starts from the user's staging folder,
+	// which anything running as the user can change. Hold the file so that
+	// nobody can write, rename or delete it, re-check its hash under that
+	// lock, and keep the lock until the elevated copy has connected (its
+	// image is mapped by then), so the file UAC launches is the verified one.
+	lock, err := lockVerifiedSelfUpdateExecutable(executablePath, request.ExpectedSHA256)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return launchSelfUpdateApplyHelper(context.Background(), executablePath, request, true)
+}
+
+// lockVerifiedSelfUpdateExecutable opens path with read-only sharing and
+// returns the open file once its SHA-256 matches expectedSHA256.
+func lockVerifiedSelfUpdateExecutable(path, expectedSHA256 string) (*os.File, error) {
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(pathPointer, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, fmt.Errorf("lock self-update helper for elevation: %w", err)
+	}
+	file := os.NewFile(uintptr(handle), path)
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("hash self-update helper for elevation: %w", err)
+	}
+	if actual := hex.EncodeToString(hash.Sum(nil)); !isSHA256Hex(expectedSHA256) || !strings.EqualFold(actual, expectedSHA256) {
+		_ = file.Close()
+		return nil, errors.New("self-update helper changed before elevation")
+	}
+	return file, nil
 }
 
 func restartSelfUpdatedApp(targetPath string) (selfUpdateRestartedProcess, error) {

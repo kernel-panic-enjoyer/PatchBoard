@@ -76,6 +76,13 @@ func NewBrowserTestApp() *App {
 	}
 }
 
+// SetTestListenAddress records the address the test server listens on, so
+// the Host check accepts requests to it. Call it before serving requests.
+func (app *App) SetTestListenAddress(host string, port int) {
+	app.webSession.listenHost = host
+	app.webSession.listenPort = port
+}
+
 // TestHandler exposes the App HTTP handler for black-box browser tests.
 func (app *App) TestHandler() http.HandlerFunc { return app.serveHTTP }
 
