@@ -61,19 +61,17 @@ func buildStatusResponseContextWithStateAndUpdate(ctx context.Context, forceRefr
 	var autoTaskSupported bool
 	var autoTaskUnsupportedReason string
 	var taskChecks sync.WaitGroup
-	taskChecks.Add(3)
-	go func() {
-		defer taskChecks.Done()
+	goSafeGroup(&taskChecks, "startup task check", func() {
 		startupTaskEnabled = startupTaskEnabledContext(ctx)
-	}()
-	go func() {
-		defer taskChecks.Done()
+	}, nil)
+	goSafeGroup(&taskChecks, "auto-update task check", func() {
 		autoTaskEnabled = autoUpdateTaskEnabledContext(ctx)
-	}()
-	go func() {
-		defer taskChecks.Done()
+	}, nil)
+	goSafeGroup(&taskChecks, "auto-update task support check", func() {
 		autoTaskSupported, autoTaskUnsupportedReason = autoUpdateTaskSupportStatus()
-	}()
+	}, func(err error) {
+		autoTaskSupported, autoTaskUnsupportedReason = false, err.Error()
+	})
 	var managerStatuses map[string]ManagerStatus
 	if forceRefresh {
 		managerStatuses = detectManagersFreshContext(ctx)

@@ -122,9 +122,7 @@ func readRegistryApps() ([]ScannedApp, error) {
 	var wg sync.WaitGroup
 	for _, query := range queries {
 		query := query
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		goSafeGroup(&wg, "registry query", func() {
 			result := runCommand(60*time.Second, "reg.exe", "query", query.key, "/s")
 			mu.Lock()
 			defer mu.Unlock()
@@ -135,7 +133,11 @@ func readRegistryApps() ([]ScannedApp, error) {
 			for _, app := range parseRegQuery(result.Stdout, query.hive) {
 				appMap[app.Key] = app
 			}
-		}()
+		}, func(err error) {
+			mu.Lock()
+			errs = append(errs, err.Error())
+			mu.Unlock()
+		})
 	}
 	wg.Wait()
 	var apps []ScannedApp

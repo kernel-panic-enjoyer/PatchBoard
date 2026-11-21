@@ -59,19 +59,15 @@ func scanInstalledApplicationsWithStore(ctx context.Context, store StateStore) S
 	var wingetErr error
 	var appxErr error
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
+	goSafeGroup(&wg, "registry app scan", func() {
 		registryApps, registryErr = registryAppsReader()
-	}()
-	go func() {
-		defer wg.Done()
+	}, func(err error) { registryApps, registryErr = nil, err })
+	goSafeGroup(&wg, "winget app scan", func() {
 		wingetApps, wingetResult, wingetErr = wingetAppsReader(ctx)
-	}()
-	go func() {
-		defer wg.Done()
+	}, func(err error) { wingetApps, wingetResult, wingetErr = nil, nil, err })
+	goSafeGroup(&wg, "Store app scan", func() {
 		appxApps, appxResult, appxErr = appxAppsReader(ctx)
-	}()
+	}, func(err error) { appxApps, appxResult, appxErr = nil, nil, err })
 	wg.Wait()
 	if registryErr != nil {
 		errorsOut = append(errorsOut, map[string]string{"source": "registry", "error": registryErr.Error()})

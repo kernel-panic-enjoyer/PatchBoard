@@ -10,6 +10,7 @@ import (
 )
 
 func TestOperationJobPanicDoesNotBlockQueue(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
 	app := testSessionApp(t)
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		panic("fixture panic")

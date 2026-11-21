@@ -29,6 +29,10 @@ const (
 
 var activeSessionLogFileSink atomic.Pointer[sessionLogFileSink]
 
+// recoveredPanicReportSequence keeps report names unique when several panics
+// are recovered within the same second.
+var recoveredPanicReportSequence atomic.Int64
+
 func diagnosticLogDir() (string, error) {
 	base, err := stateDir()
 	if err != nil {
@@ -91,7 +95,7 @@ func writeRecoveredPanicReport(source string, panicValue any, stack []byte) {
 		return
 	}
 	now := time.Now()
-	path := filepath.Join(directory, diagnosticLogFileName(crashLogFilePrefix, now, os.Getpid(), 1))
+	path := filepath.Join(directory, diagnosticLogFileName(crashLogFilePrefix, now, os.Getpid(), int(recoveredPanicReportSequence.Add(1))))
 	file, err := createDiagnosticLogFile(path)
 	if err != nil {
 		return

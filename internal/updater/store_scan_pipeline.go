@@ -308,9 +308,8 @@ func (pipeline *StoreScanPipeline) runCatalogProviders(ctx context.Context, scan
 	var wg sync.WaitGroup
 	for index, provider := range providers {
 		index, provider := index, provider
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		providerStarted := pipeline.now()
+		goSafeGroup(&wg, "Store provider "+provider.Identity().Key(), func() {
 			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			started := pipeline.now()
@@ -332,7 +331,17 @@ func (pipeline *StoreScanPipeline) runCatalogProviders(ctx context.Context, scan
 			run = sanitizeCatalogProviderRun(scan, run)
 			run = synthesizeMissingProviderObservations(scan, run, families)
 			runs[index] = sanitizeCatalogProviderRun(scan, run)
-		}()
+		}, func(err error) {
+			failed := StoreCatalogProviderRun{
+				Provider:    provider.Identity(),
+				Health:      StoreProviderFailed,
+				Error:       err.Error(),
+				StartedAt:   providerStarted,
+				CompletedAt: pipeline.now(),
+			}
+			// Kept minimal: the panic may have come from the post-processing helpers.
+			runs[index] = failed
+		})
 	}
 	wg.Wait()
 	return runs

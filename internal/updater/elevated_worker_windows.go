@@ -181,17 +181,17 @@ func acceptElevatedWorkerConnection(ctx context.Context, pipeServer *elevatedWor
 		err      error
 	}
 	acceptResultCh := make(chan acceptResult, 1)
-	go func() {
+	goSafe("elevated worker pipe accept", func() {
 		pipeConn, err := pipeServer.Accept(acceptCtx)
 		acceptResultCh <- acceptResult{pipeConn: pipeConn, err: err}
-	}()
+	}, func(err error) { acceptResultCh <- acceptResult{err: err} })
 
 	var processExitCh chan elevatedWorkerExit
 	if workerProcess.handle != 0 {
 		processExitCh = make(chan elevatedWorkerExit, 1)
-		go func() {
+		goSafe("elevated worker exit wait", func() {
 			processExitCh <- workerProcess.Wait()
-		}()
+		}, func(err error) { processExitCh <- elevatedWorkerExit{Code: 1, Err: err} })
 	}
 
 	select {
@@ -242,19 +242,9 @@ func exchangeElevatedWorkerRequest(
 
 	finalResponseCh := make(chan elevatedWorkerResponse, 1)
 	decodeErrCh := make(chan error, 1)
-	go func() {
-		// A panic here (for example in the progress callback) would otherwise
-		// end the whole PatchBoard process mid-batch. Fail the request instead;
-		// the caller terminates the worker when this returns an error.
-		defer func() {
-			if panicValue := recover(); panicValue != nil {
-				appLog("Elevated worker response reader panicked: %v\n%s", panicValue, debug.Stack())
-				select {
-				case decodeErrCh <- fmt.Errorf("elevated worker response reader failed: %s", sanitizedPanicDiagnostic(panicValue)):
-				default:
-				}
-			}
-		}()
+	// A panic here (for example in the progress callback) fails the request
+	// instead of the process; the caller terminates the worker on error.
+	goSafe("elevated worker response reader", func() {
 		for {
 			var workerResponse elevatedWorkerResponse
 			if err := decoder.Decode(&workerResponse); err != nil {
@@ -274,7 +264,12 @@ func exchangeElevatedWorkerRequest(
 			finalResponseCh <- workerResponse
 			return
 		}
-	}()
+	}, func(err error) {
+		select {
+		case decodeErrCh <- err:
+		default:
+		}
+	})
 
 	select {
 	case workerResponse := <-finalResponseCh:
@@ -449,7 +444,7 @@ func watchElevatedWorkerCancellationEvent(event windows.Handle) (<-chan struct{}
 	cancellation := make(chan struct{})
 	stop := make(chan struct{})
 	stopped := make(chan struct{})
-	go func() {
+	goSafe("elevated worker cancellation event watcher", func() {
 		defer close(stopped)
 		for {
 			waitResult, err := windows.WaitForSingleObject(event, 50)
@@ -463,7 +458,7 @@ func watchElevatedWorkerCancellationEvent(event windows.Handle) (<-chan struct{}
 			default:
 			}
 		}
-	}()
+	}, nil)
 	var stopOnce sync.Once
 	return cancellation, func() {
 		stopOnce.Do(func() {
@@ -571,14 +566,14 @@ func serveElevatedWorkerConnectionWithExecutor(
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancellationWatcherDone := make(chan struct{})
-	go func() {
+	goSafe("elevated worker cancellation forwarder", func() {
 		defer close(cancellationWatcherDone)
 		select {
 		case <-cancellation:
 			cancel()
 		case <-ctx.Done():
 		}
-	}()
+	}, nil)
 	defer func() {
 		cancel()
 		<-cancellationWatcherDone
@@ -628,7 +623,7 @@ func executeElevatedWorkerOperationSafely(
 ) (operationResult elevatedWorkerOperationResult) {
 	defer func() {
 		if panicValue := recover(); panicValue != nil {
-			writeRecoveredPanicReport("elevated worker operation "+operation, panicValue, debug.Stack())
+			reportRecoveredPanic("elevated worker operation "+operation, panicValue, debug.Stack())
 			operationResult = elevatedWorkerOperationResult{Result: CommandResult{
 				Code:    1,
 				Stderr:  "elevated worker operation failed: " + sanitizedPanicDiagnostic(panicValue),

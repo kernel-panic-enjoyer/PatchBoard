@@ -24,20 +24,20 @@ func wingetInstalledContext(ctx context.Context) ([]Package, CommandResult) {
 	}
 
 	var inventoryCommands sync.WaitGroup
-	inventoryCommands.Add(1)
-	go func() {
-		defer inventoryCommands.Done()
+	goSafeGroup(&inventoryCommands, "winget list", func() {
 		listCommandResult = runReadOnlyCommand(ctx, 120*time.Second, managerCommand(managerWinget, "list", "--accept-source-agreements", "--disable-interactivity")...)
 		listedPackages = parseWingetTable(listCommandResult.Stdout + "\n" + listCommandResult.Stderr)
-	}()
+	}, func(err error) {
+		listedPackages, listCommandResult = nil, failedBackgroundCommandResult("winget list", err)
+	})
 	if exportFilePath != "" {
-		inventoryCommands.Add(1)
-		go func() {
-			defer inventoryCommands.Done()
+		goSafeGroup(&inventoryCommands, "winget export", func() {
 			exportCommandResult = runReadOnlyCommand(ctx, 180*time.Second, managerCommand(managerWinget, "export", "-o", exportFilePath, "--include-versions", "--accept-source-agreements", "--disable-interactivity")...)
 			exportData, _ := os.ReadFile(exportFilePath)
 			exportedPackages = parseWingetExport(string(exportData))
-		}()
+		}, func(err error) {
+			exportedPackages, exportCommandResult = nil, failedBackgroundCommandResult("winget export", err)
+		})
 	}
 	inventoryCommands.Wait()
 

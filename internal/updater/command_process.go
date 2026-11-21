@@ -130,9 +130,9 @@ func waitForCommandExitWithActivity(
 		return waitForCommandExitWithTimeout(ctx, wait, terminate, terminationTimeout)
 	}
 	waitResult := make(chan error, 1)
-	go func() {
+	goSafe("command exit wait", func() {
 		waitResult <- wait()
-	}()
+	}, func(err error) { waitResult <- err })
 
 	previousSnapshot, samplingSupported := sampleActivity()
 	if !samplingSupported {
@@ -200,9 +200,9 @@ func waitForTerminatedCommand(waitResult <-chan error, timeout time.Duration, ca
 
 func waitForCommandExitWithTimeout(ctx context.Context, wait func() error, terminate func(), timeout time.Duration) error {
 	waitResult := make(chan error, 1)
-	go func() {
+	goSafe("command exit wait", func() {
 		waitResult <- wait()
-	}()
+	}, func(err error) { waitResult <- err })
 	select {
 	case err := <-waitResult:
 		return err
@@ -219,10 +219,10 @@ func waitForCommandExitWithTimeout(ctx context.Context, wait func() error, termi
 
 func waitForCommandOutputReaders(outputReaders *sync.WaitGroup, closePipes func(), cause error) error {
 	drainDone := make(chan struct{})
-	go func() {
+	goSafe("command output drain wait", func() {
 		outputReaders.Wait()
 		close(drainDone)
-	}()
+	}, nil)
 	return waitForOutputDrainWithTimeout(drainDone, closePipes, cause, commandOutputDrainTimeout)
 }
 

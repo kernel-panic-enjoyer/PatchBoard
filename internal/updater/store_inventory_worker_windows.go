@@ -142,7 +142,7 @@ func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan
 	}
 
 	writeDone := make(chan error, 1)
-	go func() {
+	goSafe("Store worker request writer", func() {
 		_, writeErr := stdin.Write(requestBytes)
 		closeErr := stdin.Close()
 		if writeErr != nil {
@@ -150,31 +150,31 @@ func (provider storeInventoryWorkerProvider) Inventory(ctx context.Context, scan
 			return
 		}
 		writeDone <- closeErr
-	}()
+	}, func(err error) { writeDone <- err })
 	stdoutDone := make(chan []byte, 1)
 	stderrTail := newBoundedOutputTail(commandResultStreamLimitBytes)
 	stderrDone := make(chan struct{})
-	go func() {
+	goSafe("Store worker response reader", func() {
 		stdoutDone <- readBoundedPipe(stdout, storeInventoryWorkerResponseLimit)
-	}()
-	go func() {
+	}, func(error) { stdoutDone <- nil })
+	goSafe("Store worker stderr reader", func() {
 		_, _ = io.Copy(stderrTail, stderr)
 		close(stderrDone)
-	}()
+	}, func(error) { close(stderrDone) })
 
 	type workerIOResult struct {
 		writeErr    error
 		stdoutBytes []byte
 	}
 	workerIODone := make(chan workerIOResult, 1)
-	go func() {
+	goSafe("Store worker I/O collector", func() {
 		workerIO := workerIOResult{
 			writeErr:    <-writeDone,
 			stdoutBytes: <-stdoutDone,
 		}
 		<-stderrDone
 		workerIODone <- workerIO
-	}()
+	}, func(err error) { workerIODone <- workerIOResult{writeErr: err} })
 
 	waitErr := waitForStartedCommand(ctx, cmd, owner)
 	workerIO, workerIOErr := waitForCommandChannel(workerIODone, func() {

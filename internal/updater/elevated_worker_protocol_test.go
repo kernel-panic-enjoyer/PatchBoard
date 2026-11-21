@@ -599,6 +599,7 @@ func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *test
 }
 
 func TestExchangeElevatedWorkerRequestFailsInsteadOfCrashingWhenProgressPanics(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
 	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
 	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
 		{Manager: managerWinget, ID: "Git.Git"},

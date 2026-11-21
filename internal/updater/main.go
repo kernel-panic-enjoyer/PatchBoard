@@ -437,13 +437,13 @@ func (app *App) startShutdownSignalWatcher() func() {
 func (app *App) watchShutdownSignals(signals <-chan os.Signal) func() {
 	done := make(chan struct{})
 	var stopOnce sync.Once
-	go func() {
+	goSafe("shutdown signal watcher", func() {
 		select {
 		case <-signals:
 			app.requestShutdown("OS signal")
 		case <-done:
 		}
-	}()
+	}, nil)
 	return func() {
 		stopOnce.Do(func() {
 			close(done)

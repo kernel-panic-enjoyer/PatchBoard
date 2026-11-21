@@ -189,14 +189,16 @@ func detectManagersUncachedContext(ctx context.Context) map[string]ManagerStatus
 	var wg sync.WaitGroup
 	for _, manager := range managedPackageManagers {
 		manager := manager
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		goSafeGroup(&wg, "detect "+manager, func() {
 			status := detectManagerContext(ctx, manager)
 			mu.Lock()
 			managers[manager] = status
 			mu.Unlock()
-		}()
+		}, func(err error) {
+			mu.Lock()
+			managers[manager] = ManagerStatus{Error: err.Error()}
+			mu.Unlock()
+		})
 	}
 	wg.Wait()
 	store := managers[managerStore]

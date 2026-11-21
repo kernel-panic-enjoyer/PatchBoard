@@ -199,8 +199,12 @@ func runCommandSpec(parentCtx context.Context, spec CommandSpec) CommandResult {
 	var outputReaders sync.WaitGroup
 	emitStdoutToSessionLog := !suppressCommandStdoutInSessionLog(args)
 	outputReaders.Add(2)
-	go streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", commandActivityWriter{Writer: stdoutTail, Activity: reportCommandActivity}, &outputReaders, logCategories, emitStdoutToSessionLog)
-	go streamCommandOutputContext(commandCtx, stderrPipe, "stderr", commandActivityWriter{Writer: stderrTail, Activity: reportCommandActivity}, &outputReaders, logCategories, true)
+	goSafe("command stdout reader", func() {
+		streamCommandOutputContext(commandCtx, stdoutPipe, "stdout", commandActivityWriter{Writer: stdoutTail, Activity: reportCommandActivity}, &outputReaders, logCategories, emitStdoutToSessionLog)
+	}, nil)
+	goSafe("command stderr reader", func() {
+		streamCommandOutputContext(commandCtx, stderrPipe, "stderr", commandActivityWriter{Writer: stderrTail, Activity: reportCommandActivity}, &outputReaders, logCategories, true)
+	}, nil)
 	stallTimeout := time.Duration(0)
 	if packageMutation && isWingetCommand(args) {
 		stallTimeout = wingetMutationStallTimeout

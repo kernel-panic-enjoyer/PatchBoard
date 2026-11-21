@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 func commandResultJobNotice(actionName string, result CommandResult) string {
@@ -521,10 +520,7 @@ func (app *App) startSelfUpdateJob() OperationJobStatus {
 			Stdout:  "Application update " + updateStatus.LatestVersion + " downloaded and verified. Restarting to apply it.",
 		}
 		app.finishSelfUpdateJob(job, successResult, jobStateSucceeded, "Application update downloaded. Restarting to apply it...")
-		go func() {
-			time.Sleep(200 * time.Millisecond)
-			app.requestShutdown("Application self-update")
-		}()
+		app.requestShutdownSoon("Application self-update")
 	})
 }
 
