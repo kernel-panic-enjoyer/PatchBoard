@@ -357,6 +357,7 @@
 - 2026-11-21T16:35Z [USER] "continue modernization": Phase 3 of the brief, run as PR work on the PR #4 branch.
 - 2026-11-21T16:35Z [CODE] Phase 3: every WinGet/Chocolatey/Store CLI attempt gets one `CommandResult.Outcome` right after it runs (`package_update_outcome.go`); retries, fallbacks, source repair, restart success and the queue decide on it. Merged results keep the last attempt's outcome. Decision table: `docs/architecture/package-update-outcomes.md`; tests `package_update_outcome_test.go`. `packageQueueStop` is shared by the update job and the elevated batch. Fixed RULE-001, RULE-269 (final notice "Update completed.") and RULE-380 (winget `source add/remove`, choco `pin add/remove`, `--apply=false`).
 - 2026-11-21T16:35Z [TOOL] Phase 3 verification: gofmt clean; go vet plain and uitestsupport clean; staticcheck (GOTOOLCHAIN=go1.26.11) clean; Run-Tests.ps1 root PASS, browser PASS; Build-Workspace -SkipTests rebuilt `dist\PatchBoard.exe` (18,543,104 bytes). No new crash file in the real logs folder.
+- 2026-11-21T16:45Z [USER] Approved the Security 4 proposed revision (lock and re-hash the %TEMP% helper instead of moving it). Phase 2 and Phase 3 exit criteria are all met; next is Phase 4 (Store decision order).
 
 [DISCOVERIES]
 
