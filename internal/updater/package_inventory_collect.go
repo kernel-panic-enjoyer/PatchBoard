@@ -44,15 +44,16 @@ func collectManagerInventory(
 	var updateDetailsByKey map[string]Package
 	var updateResult CommandResult
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	goSafeGroup(&wg, manager+" installed inventory", func() {
 		installedPackages, listResult = collectInstalled(ctx)
-	}()
-	go func() {
-		defer wg.Done()
+	}, func(err error) {
+		installedPackages, listResult = nil, failedBackgroundCommandResult(listResultKey, err)
+	})
+	goSafeGroup(&wg, manager+" update inventory", func() {
 		availableVersions, updateDetailsByKey, updateResult = collectUpdates(ctx)
-	}()
+	}, func(err error) {
+		availableVersions, updateDetailsByKey, updateResult = nil, nil, failedBackgroundCommandResult(updateResultKey, err)
+	})
 	wg.Wait()
 	return managerInventory{
 		manager:       manager,
@@ -71,19 +72,17 @@ func collectInventoryInputs(ctx context.Context, managers map[string]ManagerStat
 	inventoryCh := make(chan managerInventory, len(managedPackageManagers))
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	goSafeGroup(&wg, "Store packaged inventory", func() {
 		inputs.storePackagedInventory, inputs.storePackagedResult = collectNativeStorePackagedInventoryContext(ctx)
-	}()
+	}, func(err error) {
+		inputs.storePackagedResult = failedBackgroundCommandResult("store packaged inventory", err)
+	})
 	for _, collector := range packageManagerInventoryCollectors {
 		if !managers[collector.manager].Available {
 			continue
 		}
 		activeCollector := collector
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		goSafeGroup(&wg, activeCollector.manager+" inventory", func() {
 			inventoryCh <- collectManagerInventory(
 				ctx,
 				activeCollector.manager,
@@ -92,7 +91,15 @@ func collectInventoryInputs(ctx context.Context, managers map[string]ManagerStat
 				activeCollector.listResultKey,
 				activeCollector.updateResultKey,
 			)
-		}()
+		}, func(err error) {
+			inventoryCh <- managerInventory{
+				manager:      activeCollector.manager,
+				listResult:   failedBackgroundCommandResult(activeCollector.listResultKey, err),
+				updateResult: failedBackgroundCommandResult(activeCollector.updateResultKey, err),
+				listKey:      activeCollector.listResultKey,
+				updateKey:    activeCollector.updateResultKey,
+			}
+		})
 	}
 
 	wg.Wait()

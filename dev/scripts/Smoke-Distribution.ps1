@@ -1,7 +1,7 @@
 param(
     [string]$Exe,
     [int]$Port = 4344,
-    [string]$Token = "smoke-token",
+    [string]$Token = [guid]::NewGuid().ToString('N'),
     [int]$TimeoutSeconds = 240,
     [int]$StoreProviderTimeoutSeconds = 90
 )

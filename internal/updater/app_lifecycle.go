@@ -45,10 +45,10 @@ func (lifecycle *appLifecycle) startBackgroundWork(workName string, runWork func
 	lifecycle.backgroundWg.Add(1)
 	lifecycle.mu.Unlock()
 
-	go func() {
+	goSafe("background work "+workName, func() {
 		defer lifecycle.backgroundWg.Done()
 		runWork(rootCtx)
-	}()
+	}, nil)
 	return true
 }
 
@@ -69,10 +69,10 @@ func (lifecycle *appLifecycle) beginShutdown() {
 
 func (lifecycle *appLifecycle) waitForBackgroundWork(timeout time.Duration) bool {
 	backgroundDone := make(chan struct{})
-	go func() {
+	goSafe("background work wait", func() {
 		lifecycle.backgroundWg.Wait()
 		close(backgroundDone)
-	}()
+	}, nil)
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
 	select {

@@ -12,13 +12,13 @@ import (
 )
 
 func TestUpdateJobRejectsConcurrentDuplicateStarts(t *testing.T) {
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	status, err := app.startUpdateJob(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -97,11 +97,10 @@ func TestUpdateJobAllowsSelectedUnknownVersionPackageWithGlobalOption(t *testing
 }
 
 func TestSingleUpdateRejectsCurrentPackageBeforeRunner(t *testing.T) {
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		t.Fatalf("single update runner should not be called for non-updatable package %s:%s", manager, id)
 		return CommandResult{}
 	})
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             "winget:Vendor.Current",
@@ -112,6 +111,7 @@ func TestSingleUpdateRejectsCurrentPackageBeforeRunner(t *testing.T) {
 		UpdateAvailable: false,
 		UpdateSupported: true,
 	}}}}}}
+	app.updateJob = deps
 	app.startSingleUpdateJob(managerWinget, "Vendor.Current", UpdateOptions{})
 
 	status := waitForUpdateJobStopped(t, app)
@@ -168,13 +168,13 @@ func TestUpdateJobAllowsSelectedPinnedPackageWithGlobalOption(t *testing.T) {
 }
 
 func TestUpdateJobStatusKeepsPackageSnapshotAndOverrides(t *testing.T) {
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	app.inventoryService.mu.Lock()
 	app.inventoryService.cache.Packages = append(app.inventoryService.cache.Packages, Package{
 		Key:              "winget:Vendor.Pinned",
@@ -215,7 +215,7 @@ func TestUpdateJobBulkIncludesUnknownVersionWithGlobalOption(t *testing.T) {
 
 func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) {
 	batchCalls := 0
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerWinget || pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			batchCalls++
@@ -231,13 +231,13 @@ func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) 
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -252,6 +252,53 @@ func TestUpdateAllBatchesWingetAndChocolateyWithOneElevatedRunner(t *testing.T) 
 		if !strings.HasPrefix(result.Result.Command, "batch ") {
 			t.Fatalf("expected batched command result, got %#v", status.Results)
 		}
+	}
+}
+
+func TestElevatedBatchHidesExactRejectedWingetOfferAfterRefresh(t *testing.T) {
+	pkg := updatableTestPackage(managerWinget, "ZedIndustries.Zed", "Zed")
+	other := updatableTestPackage(managerChoco, "gh", "GitHub CLI")
+	deps := bulkUpdateBatchDeps(
+		func(candidate Package) bool {
+			return candidate.Manager == managerWinget || candidate.Manager == managerChoco
+		},
+		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
+			if len(packages) != 2 || packages[0].Key != pkg.Key || packages[1].Key != other.Key {
+				t.Errorf("unexpected elevated batch: %#v", packages)
+				return nil, CommandResult{Code: 1, Command: "package_update_batch"}
+			}
+			progress(1, packages[0])
+			return []UpdateResult{{Key: pkg.Key, Result: CommandResult{
+				Code:   commandSkippedCode,
+				Stdout: rejectedWingetOfferDiagnostic + " (original code 2316632107).",
+			}}, {Key: other.Key, Result: CommandResult{OK: true, Command: "batch gh"}}}, CommandResult{OK: true, Command: "package_update_batch"}
+		},
+		func(ctx context.Context, manager, id string) CommandResult {
+			t.Errorf("%s:%s unexpectedly ran outside the elevated batch", manager, id)
+			return CommandResult{Code: 1}
+		},
+	)
+
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{pkg, other}}}}}
+	app.updateJob = deps
+	if _, err := app.startUpdateJob(nil); err != nil {
+		t.Fatal(err)
+	}
+	status := waitForUpdateJobStopped(t, app)
+	if status.State != jobStateSucceeded || len(status.Results) != 2 || status.Results[0].Result.Code != commandSkippedCode {
+		t.Fatalf("expected a skipped exact update, got %#v", status)
+	}
+	state := loadStateContext(context.Background())
+	if _, ok := state.RejectedWingetOffers[rejectedWingetOfferKey(pkg)]; !ok {
+		t.Fatalf("rejected offer was not persisted: %#v", state.RejectedWingetOffers)
+	}
+	inventory, err := app.effectiveInventorySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Packages) != 2 || inventory.Packages[0].UpdateAvailable || !inventory.Packages[1].UpdateAvailable {
+		t.Fatalf("same rejected offer reappeared in the update queue: %#v", inventory.Packages)
 	}
 }
 
@@ -287,13 +334,13 @@ func TestBulkElevationCapabilityKeepsWingetCurrentUserWhenElevationWouldSwitchAc
 
 func TestUpdateJobTimeoutStopsQueueAndMarksRemainingPackagesSkipped(t *testing.T) {
 	var calls []string
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		calls = append(calls, packageKey(manager, id))
 		return CommandResult{Code: commandTimeoutCode, Command: "update " + id, Stderr: "Timed out."}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git", "choco:gh"}); err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +376,7 @@ func TestElevatedBatchInstallerCancellationStopsQueueAndMarksRemainingPackagesSk
 		}
 	}
 
-	result := executeElevatedPackageUpdateBatchWithRunner(context.Background(), packages, nil, updateRunner)
+	result := executeElevatedPackageUpdateBatchWithRunner(context.Background(), packages, elevatedWorkerReport{}, updateRunner)
 
 	if len(calls) != 1 || calls[0] != packages[0].Key {
 		t.Fatalf("expected worker queue to stop after installer cancellation, calls=%#v", calls)
@@ -349,7 +396,7 @@ func TestElevatedBatchInstallerCancellationStopsQueueAndMarksRemainingPackagesSk
 
 func TestUpdateAllBatchesMultipleChocolateyPackages(t *testing.T) {
 	batchCalls := 0
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			batchCalls++
@@ -366,12 +413,12 @@ func TestUpdateAllBatchesMultipleChocolateyPackages(t *testing.T) {
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 		updatableTestPackage(managerChoco, "git", "Git"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +429,7 @@ func TestUpdateAllBatchesMultipleChocolateyPackages(t *testing.T) {
 }
 
 func TestElevatedBatchFailureWithoutPackageRowsFailsJob(t *testing.T) {
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerWinget || pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			return nil, CommandResult{Code: 1, Command: "package_update_batch", Stderr: "worker failed before package results"}
@@ -392,12 +439,12 @@ func TestElevatedBatchFailureWithoutPackageRowsFailsJob(t *testing.T) {
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +460,7 @@ func TestElevatedBatchFailureWithoutPackageRowsFailsJob(t *testing.T) {
 }
 
 func TestElevatedBatchUACCancellationCancelsWholeJobWithoutExecutingPackages(t *testing.T) {
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerWinget || pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			return nil, CommandResult{Code: commandCancelledCode, Command: workerOperationPackageUpdateBatch, Stderr: "Cancelled."}
@@ -423,12 +470,12 @@ func TestElevatedBatchUACCancellationCancelsWholeJobWithoutExecutingPackages(t *
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "vendor-two", "Vendor Two"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +494,7 @@ func TestElevatedBatchUACCancellationCancelsWholeJobWithoutExecutingPackages(t *
 func TestUpdateSelectedUsesElevatedBatchPath(t *testing.T) {
 	var got []Package
 	batchCalls := 0
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerWinget || pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			batchCalls++
@@ -465,13 +512,13 @@ func TestUpdateSelectedUsesElevatedBatchPath(t *testing.T) {
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 		updatableTestPackage(managerWinget, "Vendor.Three", "Vendor Three"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.One", "choco:gh"}); err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +530,7 @@ func TestUpdateSelectedUsesElevatedBatchPath(t *testing.T) {
 
 func TestSingleWingetUpdateStaysOnExistingPath(t *testing.T) {
 	var singleCalls []string
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return true },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			t.Fatalf("single-package update should not use elevated batch: %#v", packages)
@@ -494,11 +541,11 @@ func TestSingleWingetUpdateStaysOnExistingPath(t *testing.T) {
 			return CommandResult{OK: true, Command: "single " + id}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.One"}); err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +557,7 @@ func TestSingleWingetUpdateStaysOnExistingPath(t *testing.T) {
 
 func TestWingetBatchFallsBackWhenSameUserElevationIneligible(t *testing.T) {
 	var singleCalls []string
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return pkg.Manager == managerChoco },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			t.Fatalf("ineligible winget packages should not use elevated batch: %#v", packages)
@@ -521,12 +568,12 @@ func TestWingetBatchFallsBackWhenSameUserElevationIneligible(t *testing.T) {
 			return CommandResult{OK: true, Command: "single " + id}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +627,7 @@ func TestElevatedBatchPlanUsesOneEligiblePackageInMultiPackageJob(t *testing.T) 
 
 func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 	started := make(chan struct{})
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return true },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			close(started)
@@ -593,12 +640,12 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerChoco, "gh", "GitHub CLI"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +667,7 @@ func TestElevatedBatchCancellationRecordsCompletedResults(t *testing.T) {
 func TestElevatedBatchProgressIsLoggedInParentSession(t *testing.T) {
 	replaceSessionLogsForTest(t, &LogBuffer{})
 
-	restore := replaceBulkUpdateBatchHooks(
+	deps := bulkUpdateBatchDeps(
 		func(pkg Package) bool { return true },
 		func(ctx context.Context, packages []Package, progress func(int, Package)) ([]UpdateResult, CommandResult) {
 			results := make([]UpdateResult, 0, len(packages))
@@ -635,12 +682,12 @@ func TestElevatedBatchProgressIsLoggedInParentSession(t *testing.T) {
 			return CommandResult{}
 		},
 	)
-	defer restore()
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Vendor.One", "Vendor One"),
 		updatableTestPackage(managerWinget, "Vendor.Two", "Vendor Two"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +740,7 @@ func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 	var once sync.Once
 	var calls int
 	var mu sync.Mutex
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		mu.Lock()
 		calls++
 		mu.Unlock()
@@ -701,9 +748,9 @@ func TestUpdateJobCancelStopsQueuedPackages(t *testing.T) {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +781,7 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		once.Do(func() { close(started) })
 		select {
 		case <-release:
@@ -743,9 +790,9 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 			return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
 		}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	app.webSession.sessionToken = "test-session"
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git"}); err != nil {
 		t.Fatal(err)
@@ -778,20 +825,13 @@ func TestUpdateJobStatusEndpointReportsProgress(t *testing.T) {
 
 func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 	var got Package
-	oldRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldRefresh := refreshInventoryAfterUpdateJob
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	var deps updateJobDeps
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		got = pkg
 		return CommandResult{OK: true, Command: pkg.ID}
 	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	defer func() {
-		updatePackageRunner = oldRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldRefresh
-	}()
+	deps.refreshBefore = func(ctx context.Context, app *App, packages []Package) error { return nil }
+	deps.refreshAfter = func(ctx context.Context, app *App, packages []Package) error { return nil }
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 		Key:             "winget:Vendor.App",
@@ -803,6 +843,7 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 		UpdateSupported: true,
 		ActionBackend:   "winget",
 	}}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob([]string{"winget:Vendor.App"}); err != nil {
 		t.Fatal(err)
 	}
@@ -815,15 +856,12 @@ func TestUpdateJobPassesPackageMetadataToRunner(t *testing.T) {
 
 func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testing.T) {
 	var calls []string
-	oldRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldPostRefresh := refreshInventoryAfterUpdateJob
-	oldEligible := elevatedPackageUpdateBatchEligible
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	var deps updateJobDeps
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		calls = append(calls, pkg.Key)
 		return CommandResult{OK: true, Command: "update " + pkg.ID}
 	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error {
+	deps.refreshBefore = func(ctx context.Context, app *App, packages []Package) error {
 		app.inventoryService.mu.Lock()
 		app.inventoryService.cache = Inventory{PackageLookup: PackageLookup{Packages: []Package{
 			{
@@ -841,19 +879,14 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 		app.inventoryService.mu.Unlock()
 		return nil
 	}
-	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	elevatedPackageUpdateBatchEligible = func(Package) bool { return false }
-	defer func() {
-		updatePackageRunner = oldRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldPostRefresh
-		elevatedPackageUpdateBatchEligible = oldEligible
-	}()
+	deps.refreshAfter = func(ctx context.Context, app *App, packages []Package) error { return nil }
+	deps.batchEligible = func(Package) bool { return false }
 
 	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{
 		updatableTestPackage(managerWinget, "Current.App", "Current App"),
 		updatableTestPackage(managerWinget, "Fresh.App", "Fresh App"),
 	}}}}}
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -879,18 +912,106 @@ func TestUpdateJobSkipsPackagesNoLongerActionableAfterPreflightRefresh(t *testin
 	}
 }
 
+func TestExecuteLatestPublishedStoreUpdateForJobRebindsScanGeneration(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-latest"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), nil)
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	var executedPackage Package
+	result := app.executeLatestPublishedStoreUpdateForJob(context.Background(), queuedPackage, func(pkg Package) CommandResult {
+		executedPackage = pkg
+		return CommandResult{OK: true, Command: "store update " + pkg.ID}
+	})
+
+	if !result.OK {
+		t.Fatalf("latest Store generation should execute, got %#v", result)
+	}
+	if executedPackage.ScanID != "scan-latest" {
+		t.Fatalf("queued Store package was not rebound to latest scan: %#v", executedPackage)
+	}
+}
+
+func TestExecuteLatestPublishedStoreUpdateForJobSkipsSupersededOffer(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-current"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), func(snapshot *StoreScanSnapshot) {
+		snapshot.Assessments[0].State = StoreUpdateCurrent
+		snapshot.Assessments[0].AvailableVersion = ""
+	})
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	executed := false
+	result := app.executeLatestPublishedStoreUpdateForJob(context.Background(), queuedPackage, func(Package) CommandResult {
+		executed = true
+		return CommandResult{OK: true}
+	})
+
+	if executed {
+		t.Fatal("superseded Store offer must not execute")
+	}
+	if result.Code != commandSkippedCode || !strings.Contains(result.Stdout, "No longer actionable after refresh") {
+		t.Fatalf("superseded Store offer should be recorded as skipped, got %#v", result)
+	}
+}
+
+func TestStoreUpdateJobTreatsSupersededOfferAsSkipped(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	restoreSID := replaceStoreScanSID("S-1-5-21-exec")
+	defer restoreSID()
+	deps := updateJobDepsWithRefresh(
+		func(context.Context, string, string) CommandResult {
+			t.Fatal("superseded Store offer must not reach the package runner")
+			return CommandResult{}
+		},
+		func(context.Context, *App, []Package) error { return nil },
+	)
+
+	queuedPackage := testExactStorePackage()
+	queuedPackage.ScanID = "scan-queued"
+	latestPackage := queuedPackage
+	latestPackage.ScanID = "scan-current"
+	writePublishedExactStoreAssessment(t, latestPackage, storeScanNow(), func(snapshot *StoreScanSnapshot) {
+		snapshot.Assessments[0].State = StoreUpdateCurrent
+		snapshot.Assessments[0].AvailableVersion = ""
+	})
+
+	app := &App{inventoryService: inventoryService{cache: Inventory{PackageLookup: PackageLookup{Packages: []Package{queuedPackage}}}}}
+	app.updateJob = deps
+	app.startUpdatePackagesOperation(jobTypeUpdateAll, updateJobModeSelected, []Package{queuedPackage})
+	status := waitForUpdateJobStopped(t, app)
+
+	if status.State != jobStateSucceeded || len(status.Results) != 1 {
+		t.Fatalf("superseded Store offer should complete as one skipped result: %#v", status)
+	}
+	if status.Results[0].Result.Code != commandSkippedCode || !strings.Contains(status.Results[0].Result.Stdout, "No longer actionable after refresh") {
+		t.Fatalf("superseded Store job result should be skipped, got %#v", status.Results[0])
+	}
+}
+
 func TestUpdatePackageWithInventoryRetryUsesFreshMetadata(t *testing.T) {
 	var calls []Package
-	oldRunner := updatePackageRunner
-	oldRefresher := updateRetryInventoryRefresher
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	var deps updateJobDeps
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		calls = append(calls, pkg)
 		if pkg.ID == "Fresh.App" {
 			return CommandResult{OK: true, Command: "update " + pkg.ID, Stdout: "updated"}
 		}
 		return CommandResult{Code: 1, Command: "update " + pkg.ID, Stderr: "No installed package found matching input criteria."}
 	}
-	updateRetryInventoryRefresher = func(ctx context.Context, app *App, reason string) Inventory {
+	deps.retryInventory = func(ctx context.Context, app *App, reason string) Inventory {
 		return Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 			Key:             "winget:Fresh.App",
 			Manager:         managerWinget,
@@ -900,12 +1021,9 @@ func TestUpdatePackageWithInventoryRetryUsesFreshMetadata(t *testing.T) {
 			UpdateSupported: true,
 		}}}}
 	}
-	defer func() {
-		updatePackageRunner = oldRunner
-		updateRetryInventoryRefresher = oldRefresher
-	}()
 
 	app := &App{}
+	app.updateJob = deps
 	result := app.updatePackageWithInventoryRetry(context.Background(), Package{Manager: managerWinget, ID: "Old.App", Name: "Example App", UpdateAvailable: true, UpdateSupported: true})
 
 	if !result.OK || len(calls) != 2 || calls[1].ID != "Fresh.App" || !strings.Contains(result.Command, "fresh inventory retry") {
@@ -915,13 +1033,12 @@ func TestUpdatePackageWithInventoryRetryUsesFreshMetadata(t *testing.T) {
 
 func TestUpdatePackageWithInventoryRetryTreatsFreshNoUpdateAsCurrent(t *testing.T) {
 	calls := 0
-	oldRunner := updatePackageRunner
-	oldRefresher := updateRetryInventoryRefresher
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	var deps updateJobDeps
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		calls++
 		return CommandResult{Code: 1, Command: "update " + pkg.ID, Stderr: "No installed package found matching input criteria."}
 	}
-	updateRetryInventoryRefresher = func(ctx context.Context, app *App, reason string) Inventory {
+	deps.retryInventory = func(ctx context.Context, app *App, reason string) Inventory {
 		return Inventory{PackageLookup: PackageLookup{Packages: []Package{{
 			Key:             "winget:Old.App",
 			Manager:         managerWinget,
@@ -931,12 +1048,9 @@ func TestUpdatePackageWithInventoryRetryTreatsFreshNoUpdateAsCurrent(t *testing.
 			UpdateSupported: true,
 		}}}}
 	}
-	defer func() {
-		updatePackageRunner = oldRunner
-		updateRetryInventoryRefresher = oldRefresher
-	}()
 
 	app := &App{}
+	app.updateJob = deps
 	result := app.updatePackageWithInventoryRetry(context.Background(), Package{Manager: managerWinget, ID: "Old.App", Name: "Example App", UpdateAvailable: true, UpdateSupported: true})
 
 	if !result.OK || calls != 1 || !strings.Contains(result.Stdout, "no longer reports an available update") {
@@ -946,21 +1060,17 @@ func TestUpdatePackageWithInventoryRetryTreatsFreshNoUpdateAsCurrent(t *testing.
 
 func TestUpdatePackageWithInventoryRetrySkipsNonTargetFailures(t *testing.T) {
 	refreshes := 0
-	oldRunner := updatePackageRunner
-	oldRefresher := updateRetryInventoryRefresher
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	var deps updateJobDeps
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		return CommandResult{Code: 5, Command: "update " + pkg.ID, Stderr: "Access is denied."}
 	}
-	updateRetryInventoryRefresher = func(ctx context.Context, app *App, reason string) Inventory {
+	deps.retryInventory = func(ctx context.Context, app *App, reason string) Inventory {
 		refreshes++
 		return Inventory{}
 	}
-	defer func() {
-		updatePackageRunner = oldRunner
-		updateRetryInventoryRefresher = oldRefresher
-	}()
 
 	app := &App{}
+	app.updateJob = deps
 	result := app.updatePackageWithInventoryRetry(context.Background(), Package{Manager: managerWinget, ID: "Old.App", Name: "Example App", UpdateAvailable: true, UpdateSupported: true})
 
 	if result.OK || refreshes != 0 {
@@ -1083,7 +1193,7 @@ func TestRefreshInventorySyncRunsQueuedForcedRefresh(t *testing.T) {
 func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 	refreshEntered := make(chan struct{})
 	releaseRefresh := make(chan struct{})
-	restore := replaceUpdateJobHooksWithRefresh(
+	deps := updateJobDepsWithRefresh(
 		func(ctx context.Context, manager, id string) CommandResult {
 			return CommandResult{OK: true, Command: id}
 		},
@@ -1093,9 +1203,9 @@ func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 			return nil
 		},
 	)
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	if _, err := app.startUpdateJob([]string{"winget:Git.Git"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1116,11 +1226,10 @@ func TestUpdateJobKeepsRunningUntilRefreshStarts(t *testing.T) {
 
 func TestStoreUpdateJobKeepsRunningUntilStoreScanCompletes(t *testing.T) {
 	oldGetter := inventoryGetter
-	oldRunner := updatePackageRunner
+	var deps updateJobDeps
 	oldScan := runStoreTransactionalScanForInventory
 	defer func() {
 		inventoryGetter = oldGetter
-		updatePackageRunner = oldRunner
 		runStoreTransactionalScanForInventory = oldScan
 	}()
 
@@ -1134,7 +1243,7 @@ func TestStoreUpdateJobKeepsRunningUntilStoreScanCompletes(t *testing.T) {
 			UpdateSupported: true,
 		}}}}
 	}
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
+	deps.runPackage = func(ctx context.Context, pkg Package) CommandResult {
 		return CommandResult{OK: true, Command: "update " + pkg.ID}
 	}
 
@@ -1148,6 +1257,7 @@ func TestStoreUpdateJobKeepsRunningUntilStoreScanCompletes(t *testing.T) {
 	}
 
 	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true}}
+	app.updateJob = deps
 	app.startUpdatePackagesOperation(jobTypeUpdateAll, updateJobModeSelected, []Package{{
 		Key:             "store:Vendor.App_abc123",
 		Manager:         managerStore,
@@ -1178,13 +1288,13 @@ func TestStoreUpdateJobKeepsRunningUntilStoreScanCompletes(t *testing.T) {
 }
 
 func TestUpdateJobValidatesConcurrentQueuedStart(t *testing.T) {
-	restore := replaceUpdateJobHooks(func(ctx context.Context, manager, id string) CommandResult {
+	deps := updateJobDepsWithRunner(func(ctx context.Context, manager, id string) CommandResult {
 		<-ctx.Done()
 		return CommandResult{Code: commandCancelledCode, Command: id, Stderr: "Cancelled."}
 	})
-	defer restore()
 
 	app := testUpdateJobApp(t)
+	app.updateJob = deps
 	if _, err := app.startUpdateJob(nil); err != nil {
 		t.Fatal(err)
 	}

@@ -158,6 +158,9 @@ main{width:min(1500px,100%);margin:0 auto;padding:22px 28px 28px}
 .toast-progress span{display:block;width:100%;height:100%;background:var(--toast-accent);transform:scaleX(var(--toast-progress,1));transform-origin:left center}
 .progress-panel{border-left:4px solid var(--amber)}
 .install-progress-panel{border-left-color:var(--blue)}
+.progress-panel.backend-lost{border-left-color:var(--red)}
+.progress-panel.backend-lost .progress-title{color:var(--red)}
+.progress-panel.backend-lost .progress-bar span{animation:none;width:100%;background:var(--red);opacity:.45}
 .progress-header{justify-content:space-between;margin-bottom:10px}
 .progress-title{font-weight:800}
 .progress-bar{position:relative;height:7px;overflow:hidden;background:color-mix(in srgb,var(--line) 70%,transparent);border-radius:999px}

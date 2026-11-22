@@ -115,6 +115,68 @@ Microsoft Visual C++ 2010  x64 Redistributable - 10.0.40219  Microsoft.VCRedist.
 	}
 }
 
+func TestWingetInventoryRejectsNightlyIdentityForStableDisplayName(t *testing.T) {
+	const packageID = "Brave.BraveOrigin.Nightly"
+	inventory := managerInventory{
+		manager: managerWinget,
+		installed: []Package{{
+			Name:             "Brave Origin",
+			ID:               packageID,
+			Version:          "153.1.95.102",
+			AvailableVersion: "154.1.98.5",
+			Source:           sourceWinget,
+		}},
+		updates: map[string]string{
+			packageKey(managerWinget, strings.ToLower(packageID)): "154.1.98.5",
+		},
+		updateDetails: map[string]Package{},
+	}
+
+	packages := packagesFromManagerInventory(State{AutoUpdatePackages: map[string]bool{
+		packageKey(managerWinget, packageID): true,
+	}}, inventory)
+	if len(packages) != 1 {
+		t.Fatalf("expected 1 package, got %d: %#v", len(packages), packages)
+	}
+	pkg := applyPackageCapabilities(packages[0])
+	if !pkg.IdentityConflict || pkg.IdentityReason == "" {
+		t.Fatalf("expected explicit identity conflict, got %#v", pkg)
+	}
+	if pkg.UpdateAvailable || pkg.UpdateSupported || pkg.AvailableVersion != "" || pkg.AutoUpdate {
+		t.Fatalf("channel-conflicting package must not be actionable, got %#v", pkg)
+	}
+	if pkg.CanUpdateNow || !strings.Contains(pkg.CannotUpdateReason, "changing release channels") {
+		t.Fatalf("expected channel safety reason, got %#v", pkg)
+	}
+}
+
+func TestWingetInventoryAllowsMatchingNightlyIdentity(t *testing.T) {
+	const packageID = "Brave.BraveOrigin.Nightly"
+	inventory := managerInventory{
+		manager: managerWinget,
+		installed: []Package{{
+			Name:             "Brave Origin Nightly",
+			ID:               packageID,
+			Version:          "1.0.0",
+			AvailableVersion: "1.1.0",
+			Source:           sourceWinget,
+		}},
+		updates: map[string]string{
+			packageKey(managerWinget, strings.ToLower(packageID)): "1.1.0",
+		},
+		updateDetails: map[string]Package{},
+	}
+
+	packages := packagesFromManagerInventory(State{}, inventory)
+	if len(packages) != 1 {
+		t.Fatalf("expected 1 package, got %d: %#v", len(packages), packages)
+	}
+	pkg := applyPackageCapabilities(packages[0])
+	if pkg.IdentityConflict || !pkg.UpdateAvailable || !pkg.UpdateSupported || !pkg.CanUpdateNow {
+		t.Fatalf("matching Nightly package should remain actionable, got %#v", pkg)
+	}
+}
+
 func TestParseWingetTableSkipsWrappedContinuationRows(t *testing.T) {
 	output := `
 Name               ID                                 Version       VerfÃ¼gbar     Quelle

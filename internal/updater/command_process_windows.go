@@ -23,6 +23,17 @@ type commandProcessOwner struct {
 	closeOnce sync.Once
 }
 
+type jobObjectBasicAccountingInformation struct {
+	TotalUserTime             int64
+	TotalKernelTime           int64
+	ThisPeriodTotalUserTime   int64
+	ThisPeriodTotalKernelTime int64
+	TotalPageFaultCount       uint32
+	TotalProcesses            uint32
+	ActiveProcesses           uint32
+	TotalTerminatedProcesses  uint32
+}
+
 func newCommandProcessOwner(enabled bool) (*commandProcessOwner, error) {
 	if !enabled {
 		return nil, nil
@@ -127,6 +138,26 @@ func (processOwner *commandProcessOwner) Terminate() {
 		return
 	}
 	_ = windows.TerminateJobObject(processOwner.jobHandle, uint32(commandCancelledCode))
+}
+
+func (processOwner *commandProcessOwner) ActivitySnapshot() (commandProcessActivitySnapshot, bool) {
+	if processOwner == nil || processOwner.jobHandle == 0 {
+		return commandProcessActivitySnapshot{}, false
+	}
+	var accounting jobObjectBasicAccountingInformation
+	if err := windows.QueryInformationJobObject(
+		processOwner.jobHandle,
+		windows.JobObjectBasicAccountingInformation,
+		uintptr(unsafe.Pointer(&accounting)),
+		uint32(unsafe.Sizeof(accounting)),
+		nil,
+	); err != nil {
+		return commandProcessActivitySnapshot{}, false
+	}
+	return commandProcessActivitySnapshot{
+		ProcessorTime:   accounting.TotalUserTime + accounting.TotalKernelTime,
+		ActiveProcesses: accounting.ActiveProcesses,
+	}, true
 }
 
 func (processOwner *commandProcessOwner) Close() {

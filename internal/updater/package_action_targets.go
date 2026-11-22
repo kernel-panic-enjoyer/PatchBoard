@@ -20,7 +20,7 @@ func runPackageUpdateCandidates(ctx context.Context, rawCandidates []string, att
 		} else {
 			mergedResult = mergeCommandAttemptsWithFinalResult(mergedResult, attemptResult, fmt.Sprintf("%s %q", attemptLabel, target))
 		}
-		if attemptResult.OK || ctx.Err() != nil || !shouldTryAlternatePackageTarget(attemptResult) {
+		if attemptResult.OK || commandResultSkipped(attemptResult) || ctx.Err() != nil || !shouldTryAlternatePackageTarget(attemptResult) {
 			return mergedResult
 		}
 		appLog("Update target %q was not accepted; trying alternate target.", target)

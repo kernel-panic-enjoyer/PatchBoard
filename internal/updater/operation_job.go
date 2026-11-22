@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 )
 
@@ -332,6 +333,11 @@ func finishQueuedOperationJobCancellation(status *OperationJobStatus, notice str
 func runOperationJobSafely(ctx context.Context, job *OperationJob) (panicValue any) {
 	defer func() {
 		panicValue = recover()
+		if panicValue != nil {
+			// The job reports only a short diagnostic; the stack goes to the
+			// session log and a crash file so the failure can be diagnosed.
+			reportRecoveredPanic("job "+job.status.JobID+" ("+job.status.Type+")", panicValue, debug.Stack())
+		}
 	}()
 	job.execute(ctx, job)
 	return nil

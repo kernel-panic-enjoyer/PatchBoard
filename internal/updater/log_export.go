@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -184,16 +185,22 @@ func logEntryDisplayTime(timestamp string) string {
 }
 
 var (
-	windowsUserPathPattern = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s]+`)
+	// Profile paths: C:\Users\name, C:/Users/name, \\?\C:\Users\name and
+	// admin shares such as \\host\c$\Users\name.
+	windowsUserPathPattern = regexp.MustCompile(`(?i)(?:\b[A-Z]:|\\\\\S*?\\[A-Z]\$)[\\/]Users[\\/][^\\/\s"']+`)
 	rawSIDPattern          = regexp.MustCompile(`\bS-\d-\d+(?:-\d+){2,}\b`)
-	secretPairPattern      = regexp.MustCompile(`(?i)\b(token|capability|password|secret|credential)=([^\s&]+)`)
-	sensitiveLogValues     sync.Map
+	// key=value, key: value and JSON "key":"value", for keys ending in a
+	// secret word (token, session_token, apiKey, ...).
+	secretPairPattern  = regexp.MustCompile(`(?i)("?\b[A-Za-z0-9_-]*?(?:token|capability|password|passwd|secret|credential|api[_-]?key)"?\s*[:=]\s*"?)([^\s&"',;]+)`)
+	bearerPattern      = regexp.MustCompile(`(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}`)
+	sensitiveLogValues sync.Map
 )
 
 func sanitizeLogText(text string) string {
 	text = windowsUserPathPattern.ReplaceAllString(text, `%USERPROFILE%`)
 	text = rawSIDPattern.ReplaceAllString(text, `[sid]`)
-	text = secretPairPattern.ReplaceAllString(text, `$1=[redacted]`)
+	text = secretPairPattern.ReplaceAllString(text, `${1}[redacted]`)
+	text = bearerPattern.ReplaceAllString(text, `$1 [redacted]`)
 	sensitiveLogValues.Range(func(key, value any) bool {
 		secret, ok := key.(string)
 		if ok && secret != "" {
@@ -210,6 +217,16 @@ func (app *App) registerSessionSecretsForLogRedaction() {
 	}
 	registerSensitiveLogValue(app.webSession.bootstrapToken)
 	registerSensitiveLogValue(app.webSession.sessionToken)
+	registerCurrentAccountForLogRedaction()
+}
+
+// registerCurrentAccountForLogRedaction hides DOMAIN\user, which the path
+// pattern does not cover.
+func registerCurrentAccountForLogRedaction() {
+	domain, name := strings.TrimSpace(os.Getenv("USERDOMAIN")), strings.TrimSpace(os.Getenv("USERNAME"))
+	if domain != "" && name != "" {
+		registerSensitiveLogValue(domain + `\` + name)
+	}
 }
 
 func registerSensitiveLogValue(value string) {

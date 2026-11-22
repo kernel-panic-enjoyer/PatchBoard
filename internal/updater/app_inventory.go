@@ -302,6 +302,19 @@ func (app *App) beginStoreScanLocked(forceStoreScan bool) bool {
 // storeScanLoading stays true across the follow-up so the frontend keeps
 // polling until the latest requested scan completes.
 func (app *App) runStoreScan(ctx context.Context) {
+	// Why: an exact Store update is authorized against the latest published
+	// generation. Keep publication and execution mutually exclusive so a scan
+	// cannot replace that generation between revalidation and command launch.
+	if !lockMutexContextWithWait(ctx, &app.inventoryService.storeAssessmentActionMu, nil) {
+		app.inventoryService.mu.Lock()
+		app.inventoryService.storeScanLoading = false
+		app.inventoryService.storeScanQueued = false
+		app.inventoryService.mu.Unlock()
+		appLog("Background Microsoft Store update scan cancelled while waiting for an active Store update.")
+		return
+	}
+	defer app.inventoryService.storeAssessmentActionMu.Unlock()
+
 	for {
 		if ctx.Err() != nil {
 			app.inventoryService.mu.Lock()
@@ -416,6 +429,7 @@ func effectiveInventoryFromBase(ctx context.Context, state State, baseInventory 
 func applyStateAndCapabilitiesToInventory(state State, inventory Inventory) Inventory {
 	for packageIndex := range inventory.Packages {
 		inventory.Packages[packageIndex].AutoUpdate = packageAutoUpdateEnabled(state, inventory.Packages[packageIndex])
+		suppressRejectedWingetOffer(state, &inventory.Packages[packageIndex])
 		inventory.Packages[packageIndex] = applyPackageCapabilities(inventory.Packages[packageIndex])
 	}
 	return inventory

@@ -33,6 +33,9 @@ func packageHasExactStoreUpdateTarget(pkg Package) bool {
 
 func applyPackageCapabilities(pkg Package) Package {
 	policy := packageUpdatePolicy(pkg, UpdateOptions{})
+	if pkg.IdentityConflict {
+		pkg.AutoUpdate = false
+	}
 	pkg.PreferenceEligible = policy.PreferenceEligible
 	pkg.CanUpdateNow = policy.CanUpdateNow
 	pkg.CannotUpdateReason = policy.CannotUpdateReason
@@ -46,6 +49,10 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 		ExactTargetKind:    exactTargetKind(pkg.StoreProductID, pkg.StoreUpdateID),
 	}
 	if pkg.Manager != managerStore {
+		if pkg.IdentityConflict {
+			policy.CannotUpdateReason = firstNonEmpty(pkg.IdentityReason, "Package identity conflicts with its reported release channel.")
+			return policy
+		}
 		if !pkg.UpdateAvailable {
 			policy.CannotUpdateReason = "No update available."
 			return policy
@@ -67,6 +74,11 @@ func packageUpdatePolicy(pkg Package, options UpdateOptions) PackageUpdatePolicy
 	}
 	if !policy.PreferenceEligible {
 		policy.CannotUpdateReason = "Store package identity is not exact."
+		return policy
+	}
+	// RULE-122: an identity conflict blocks Store updates as it does others.
+	if pkg.IdentityConflict {
+		policy.CannotUpdateReason = firstNonEmpty(pkg.IdentityReason, "Package identity conflicts with its reported release channel.")
 		return policy
 	}
 	if !strings.EqualFold(strings.TrimSpace(pkg.UpdateState), string(StoreUpdateAvailable)) {

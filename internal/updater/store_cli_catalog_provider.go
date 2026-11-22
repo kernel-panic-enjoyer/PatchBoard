@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -105,12 +106,8 @@ func (provider storeCLIUpdatesCatalogProvider) Observe(ctx context.Context, scan
 		return run
 	}
 	coverageComplete := result.OK && parsed.CompleteCoverage && parseErr == nil && ctx.Err() == nil
+	// coverageComplete already requires result.OK (RULE-274).
 	if parsed.NoUpdates && coverageComplete {
-		if !result.OK {
-			run.Health = StoreProviderIncomplete
-			run.Error = sanitizeProviderDiagnostic(firstNonEmpty(result.Stderr, result.Stdout, "Store CLI aggregate update check failed"))
-			return run
-		}
 		observedAt := provider.now()
 		for _, family := range productFamilies {
 			run.Observations = append(run.Observations, StoreProviderObservation{
@@ -255,13 +252,11 @@ func (provider storeCLIExactCatalogProvider) Observe(ctx context.Context, scan S
 	completed := map[string]bool{}
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		goSafeGroup(&wg, "Store CLI exact provider worker", func() {
 			for family := range jobs {
-				results <- provider.observeFamily(ctx, scan, identity, family)
+				results <- provider.observeFamilySafely(ctx, scan, identity, family)
 			}
-		}()
+		}, nil)
 	}
 	cancelled := false
 	for _, family := range productFamilies {
@@ -281,6 +276,12 @@ closeJobs:
 	seen := 0
 	for result := range results {
 		seen++
+		if result.Failure != "" {
+			run.Health = StoreProviderIncomplete
+			if run.Error == "" {
+				run.Error = result.Failure
+			}
+		}
 		if result.PFN != "" {
 			completed[strings.ToLower(result.PFN)] = true
 		}
@@ -327,6 +328,20 @@ type storeCLIExactFamilyResult struct {
 	Observation StoreProviderObservation
 	Mapping     *VerifiedStoreIdentityMapping
 	PFN         string
+	// Failure is set when inspecting the family panicked. The family then
+	// counts as not inspected and the run as incomplete.
+	Failure string
+}
+
+func (provider storeCLIExactCatalogProvider) observeFamilySafely(ctx context.Context, scan StoreScanGeneration, providerID StoreProviderIdentity, family StorePackagedAppFamily) (result storeCLIExactFamilyResult) {
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			name := "Store CLI exact provider for " + family.Identity.PackageFamilyName
+			reportRecoveredPanic(name, panicValue, debug.Stack())
+			result = storeCLIExactFamilyResult{Failure: backgroundPanicError(name, panicValue).Error()}
+		}
+	}()
+	return provider.observeFamily(ctx, scan, providerID, family)
 }
 
 func (provider storeCLIExactCatalogProvider) incompleteObservation(scan StoreScanGeneration, providerID StoreProviderIdentity, family StorePackagedAppFamily, diagnostics string) StoreProviderObservation {

@@ -75,6 +75,8 @@ type App struct {
 	appUpdateChecker appUpdateChecker
 	jobScheduler     operationJobScheduler
 	lifecycle        appLifecycle
+	// updateJob replaces steps of update jobs in tests; zero means real.
+	updateJob updateJobDeps
 }
 
 func (app *App) isShuttingDown() bool {

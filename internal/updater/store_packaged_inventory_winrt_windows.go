@@ -88,10 +88,10 @@ func (provider winrtStorePackagedAppInventoryProvider) Inventory(ctx context.Con
 		err     error
 	}
 	done := make(chan inventoryResult, 1)
-	go func() {
+	goSafe("WinRT Store package enumeration", func() {
 		records, err := enum(enumCtx, scan.UserSID)
 		done <- inventoryResult{records: records, err: err}
-	}()
+	}, func(err error) { done <- inventoryResult{err: err} })
 
 	var records []StorePackagedAppRecord
 	select {

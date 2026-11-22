@@ -308,9 +308,8 @@ func (pipeline *StoreScanPipeline) runCatalogProviders(ctx context.Context, scan
 	var wg sync.WaitGroup
 	for index, provider := range providers {
 		index, provider := index, provider
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		providerStarted := pipeline.now()
+		goSafeGroup(&wg, "Store provider "+provider.Identity().Key(), func() {
 			runCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			started := pipeline.now()
@@ -332,7 +331,17 @@ func (pipeline *StoreScanPipeline) runCatalogProviders(ctx context.Context, scan
 			run = sanitizeCatalogProviderRun(scan, run)
 			run = synthesizeMissingProviderObservations(scan, run, families)
 			runs[index] = sanitizeCatalogProviderRun(scan, run)
-		}()
+		}, func(err error) {
+			failed := StoreCatalogProviderRun{
+				Provider:    provider.Identity(),
+				Health:      StoreProviderFailed,
+				Error:       err.Error(),
+				StartedAt:   providerStarted,
+				CompletedAt: pipeline.now(),
+			}
+			// Kept minimal: the panic may have come from the post-processing helpers.
+			runs[index] = failed
+		})
 	}
 	wg.Wait()
 	return runs
@@ -937,7 +946,10 @@ func reconcileStoreScanAssessments(scan StoreScanGeneration, families []StorePac
 			RequiredProviders: required,
 			Observations:      observations,
 		})
-		if previousAssessment, ok := previous[identity]; ok && shouldRetainPreviousPositive(scan, assessment) && !hasCurrentHealthyRetraction(scan, identity, providerRuns) {
+		// Only a previous Available is a positive worth keeping. Before
+		// 2026-11-21 any previous entry was kept, so an incomplete scan
+		// published every Store app as Available.
+		if previousAssessment, ok := previous[identity]; ok && previousAssessment.State == StoreUpdateAvailable && shouldRetainPreviousPositive(scan, assessment) && !hasCurrentHealthyRetraction(scan, identity, providerRuns) {
 			// Why: incomplete scans should not erase a previously seen positive,
 			// but retained evidence is marked stale so it stays diagnostic and
 			// cannot authorize Store execution.

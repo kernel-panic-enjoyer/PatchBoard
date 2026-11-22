@@ -105,6 +105,44 @@ func TestBackgroundStoreScanTimestamps(t *testing.T) {
 	}
 }
 
+func TestBackgroundStoreScanWaitsForExactUpdateAssessmentLease(t *testing.T) {
+	oldScan := runStoreTransactionalScanForInventory
+	defer func() { runStoreTransactionalScanForInventory = oldScan }()
+
+	scanEntered := make(chan struct{})
+	runStoreTransactionalScanForInventory = func(context.Context) (StoreScanResult, error) {
+		close(scanEntered)
+		return StoreScanResult{Published: true, Scan: StoreScanGeneration{ScanID: "after-update"}}, nil
+	}
+
+	app := &App{inventoryService: inventoryService{storeBackgroundScanEnabled: true, storeScanLoading: true}}
+	app.inventoryService.storeAssessmentActionMu.Lock()
+	scanDone := make(chan struct{})
+	go func() {
+		app.runStoreScan(context.Background())
+		close(scanDone)
+	}()
+
+	select {
+	case <-scanEntered:
+		app.inventoryService.storeAssessmentActionMu.Unlock()
+		t.Fatal("Store scan entered while exact update assessment lease was held")
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	app.inventoryService.storeAssessmentActionMu.Unlock()
+	select {
+	case <-scanEntered:
+	case <-time.After(time.Second):
+		t.Fatal("Store scan did not start after exact update assessment lease was released")
+	}
+	select {
+	case <-scanDone:
+	case <-time.After(time.Second):
+		t.Fatal("Store scan did not finish")
+	}
+}
+
 // TestBackgroundStoreScanRunsOffCriticalPath verifies that refreshInventorySync
 // returns the fast-manager inventory without waiting for the Store scan, that
 // store_loading reflects the in-flight background scan, and that the scan runs

@@ -269,7 +269,6 @@ func storeDiagnosticsExportFilename(now time.Time) string {
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	app.registerSessionSecretsForLogRedaction()
 	setSecurityHeaders(w)
 	if !app.trustedHost(r) {
 		writeAPIError(w, http.StatusMisdirectedRequest, "untrusted host")
@@ -301,10 +300,7 @@ func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = io.WriteString(w, "Stopping")
-		go func() {
-			time.Sleep(200 * time.Millisecond)
-			app.requestShutdown("WebUI Stop")
-		}()
+		app.requestShutdownSoon("WebUI Stop")
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {

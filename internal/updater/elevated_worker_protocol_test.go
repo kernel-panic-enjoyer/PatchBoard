@@ -245,8 +245,7 @@ func validApplicationInstallPayloadForTest(t *testing.T) elevatedWorkerApplicati
 	}
 	programFiles := filepath.Join(dir, "Program Files")
 	programData := filepath.Join(dir, "ProgramData")
-	t.Setenv("ProgramFiles", programFiles)
-	t.Setenv("ProgramData", programData)
+	setTrustedMachineFoldersForTest(t, machineFolders{ProgramFiles: programFiles, ProgramData: programData, Windows: `C:\Windows`})
 	originalExecutable := applicationInstallCurrentExecutable
 	applicationInstallCurrentExecutable = func() (string, error) { return source, nil }
 	t.Cleanup(func() { applicationInstallCurrentExecutable = originalExecutable })
@@ -345,7 +344,7 @@ func TestExchangeElevatedWorkerRequestReturnsCancelledWhenContextStops(t *testin
 	done := make(chan CommandResult, 1)
 	var signalOnce sync.Once
 	go func() {
-		response, err := exchangeElevatedWorkerRequest(ctx, client, request, nil, func() error {
+		response, err := exchangeElevatedWorkerRequest(ctx, client, request, nil, nil, func() error {
 			signalOnce.Do(func() { close(cancelSignalled) })
 			return nil
 		})
@@ -420,7 +419,7 @@ func TestExchangeElevatedWorkerRequestReportsProgress(t *testing.T) {
 	progressCh := make(chan elevatedWorkerProgress, 1)
 	response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, func(progress elevatedWorkerProgress) {
 		progressCh <- progress
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,12 +456,12 @@ func TestElevatedWorkerReportsProgressWithoutBlockingOnFutureCancellation(t *tes
 			operation string,
 			payload json.RawMessage,
 			auth elevatedWorkerAuthContext,
-			progress func(int, Package),
+			report elevatedWorkerReport,
 		) elevatedWorkerOperationResult {
 			// Give a legacy blocking cancel reader enough time to occupy the
 			// serialized duplex handle before the first progress write.
 			time.Sleep(50 * time.Millisecond)
-			progress(1, Package{Manager: managerWinget, ID: "Git.Git", Name: "Git"})
+			report.Progress(1, Package{Manager: managerWinget, ID: "Git.Git", Name: "Git"})
 			return elevatedWorkerOperationResult{Result: CommandResult{OK: true, Command: operation}}
 		})
 	}()
@@ -570,7 +569,7 @@ func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *test
 	go func() {
 		response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, func(progress elevatedWorkerProgress) {
 			progressCh <- progress
-		}, nil)
+		}, nil, nil)
 		if err != nil {
 			errCh <- err
 			return
@@ -595,5 +594,146 @@ func TestExchangeElevatedWorkerRequestSendsRequestBeforeReadingResponses(t *test
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected progress callback")
+	}
+}
+
+func TestExchangeElevatedWorkerRequestFailsInsteadOfCrashingWhenProgressPanics(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	go func() {
+		decoder := json.NewDecoder(server)
+		encoder := json.NewEncoder(server)
+		var gotRequest elevatedWorkerMessage
+		if err := decoder.Decode(&gotRequest); err != nil {
+			return
+		}
+		_ = encoder.Encode(elevatedWorkerResponse{
+			Version:   elevatedWorkerProtocolVersion,
+			Type:      workerResponseProgress,
+			RequestID: gotRequest.RequestID,
+			Progress:  &elevatedWorkerProgress{CurrentIndex: 1, Total: 1, PackageKey: "winget:Git.Git"},
+		})
+	}()
+
+	_, err = exchangeElevatedWorkerRequest(context.Background(), client, request, func(elevatedWorkerProgress) {
+		panic("progress callback failed")
+	}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "reader failed: internal job panic: progress callback failed") {
+		t.Fatalf("expected reader panic error, got %v", err)
+	}
+}
+
+func TestElevatedWorkerReturnsFailedResultWhenOperationPanics(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("UPDATER_STATE_DIR", stateDir)
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	request, err := newElevatedWorkerRequest(auth, "request-1", workerOperationPackageUpdateBatch, elevatedWorkerPackageUpdateBatchPayload{Packages: []Package{
+		{Manager: managerWinget, ID: "Git.Git", Name: "Git"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- serveElevatedWorkerConnectionWithExecutor(server, auth, make(chan struct{}), func(
+			context.Context, string, json.RawMessage, elevatedWorkerAuthContext, elevatedWorkerReport,
+		) elevatedWorkerOperationResult {
+			panic("operation failed")
+		})
+	}()
+
+	response, err := exchangeElevatedWorkerRequest(context.Background(), client, request, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || !strings.Contains(response.Result.Stderr, "operation failed: internal job panic: operation failed") {
+		t.Fatalf("expected failed result describing the panic, got %#v", response)
+	}
+	select {
+	case err := <-serveDone:
+		if err != nil {
+			t.Fatalf("worker connection returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("worker connection did not finish")
+	}
+
+	reports, err := filepath.Glob(filepath.Join(stateDir, diagnosticLogDirectoryName, crashLogFilePrefix+"*"+diagnosticLogFileSuffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("expected one crash report, got %v", reports)
+	}
+	data, err := os.ReadFile(reports[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Recovered panic in elevated worker operation package_update_batch") || !strings.Contains(string(data), "goroutine") {
+		t.Fatalf("crash report lacks panic and stack: %q", data)
+	}
+}
+
+// TestElevatedWorkerBatchKeepsFinishedPackagesWhenWorkerDies kills the worker
+// connection after package 2 of 3. Packages 1 and 2 were already changed, so
+// they must keep their real results; only package 3 fails.
+func TestElevatedWorkerBatchKeepsFinishedPackagesWhenWorkerDies(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
+	auth := elevatedWorkerAuthContext{Capability: "capability", UserSID: "S-1-5-21-test-1001", SessionID: 7}
+	packages := []Package{
+		{Key: "winget:Git.Git", Manager: managerWinget, ID: "Git.Git", Name: "Git"},
+		{Key: "winget:Vim.Vim", Manager: managerWinget, ID: "Vim.Vim", Name: "Vim"},
+		{Key: "winget:Zig.Zig", Manager: managerWinget, ID: "Zig.Zig", Name: "Zig"},
+	}
+	original := elevatedWorkerBatchInvocationRunner
+	t.Cleanup(func() { elevatedWorkerBatchInvocationRunner = original })
+	elevatedWorkerBatchInvocationRunner = func(ctx context.Context, invocation elevatedWorkerInvocation) (elevatedWorkerResponse, error) {
+		request, err := newElevatedWorkerRequest(auth, "request-kill", invocation.Operation, invocation.Payload)
+		if err != nil {
+			return elevatedWorkerResponse{}, err
+		}
+		client, server := net.Pipe()
+		defer client.Close()
+		go func() {
+			_ = serveElevatedWorkerConnectionWithExecutor(server, auth, make(chan struct{}), func(
+				ctx context.Context, _ string, _ json.RawMessage, _ elevatedWorkerAuthContext, report elevatedWorkerReport,
+			) elevatedWorkerOperationResult {
+				return executeElevatedPackageUpdateBatchWithRunner(ctx, packages, report, func(_ context.Context, pkg Package) CommandResult {
+					if pkg.ID == "Zig.Zig" {
+						_ = server.Close() // the worker process dies here
+						return CommandResult{OK: true}
+					}
+					return CommandResult{OK: true, Command: "winget upgrade " + pkg.ID, Stdout: "Successfully installed"}
+				})
+			})
+		}()
+		return exchangeElevatedWorkerRequest(ctx, client, request, invocation.Progress, invocation.PackageResult, nil)
+	}
+
+	results, batchResult := runElevatedPackageUpdateBatch(context.Background(), packages, nil)
+	if batchResult.OK {
+		t.Fatalf("batch result should fail when the worker dies: %#v", batchResult)
+	}
+	results = completePartialBatchResults(packages, results, batchResult)
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3: %#v", len(results), results)
+	}
+	for index, want := range []bool{true, true, false} {
+		if results[index].Key != packages[index].Key || results[index].Result.OK != want {
+			t.Fatalf("result %d = %#v, want key %s ok=%t", index, results[index], packages[index].Key, want)
+		}
 	}
 }

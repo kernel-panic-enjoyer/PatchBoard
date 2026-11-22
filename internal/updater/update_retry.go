@@ -5,18 +5,14 @@ import (
 	"strings"
 )
 
-var updatePackageRunner = updatePackageWithMetadataContext
-var updateRetryInventoryRefresher = func(ctx context.Context, app *App, reason string) Inventory {
-	return app.refreshInventorySyncContext(ctx, reason)
-}
-
 func (app *App) updatePackageWithInventoryRetry(ctx context.Context, pkg Package) CommandResult {
-	result := updatePackageRunner(ctx, pkg)
+	steps := app.updateJobSteps()
+	result := steps.runPackage(ctx, pkg)
 	if result.OK || ctx.Err() != nil || !shouldTryAlternatePackageTarget(result) {
 		return result
 	}
 
-	inventory := updateRetryInventoryRefresher(ctx, app, "update retry")
+	inventory := steps.retryInventory(ctx, app, "update retry")
 	fresh, ok := findPackageForUpdateRetry(inventory.Packages, pkg)
 	if !ok {
 		return result
@@ -35,7 +31,7 @@ func (app *App) updatePackageWithInventoryRetry(ctx context.Context, pkg Package
 		return result
 	}
 	appLog("Update target for %q failed; refreshed inventory found %q. Retrying once with fresh metadata.", updateJobPackageName(pkg), updateJobPackageName(fresh))
-	retry := updatePackageRunner(ctx, fresh)
+	retry := steps.runPackage(ctx, fresh)
 	return mergeCommandAttemptsWithFinalResult(result, retry, "fresh inventory retry")
 }
 

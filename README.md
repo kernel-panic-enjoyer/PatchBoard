@@ -92,7 +92,7 @@ PatchBoard.exe --task auto-update
 | --- | --- |
 | `--no-browser` | Start the local WebUI and print the URL instead of opening a browser. |
 | `--port PORT` | Bind the WebUI to a specific local port. Startup fails if the port is unavailable. |
-| `--token TOKEN` | Use a caller-provided bootstrap token instead of generating one. |
+| `--token TOKEN` | Use a caller-provided bootstrap token instead of generating one. It must be at least 32 characters of letters, digits and `-._~`. |
 | `--task auto-update` | Run the scheduled auto-update task once and print JSON results. |
 | `--help`, `-h` | Print usage. |
 
@@ -242,6 +242,27 @@ updates.
 - Use **Export Store Diagnostics** from the Store scan-health panel when Store
   updates appear missing or stale.
 - Use **Export Logs** from Session Log when package-manager commands fail.
+- If PatchBoard stops unexpectedly, look in `%LOCALAPPDATA%\PatchBoard\logs`.
+  `session-*.log` mirrors the Session Log to disk with the same redaction as
+  **Export Logs** (4 MiB per file, newest 8 kept), and `crash-*.log` holds the
+  Go panic and stack trace of a process that crashed (newest 10 kept; files from
+  clean exits are removed). A recovered panic is redacted like the Session Log;
+  a fatal Go runtime crash is written by the runtime itself and is not, so
+  check a `crash-*.log` before sharing it. Every intentional shutdown logs its source, such as
+  `Tray quit requested.`, so a session file that simply stops with no quit line
+  and no crash file points to the process being killed from outside.
+- An update job has an overall deadline: 15 minutes plus 20 minutes per
+  package, so every package can use its full command timeout. A job that runs
+  past it stops, says "Update timed out", and marks the packages it did not
+  finish as skipped because the job timed out.
+- If the WebUI loses its backend while an update job is running, the update
+  card turns red and reads "Lost connection to PatchBoard" with the last
+  reported package. Restart PatchBoard and check for updates to see which
+  packages finished; the in-memory job does not survive the restart.
+- If WinGet rejects an exact update as inapplicable, PatchBoard marks it skipped
+  and hides that same installed/target version pair for 24 hours. A changed
+  version is checked again immediately; `winget list` alone is not treated as
+  proof that an update can be installed.
 
 More detail:
 

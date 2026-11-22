@@ -57,14 +57,8 @@ var (
 )
 
 func defaultApplicationInstallPaths() applicationInstallPaths {
-	programFiles := strings.TrimSpace(os.Getenv("ProgramFiles"))
-	if programFiles == "" {
-		programFiles = `C:\Program Files`
-	}
-	programData := strings.TrimSpace(os.Getenv("ProgramData"))
-	if programData == "" {
-		programData = `C:\ProgramData`
-	}
+	folders := trustedMachineFolders()
+	programFiles, programData := folders.ProgramFiles, folders.ProgramData
 	installDirectory := filepath.Join(programFiles, applicationInstallFolderName)
 	return applicationInstallPaths{
 		InstallDirectory:  installDirectory,

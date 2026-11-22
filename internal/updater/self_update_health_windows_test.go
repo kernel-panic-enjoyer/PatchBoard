@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestAcknowledgePendingSelfUpdateHealthRequiresExactRunningExecutable(t *testing.T) {
@@ -215,5 +218,40 @@ func TestSelfUpdateTransactionCommitsAfterStartupHealthAcknowledgement(t *testin
 	}
 	if _, err := os.Stat(targetPath + ".bak"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("verified update retained backup: %v", err)
+	}
+}
+
+func TestRemoveSelfUpdateBackupBestEffortToleratesLockedBackup(t *testing.T) {
+	previousTimeout := selfUpdateBackupRemoveTimeout
+	selfUpdateBackupRemoveTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { selfUpdateBackupRemoveTimeout = previousTimeout })
+
+	backupPath := filepath.Join(t.TempDir(), releaseAssetExecutable+".bak")
+	if err := os.WriteFile(backupPath, []byte("old executable"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pathPtr, err := windows.UTF16PtrFromString(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Share mode 0 blocks deletion, like a scanner or loader holding the file.
+	handle, err := windows.CreateFile(pathPtr, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	removeSelfUpdateBackupBestEffort(backupPath)
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("cleanup did not respect its timeout: %s", elapsed)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("locked backup should be left in place: %v", err)
+	}
+	if err := windows.CloseHandle(handle); err != nil {
+		t.Fatal(err)
+	}
+	removeSelfUpdateBackupBestEffort(backupPath)
+	if _, err := os.Stat(backupPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unlocked backup should be removed: %v", err)
 	}
 }

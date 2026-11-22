@@ -2,7 +2,6 @@ package updater
 
 import (
 	"net/http"
-	"time"
 )
 
 var (
@@ -29,8 +28,5 @@ func (app *App) handleApplicationRestartInstalledAPI(w http.ResponseWriter, r *h
 		return
 	}
 	writeJSON(w, http.StatusOK, commandResponse(result))
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		app.requestShutdown("Restart from installed copy")
-	}()
+	app.requestShutdownSoon("Restart from installed copy")
 }

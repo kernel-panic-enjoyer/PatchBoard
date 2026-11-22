@@ -68,11 +68,11 @@ func runPackageSearches(query string, managerStatuses map[string]ManagerStatus) 
 			continue
 		}
 		searchRunner := runner
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
+		goSafeGroup(&waitGroup, searchRunner.Manager+" search", func() {
 			resultsCh <- searchRunner.Run(query)
-		}()
+		}, func(err error) {
+			resultsCh <- packageSearchResult{ResultKey: searchRunner.Manager, CommandResult: failedBackgroundCommandResult(searchRunner.Manager+" search", err)}
+		})
 	}
 
 	waitGroup.Wait()

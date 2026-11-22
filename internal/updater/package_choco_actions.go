@@ -3,7 +3,14 @@ package updater
 import "context"
 
 func chocoPackageCommand(chocoAction, packageID string) []string {
-	return managerCommand(managerChoco, chocoAction, packageID, "-y", "--no-progress", "--no-color")
+	args := []string{chocoAction, packageID, "-y", "--no-progress", "--no-color"}
+	if chocoAction == "upgrade" {
+		// Without this, "choco upgrade" installs a package that is not
+		// installed, so trying a variant name such as foo.install could add
+		// a package the user never had.
+		args = append(args, "--fail-on-not-installed")
+	}
+	return managerCommand(managerChoco, args...)
 }
 
 func runChocoUpgradePackageWithFallbackContext(ctx context.Context, pkg Package) CommandResult {

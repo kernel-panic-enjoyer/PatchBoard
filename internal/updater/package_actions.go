@@ -11,10 +11,6 @@ import (
 const (
 	packageActionRetryDelay  = 2 * time.Second
 	packageActionMaxAttempts = 3
-	// Mutable package-manager commands can hand off to silent installers. Keep
-	// the timeout tight enough that a hidden installer cannot leave an update
-	// job looking stuck for an hour.
-	packageActionTimeout = 20 * time.Minute
 )
 
 var packageActionCommandRunner = func(ctx context.Context, timeout time.Duration, args ...string) CommandResult {
@@ -185,7 +181,7 @@ func runPackageActionCommand(ctx context.Context, packageManager string, timeout
 }
 
 func runPackageActionAttempt(ctx context.Context, packageManager string, timeout time.Duration, args ...string) CommandResult {
-	return normalizePackageActionResult(packageManager, packageActionCommandRunner(ctx, timeout, args...))
+	return withPackageOutcome(packageManager, normalizePackageActionResult(packageManager, packageActionCommandRunner(ctx, timeout, args...)))
 }
 
 func retryPackageActionOnTransientFailure(ctx context.Context, packageManager string, timeout time.Duration, currentResult CommandResult, args ...string) CommandResult {

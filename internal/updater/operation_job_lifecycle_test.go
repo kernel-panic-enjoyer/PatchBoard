@@ -10,6 +10,7 @@ import (
 )
 
 func TestOperationJobPanicDoesNotBlockQueue(t *testing.T) {
+	t.Setenv("UPDATER_STATE_DIR", t.TempDir())
 	app := testSessionApp(t)
 	first := app.startOperationJob(jobTypeScan, "", 1, nil, func(ctx context.Context, job *OperationJob) {
 		panic("fixture panic")
@@ -308,24 +309,18 @@ func TestShutdownCancelsStoreScanInProgress(t *testing.T) {
 
 func TestShutdownCancelsUpdateJobRefreshWait(t *testing.T) {
 	app := testUpdateJobApp(t)
-	oldRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldRefresh := refreshInventoryAfterUpdateJob
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
-		return CommandResult{OK: true, Command: "update " + pkg.ID}
-	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
 	refreshStarted := make(chan struct{})
-	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error {
-		close(refreshStarted)
-		<-ctx.Done()
-		return ctx.Err()
+	app.updateJob = updateJobDeps{
+		runPackage: func(ctx context.Context, pkg Package) CommandResult {
+			return CommandResult{OK: true, Command: "update " + pkg.ID}
+		},
+		refreshBefore: func(ctx context.Context, app *App, packages []Package) error { return nil },
+		refreshAfter: func(ctx context.Context, app *App, packages []Package) error {
+			close(refreshStarted)
+			<-ctx.Done()
+			return ctx.Err()
+		},
 	}
-	defer func() {
-		updatePackageRunner = oldRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldRefresh
-	}()
 
 	status, err := app.startUpdateJob([]string{"winget:Git.Git"})
 	if err != nil {

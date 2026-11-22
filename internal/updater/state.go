@@ -18,6 +18,7 @@ import (
 const (
 	maxStateFileBytes                 = 2 * 1024 * 1024
 	maxStateAutoUpdatePackages        = 2000
+	maxStateRejectedWingetOffers      = 500
 	maxStateScannedAppsPerBucket      = 5000
 	maxStateMigrationEntries          = 1000
 	maxStateSkippedPackageSummaries   = 500
@@ -71,6 +72,7 @@ type State struct {
 	UpdatedAt                       string                         `json:"updated_at"`
 	AutoUpdateGlobal                bool                           `json:"auto_update_global"`
 	AutoUpdatePackages              map[string]bool                `json:"auto_update_packages"`
+	RejectedWingetOffers            map[string]RejectedWingetOffer `json:"rejected_winget_offers,omitempty"`
 	RegistryApps                    map[string]ScannedApp          `json:"registry_apps"`
 	WingetApps                      map[string]ScannedApp          `json:"winget_apps"`
 	StoreApps                       map[string]ScannedApp          `json:"store_apps"`
@@ -275,6 +277,9 @@ func normalizeState(state *State, legacyAssessments map[string]legacyAssessmentC
 	if state.AutoUpdatePackages == nil {
 		state.AutoUpdatePackages = map[string]bool{}
 	}
+	if state.RejectedWingetOffers == nil {
+		state.RejectedWingetOffers = map[string]RejectedWingetOffer{}
+	}
 	migrateAndNormalizeAutoUpdatePackageKeys(state, legacyAssessments)
 	if state.RegistryApps == nil {
 		state.RegistryApps = map[string]ScannedApp{}
@@ -296,6 +301,7 @@ func normalizeState(state *State, legacyAssessments map[string]legacyAssessmentC
 	state.Theme = truncateStateString(state.Theme)
 	state.AppUpdatePromptDismissedVersion = truncateStateString(strings.TrimSpace(state.AppUpdatePromptDismissedVersion))
 	state.AutoUpdatePackages = trimBoolMap(state.AutoUpdatePackages, maxStateAutoUpdatePackages)
+	state.RejectedWingetOffers = trimRejectedWingetOffers(state.RejectedWingetOffers)
 	state.RegistryApps = trimScannedAppMap(state.RegistryApps, maxStateScannedAppsPerBucket)
 	state.WingetApps = trimScannedAppMap(state.WingetApps, maxStateScannedAppsPerBucket)
 	state.StoreApps = trimScannedAppMap(state.StoreApps, maxStateScannedAppsPerBucket)

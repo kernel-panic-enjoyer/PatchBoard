@@ -56,6 +56,74 @@ func TestWaitForOutputDrainTimesOutAndClosesPipes(t *testing.T) {
 	close(drainDone)
 }
 
+func TestWaitForCommandExitWithActivityStopsSoleIdleProcess(t *testing.T) {
+	processExited := make(chan struct{})
+	terminated := make(chan struct{}, 1)
+	err := waitForCommandExitWithActivity(
+		context.Background(),
+		func() error {
+			<-processExited
+			return nil
+		},
+		func() {
+			terminated <- struct{}{}
+			close(processExited)
+		},
+		make(chan struct{}),
+		func() (commandProcessActivitySnapshot, bool) {
+			return commandProcessActivitySnapshot{ProcessorTime: 10, ActiveProcesses: 1}, true
+		},
+		20*time.Millisecond,
+		5*time.Millisecond,
+		time.Second,
+	)
+
+	var stallErr *commandStallError
+	if !errors.As(err, &stallErr) {
+		t.Fatalf("expected sole idle process to be stopped as stalled, got %v", err)
+	}
+	select {
+	case <-terminated:
+	case <-time.After(time.Second):
+		t.Fatal("expected stalled process termination")
+	}
+}
+
+func TestWaitForCommandExitWithActivityLeavesSilentChildInstallerToOuterDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	processExited := make(chan struct{})
+	terminated := make(chan struct{}, 1)
+	err := waitForCommandExitWithActivity(
+		ctx,
+		func() error {
+			<-processExited
+			return nil
+		},
+		func() {
+			terminated <- struct{}{}
+			close(processExited)
+		},
+		make(chan struct{}),
+		func() (commandProcessActivitySnapshot, bool) {
+			return commandProcessActivitySnapshot{ProcessorTime: 10, ActiveProcesses: 2}, true
+		},
+		10*time.Millisecond,
+		5*time.Millisecond,
+		time.Second,
+	)
+
+	var stallErr *commandStallError
+	if errors.As(err, &stallErr) {
+		t.Fatalf("active child installer must not be classified as stalled: %v", err)
+	}
+	select {
+	case <-terminated:
+	case <-time.After(time.Second):
+		t.Fatal("expected outer deadline to terminate the process tree")
+	}
+}
+
 func TestReadOnlyCommandSpecRejectsPackageMutation(t *testing.T) {
 	result := runCommandSpec(context.Background(), CommandSpec{
 		Arguments: []string{"winget", "upgrade", "--id", "Git.Git", "--exact"},

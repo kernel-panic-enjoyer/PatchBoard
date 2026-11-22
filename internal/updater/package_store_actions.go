@@ -64,6 +64,8 @@ func normalizeStoreUpdateCommandResult(commandResult CommandResult) CommandResul
 		return commandResult
 	}
 	commandResult.OK = false
+	// The attempt was classified before this check flipped it to a failure.
+	commandResult.Outcome = outcomeUnclassified
 	if commandResult.Code == 0 {
 		commandResult.Code = 1
 	}

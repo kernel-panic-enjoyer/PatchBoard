@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && processintegration
 
 package updater
 
@@ -108,6 +108,10 @@ Start-Sleep -Seconds 60
 	defer terminateStartedCommand(parentCommand, processOwner)
 	if err := processOwner.Assign(parentCommand); err != nil {
 		t.Fatal(err)
+	}
+	activity, ok := processOwner.ActivitySnapshot()
+	if !ok || activity.ActiveProcesses != 1 {
+		t.Fatalf("expected one active process in Job Object before child launch, ok=%t activity=%#v", ok, activity)
 	}
 	if err := os.WriteFile(grandchildStartGatePath, []byte("go"), 0o600); err != nil {
 		t.Fatal(err)

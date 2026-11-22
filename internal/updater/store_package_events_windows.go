@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,7 +69,48 @@ type packageCatalogSubscription struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	events chan StorePackageChangeEvent
+	sink   *packageCatalogEventSink
 	once   sync.Once
+}
+
+// packageCatalogEventSink is shared by one subscription's COM handlers. WinRT
+// can still invoke a handler on a thread-pool thread while the subscription
+// is being removed. A send on a closed channel there would panic inside a
+// syscall callback and end the process, so the channel is closed only under
+// the lock and later sends are dropped.
+type packageCatalogEventSink struct {
+	mu     sync.Mutex
+	closed bool
+	events chan StorePackageChangeEvent
+}
+
+func newPackageCatalogEventSink(events chan StorePackageChangeEvent) *packageCatalogEventSink {
+	return &packageCatalogEventSink{events: events}
+}
+
+// send never blocks. Why: events are a best-effort acceleration signal, so
+// dropping one is safe; verification keeps polling exact inventory and catalog.
+func (sink *packageCatalogEventSink) send(event StorePackageChangeEvent) bool {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.closed {
+		return false
+	}
+	select {
+	case sink.events <- event:
+		return true
+	default:
+		return false
+	}
+}
+
+func (sink *packageCatalogEventSink) close() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if !sink.closed {
+		sink.closed = true
+		close(sink.events)
+	}
 }
 
 type packageCatalogEventToken struct {
@@ -96,9 +138,17 @@ func openPackageCatalogEventSubscription(ctx context.Context, identity StoreInst
 		cancel: cancel,
 		done:   make(chan struct{}),
 		events: events,
+		sink:   newPackageCatalogEventSink(events),
 	}
 	ready := make(chan error, 1)
-	go subscription.run(subCtx, identity, ready)
+	goSafe("PackageCatalog event subscription", func() {
+		subscription.run(subCtx, identity, ready)
+	}, func(err error) {
+		select {
+		case ready <- err:
+		default:
+		}
+	})
 	select {
 	case err := <-ready:
 		if err != nil {
@@ -114,7 +164,7 @@ func openPackageCatalogEventSubscription(ctx context.Context, identity StoreInst
 
 func (subscription *packageCatalogSubscription) run(ctx context.Context, identity StoreInstalledIdentity, ready chan<- error) {
 	defer close(subscription.done)
-	defer close(subscription.events)
+	defer subscription.sink.close()
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -190,7 +240,7 @@ func (subscription *packageCatalogSubscription) run(ctx context.Context, identit
 	}
 	catalog := (*winrtPackageCatalog)(catalogPtr)
 	for _, kind := range []packageCatalogEventKind{packageCatalogEventUpdating, packageCatalogEventStatusChanged, packageCatalogEventInstalling, packageCatalogEventStaging, packageCatalogEventUninstalling} {
-		handler := newPackageCatalogEventHandler(identity, kind, subscription.events)
+		handler := newPackageCatalogEventHandler(identity, kind, subscription.sink)
 		var token int64
 		var add uintptr
 		switch kind {
@@ -232,8 +282,14 @@ type packageCatalogEventHandler struct {
 	refCount int32
 	identity StoreInstalledIdentity
 	kind     packageCatalogEventKind
-	events   chan<- StorePackageChangeEvent
+	sink     *packageCatalogEventSink
 }
+
+// livePackageCatalogEventHandlers keeps every handler COM may still call
+// reachable and pinned until COM drops its last reference. Without it the Go
+// garbage collector could free a handler that WinRT still invokes after the
+// subscription's own references are gone.
+var livePackageCatalogEventHandlers sync.Map // *packageCatalogEventHandler -> *runtime.Pinner
 
 type packageCatalogEventHandlerVtbl struct {
 	QueryInterface uintptr
@@ -249,14 +305,18 @@ var packageCatalogEventHandlerVtblValue = packageCatalogEventHandlerVtbl{
 	Invoke:         syscall.NewCallback(packageCatalogEventHandlerInvoke),
 }
 
-func newPackageCatalogEventHandler(identity StoreInstalledIdentity, kind packageCatalogEventKind, events chan<- StorePackageChangeEvent) *packageCatalogEventHandler {
-	return &packageCatalogEventHandler{
+func newPackageCatalogEventHandler(identity StoreInstalledIdentity, kind packageCatalogEventKind, sink *packageCatalogEventSink) *packageCatalogEventHandler {
+	handler := &packageCatalogEventHandler{
 		lpVtbl:   &packageCatalogEventHandlerVtblValue,
 		refCount: 1,
 		identity: identity,
 		kind:     kind,
-		events:   events,
+		sink:     sink,
 	}
+	pinner := &runtime.Pinner{}
+	pinner.Pin(handler)
+	livePackageCatalogEventHandlers.Store(handler, pinner)
+	return handler
 }
 
 func packageCatalogEventHandlerQueryInterface(this unsafe.Pointer, iid *windows.GUID, object *uintptr) uintptr {
@@ -303,6 +363,11 @@ func packageCatalogEventHandlerAddRef(this unsafe.Pointer) uintptr {
 func packageCatalogEventHandlerRelease(this unsafe.Pointer) uintptr {
 	handler := (*packageCatalogEventHandler)(this)
 	count := atomic.AddInt32(&handler.refCount, -1)
+	if count == 0 {
+		if pinner, ok := livePackageCatalogEventHandlers.LoadAndDelete(handler); ok {
+			pinner.(*runtime.Pinner).Unpin()
+		}
+	}
 	return uintptr(count)
 }
 
@@ -313,6 +378,12 @@ func (handler *packageCatalogEventHandler) release() {
 }
 
 func packageCatalogEventHandlerInvoke(this unsafe.Pointer, sender unsafe.Pointer, args unsafe.Pointer) uintptr {
+	// A panic must not unwind through the COM caller; that ends the process.
+	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			reportRecoveredPanic("PackageCatalog event handler", panicValue, debug.Stack())
+		}
+	}()
 	handler := (*packageCatalogEventHandler)(this)
 	if handler == nil || args == nil {
 		return 0
@@ -321,12 +392,7 @@ func packageCatalogEventHandlerInvoke(this unsafe.Pointer, sender unsafe.Pointer
 	if err != nil {
 		return 0
 	}
-	// Why: events are a best-effort acceleration signal. Dropping a full channel
-	// is safe because verification keeps polling exact inventory and catalog.
-	select {
-	case handler.events <- event:
-	default:
-	}
+	handler.sink.send(event)
 	return 0
 }
 

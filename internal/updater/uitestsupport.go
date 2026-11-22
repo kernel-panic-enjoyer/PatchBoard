@@ -76,6 +76,13 @@ func NewBrowserTestApp() *App {
 	}
 }
 
+// SetTestListenAddress records the address the test server listens on, so
+// the Host check accepts requests to it. Call it before serving requests.
+func (app *App) SetTestListenAddress(host string, port int) {
+	app.webSession.listenHost = host
+	app.webSession.listenPort = port
+}
+
 // TestHandler exposes the App HTTP handler for black-box browser tests.
 func (app *App) TestHandler() http.HandlerFunc { return app.serveHTTP }
 
@@ -139,8 +146,8 @@ func ReplacePackageSearchRunnersForTest(stubs []StubSearchResult) func() {
 	return func() { packageSearchRunners = old }
 }
 
-// ReplaceUpdateJobHooksWithRefresh swaps the update-job runner and post-job
-// refresh hook, returning a restore function.
-func ReplaceUpdateJobHooksWithRefresh(runner func(context.Context, string, string) CommandResult, refresh func(context.Context, *App, []Package) error) func() {
-	return replaceUpdateJobHooksWithRefresh(runner, refresh)
+// SetTestUpdateJobSteps makes this App's update jobs run every package
+// through runner and use refresh after the job.
+func (app *App) SetTestUpdateJobSteps(runner func(context.Context, string, string) CommandResult, refresh func(context.Context, *App, []Package) error) {
+	app.updateJob = updateJobDepsWithRefresh(runner, refresh)
 }

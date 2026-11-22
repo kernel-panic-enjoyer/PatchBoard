@@ -4,59 +4,24 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 )
 
-func replaceUpdateJobHooks(runner func(context.Context, string, string) CommandResult) func() {
-	return replaceUpdateJobHooksWithRefresh(runner, func(ctx context.Context, app *App, packages []Package) error { return nil })
+func updateJobDepsWithRunner(runner func(context.Context, string, string) CommandResult) updateJobDeps {
+	return updateJobDepsWithRefresh(runner, func(ctx context.Context, app *App, packages []Package) error { return nil })
 }
 
-func replaceUpdateJobHooksWithRefresh(runner func(context.Context, string, string) CommandResult, refresh func(context.Context, *App, []Package) error) func() {
-	oldRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldRefresh := refreshInventoryAfterUpdateJob
-	oldEligible := elevatedPackageUpdateBatchEligible
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
-		return runner(ctx, pkg.Manager, pkg.ID)
-	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	refreshInventoryAfterUpdateJob = refresh
-	elevatedPackageUpdateBatchEligible = func(Package) bool { return false }
-	return func() {
-		updatePackageRunner = oldRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldRefresh
-		elevatedPackageUpdateBatchEligible = oldEligible
-	}
-}
-
-func replaceBulkUpdateBatchHooks(
+func bulkUpdateBatchDeps(
 	eligible func(Package) bool,
 	batchRunner func(context.Context, []Package, func(int, Package)) ([]UpdateResult, CommandResult),
 	singleRunner func(context.Context, string, string) CommandResult,
-) func() {
-	oldEligible := elevatedPackageUpdateBatchEligible
-	oldBatchRunner := elevatedPackageUpdateBatchRunner
-	oldSingleRunner := updatePackageRunner
-	oldPreflightRefresh := refreshInventoryBeforeUpdateJob
-	oldRefresh := refreshInventoryAfterUpdateJob
-	elevatedPackageUpdateBatchEligible = eligible
-	elevatedPackageUpdateBatchRunner = batchRunner
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
-		return singleRunner(ctx, pkg.Manager, pkg.ID)
-	}
-	refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, packages []Package) error { return nil }
-	return func() {
-		elevatedPackageUpdateBatchEligible = oldEligible
-		elevatedPackageUpdateBatchRunner = oldBatchRunner
-		updatePackageRunner = oldSingleRunner
-		refreshInventoryBeforeUpdateJob = oldPreflightRefresh
-		refreshInventoryAfterUpdateJob = oldRefresh
-	}
+) updateJobDeps {
+	deps := updateJobDepsWithRunner(singleRunner)
+	deps.batchEligible = eligible
+	deps.runBatch = batchRunner
+	return deps
 }
 
 func updatableTestPackage(manager, id, name string) Package {
@@ -142,7 +107,7 @@ func addTestSessionCookie(app *App, request *http.Request) {
 }
 
 func authenticatedRequest(app *App, method, target string, body io.Reader) *http.Request {
-	request := httptest.NewRequest(method, target, body)
+	request := newTestRequest(method, target, body)
 	addTestSessionCookie(app, request)
 	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
 		request.Header.Set(trustedUIRequestHeader, "1")

@@ -48,6 +48,26 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// minimumCallerBootstrapTokenLength matches the 32 hex characters of a GUID
+// or 16 random bytes. The generated token is 48 characters.
+const minimumCallerBootstrapTokenLength = 32
+
+// validateCallerBootstrapToken rejects a --token or UPDATER_TOKEN value that is
+// too short to guess-proof the WebUI, or that would not survive a URL.
+func validateCallerBootstrapToken(token string) error {
+	if len(token) < minimumCallerBootstrapTokenLength {
+		return fmt.Errorf("the bootstrap token must be at least %d characters", minimumCallerBootstrapTokenLength)
+	}
+	for _, character := range token {
+		isURLSafe := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("-._~", character)
+		if !isURLSafe {
+			return errors.New("the bootstrap token may only contain letters, digits and - . _ ~")
+		}
+	}
+	return nil
+}
+
 type cliMode string
 
 const (
@@ -333,6 +353,8 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 			return err
 		}
 		token = generated
+	} else if err := validateCallerBootstrapToken(token); err != nil {
+		return err
 	}
 	port := options.Port
 	portSet := options.PortSet
@@ -370,6 +392,8 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 		inventoryService: inventoryService{storeBackgroundScanEnabled: true},
 		appUpdateChecker: checker,
 	}
+	// Register before anything can log a token, not on the first request.
+	app.registerSessionSecretsForLogRedaction()
 	defer func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {
@@ -437,13 +461,13 @@ func (app *App) startShutdownSignalWatcher() func() {
 func (app *App) watchShutdownSignals(signals <-chan os.Signal) func() {
 	done := make(chan struct{})
 	var stopOnce sync.Once
-	go func() {
+	goSafe("shutdown signal watcher", func() {
 		select {
 		case <-signals:
 			app.requestShutdown("OS signal")
 		case <-done:
 		}
-	}()
+	}, nil)
 	return func() {
 		stopOnce.Do(func() {
 			close(done)
@@ -512,7 +536,10 @@ func Main() {
 		return
 	}
 
+	stopDiagnosticLogFiles := startDiagnosticLogFiles()
+	defer stopDiagnosticLogFiles()
 	if err := runServerWithOptions(options, productionServerHooks); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		appLog("Server stopped with error: %s.", err)
 		fmt.Fprintln(os.Stderr, err)
 	}
 }

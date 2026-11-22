@@ -34,6 +34,8 @@ type Package struct {
 	Match            string `json:"match,omitempty"`
 	MatchReason      string `json:"match_reason,omitempty"`
 	ActionBackend    string `json:"action_backend,omitempty"`
+	IdentityConflict bool   `json:"identity_conflict,omitempty"`
+	IdentityReason   string `json:"identity_reason,omitempty"`
 
 	UpdateState                string                        `json:"update_state,omitempty"`
 	UpdateReason               string                        `json:"update_reason,omitempty"`
@@ -262,7 +264,17 @@ func packageKey(manager, id string) string {
 	return manager + ":" + id
 }
 
+// managerUpdateLookupKey is the one key the update scans are stored under
+// and looked up by. IDs are matched without regard to case. The displayed
+// Package.Key keeps the ID's original case.
+func managerUpdateLookupKey(manager, id string) string {
+	return packageKey(manager, strings.ToLower(strings.TrimSpace(id)))
+}
+
 func packageAutoUpdateEnabled(state State, pkg Package) bool {
+	if pkg.IdentityConflict {
+		return false
+	}
 	if pkg.Manager == managerStore {
 		storeAutoUpdateKey := storePackageAutoUpdateKey(pkg)
 		return storeAutoUpdateKey != "" && state.AutoUpdatePackages[storeAutoUpdateKey]

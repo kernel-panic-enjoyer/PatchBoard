@@ -150,7 +150,12 @@ func startTray(app *App, url string) (*trayIcon, error) {
 		ready:      make(chan error, 1),
 		done:       make(chan struct{}),
 	}
-	go tray.run()
+	goSafe("tray icon", tray.run, func(err error) {
+		select {
+		case tray.ready <- err:
+		default:
+		}
+	})
 	select {
 	case err := <-tray.ready:
 		if err != nil {
@@ -318,9 +323,9 @@ func (tray *trayIcon) openWebUI() {
 }
 
 func (tray *trayIcon) quitApplication(hwnd uintptr) {
-	go func() {
+	goSafe("tray quit", func() {
 		tray.app.requestShutdown("Tray")
-	}()
+	}, nil)
 	tray.removeIcon()
 	_, _, _ = procDestroyWindow.Call(hwnd)
 }

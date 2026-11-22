@@ -116,7 +116,7 @@ func startBrowserTestServer(t *testing.T, app *updater.App) *httptest.Server {
 func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map[string]http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	appHandler := app.TestHandler()
-	server := newSafeBrowserTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newSafeBrowserTestServer(t, app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if route := routes[r.URL.Path]; route != nil {
 			route(w, r)
 			return
@@ -127,7 +127,7 @@ func startBrowserTestServerWithRoutes(t *testing.T, app *updater.App, routes map
 	return server
 }
 
-func newSafeBrowserTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+func newSafeBrowserTestServer(t *testing.T, app *updater.App, handler http.Handler) *httptest.Server {
 	t.Helper()
 	for attempt := 0; attempt < 50; attempt++ {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -142,6 +142,8 @@ func newSafeBrowserTestServer(t *testing.T, handler http.Handler) *httptest.Serv
 			_ = listener.Close()
 			continue
 		}
+		// The app only trusts Host headers that name its own listen address.
+		app.SetTestListenAddress("127.0.0.1", port)
 		server := httptest.NewUnstartedServer(handler)
 		server.Listener = listener
 		server.Start()
@@ -284,7 +286,7 @@ func TestBrowserStopButtonUsesAsyncShutdownRequest(t *testing.T) {
 
 func TestBrowserConnectionBadgeExpiresWhenBackendStops(t *testing.T) {
 	app := updater.NewBrowserTestApp()
-	server := newSafeBrowserTestServer(t, app.TestHandler())
+	server := newSafeBrowserTestServer(t, app, app.TestHandler())
 	t.Cleanup(func() {
 		server.CloseClientConnections()
 		server.Close()
@@ -629,14 +631,12 @@ func TestBrowserSuccessfulSearchInstallDisablesClickedButton(t *testing.T) {
 func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 	started := make(chan struct{})
 	var startedOnce sync.Once
-	restore := updater.ReplaceUpdateJobHooksWithRefresh(func(ctx context.Context, manager, id string) updater.CommandResult {
+	app := updater.NewBrowserTestApp()
+	app.SetTestUpdateJobSteps(func(ctx context.Context, manager, id string) updater.CommandResult {
 		startedOnce.Do(func() { close(started) })
 		<-ctx.Done()
 		return updater.CommandResult{Command: "update " + id, Code: updater.CommandCancelledCode, Stderr: "Cancelled."}
 	}, func(ctx context.Context, app *updater.App, packages []updater.Package) error { return nil })
-	defer restore()
-
-	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()
@@ -779,6 +779,80 @@ func TestBrowserUpdateProgressNoticeShowsPackageCounter(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForText(t, ctx, `#update-progress-status`, "Starting exact Store update for Codex (1/3)...")
+}
+
+func TestBrowserUpdateProgressShowsLostConnectionWhenBackendStops(t *testing.T) {
+	app := updater.NewBrowserTestApp()
+	updateStatus := updater.OperationJobStatus{
+		JobID:          "elevated-batch-job",
+		Type:           "update-all",
+		Mode:           "all",
+		State:          "running",
+		Running:        true,
+		CurrentPackage: "Cryptomator",
+		CurrentKey:     "winget:Cryptomator.Cryptomator",
+		PackageKeys:    []string{"winget:Proton.ProtonMailBridge", "winget:Cryptomator.Cryptomator", "winget:Vendor.Third"},
+		CurrentIndex:   2,
+		Total:          3,
+		Notice:         "Elevated package batch running 2/3: Cryptomator.",
+	}
+	server := startBrowserTestServerWithRoutes(t, app, map[string]http.HandlerFunc{
+		"/api/jobs": func(w http.ResponseWriter, r *http.Request) {
+			writeAuthenticatedBrowserTestJSON(app, w, r, http.StatusOK, map[string]any{
+				"jobs":     []updater.OperationJobStatus{updateStatus},
+				"revision": 1,
+			})
+		},
+	})
+	ctx, cancel := newBrowserContextWithTimeout(t, 45*time.Second)
+	defer cancel()
+
+	navigateAuthenticated(t, ctx, server.URL)
+	waitForText(t, ctx, `#log-connection-status`, "Connected")
+	// The page reconciles active jobs from /api/jobs on load; wait for the card.
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const panel = document.querySelector("#update-progress");
+		  return !!panel && !panel.classList.contains("hidden");
+		})()`, nil, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(10*time.Second)),
+	); err != nil {
+		t.Fatalf("update card never appeared for the active job: %v", err)
+	}
+
+	server.CloseClientConnections()
+	server.Close()
+
+	var state struct {
+		Text         string `json:"text"`
+		Spinner      bool   `json:"spinner"`
+		Lost         bool   `json:"lost"`
+		CancelHidden bool   `json:"cancelHidden"`
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Poll(`(() => {
+		  const status = document.querySelector("#update-progress-status");
+		  return !!status && status.innerText.includes("Lost connection to PatchBoard");
+		})()`, nil, chromedp.WithPollingInterval(100*time.Millisecond), chromedp.WithPollingTimeout(25*time.Second)),
+		chromedp.Evaluate(`(() => {
+		  const panel = document.querySelector("#update-progress");
+		  const status = document.querySelector("#update-progress-status");
+		  const cancel = document.querySelector("#cancel-updates-button");
+		  return {
+		    text: status.innerText,
+		    spinner: !!status.querySelector(".spinner"),
+		    lost: panel.classList.contains("backend-lost"),
+		    cancelHidden: !cancel || cancel.classList.contains("hidden")
+		  };
+		})()`, &state),
+	); err != nil {
+		t.Fatalf("update card did not report the lost backend: %v", err)
+	}
+	if state.Spinner || !state.Lost || !state.CancelHidden {
+		t.Fatalf("lost-connection card still looks active: %+v", state)
+	}
+	if !strings.Contains(state.Text, "Cryptomator") {
+		t.Fatalf("lost-connection card dropped the last known status: %q", state.Text)
+	}
 }
 
 func TestBrowserIgnoresStalePackageResponses(t *testing.T) {
@@ -1543,11 +1617,11 @@ func TestBrowserSettingsModalPersistsApplicationPreferences(t *testing.T) {
 		}
 	}
 	runStep("open", poll(`document.querySelector("#settings-button") && !document.querySelector("#settings-button").disabled`), chromedp.Click(`#settings-button`, chromedp.ByQuery), poll(`!document.querySelector("#settings-modal").classList.contains("hidden")`), poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`))
-	runStep("enable automatic app updates", chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
+	runStep("enable automatic app updates", poll(`!document.querySelector("#app-update-auto-install-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#app-update-auto-install-toggle").click()`, nil), poll(`document.querySelector("#app-update-auto-install-toggle").dataset.enabled === "true"`))
 	waitForPreference("automatic app updates", func(settings updater.StatusSettings) bool { return settings.AppUpdateAutoInstallEnabled })
-	runStep("disable app update checks", chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
+	runStep("disable app update checks", poll(`!document.querySelector("#app-update-checking-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#app-update-checking-toggle").click()`, nil), poll(`document.querySelector("#app-update-checking-toggle").dataset.enabled === "false"`))
 	waitForPreference("disabled app update checks", func(settings updater.StatusSettings) bool { return !settings.AppUpdateCheckingEnabled })
-	runStep("enable shortcut cleanup", chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
+	runStep("enable shortcut cleanup", poll(`!document.querySelector("#desktop-shortcut-cleanup-toggle").disabled`), chromedp.Evaluate(`document.querySelector("#desktop-shortcut-cleanup-toggle").click()`, nil), poll(`document.querySelector("#desktop-shortcut-cleanup-toggle").dataset.enabled === "true"`))
 	waitForPreference("Desktop shortcut cleanup", func(settings updater.StatusSettings) bool { return settings.RemoveNewDesktopShortcuts })
 	runStep("close", chromedp.Evaluate(`document.querySelector("#settings-close").click()`, nil), poll(`document.querySelector("#settings-modal").classList.contains("hidden")`))
 	preferencesMu.Lock()

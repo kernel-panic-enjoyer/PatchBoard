@@ -29,8 +29,6 @@ type LogEntry struct {
 type LogBuffer struct {
 	mu         sync.Mutex
 	nextID     int64
-	entries    []LogEntry
-	totalBytes int
 	maxEntries int
 	maxBytes   int
 
@@ -292,6 +290,14 @@ func (buffer *LogBuffer) AppendCategorized(stream, message string, categories []
 }
 
 func (buffer *LogBuffer) AppendContext(ctx context.Context, stream, message string, categories []string) LogEntry {
+	entry := buffer.appendContextLocked(ctx, stream, message, categories)
+	if buffer == sessionLogs {
+		writeSessionLogFileEntry(entry)
+	}
+	return entry
+}
+
+func (buffer *LogBuffer) appendContextLocked(ctx context.Context, stream, message string, categories []string) LogEntry {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	buffer.ensureLocked()
@@ -323,7 +329,6 @@ func (buffer *LogBuffer) AppendContext(ctx context.Context, stream, message stri
 	if entry.JobID != "" {
 		buffer.jobRingLocked(entry.JobID).append(entry)
 	}
-	buffer.syncCompatLocked()
 	return entry
 }
 
@@ -394,11 +399,6 @@ func clampLogEntry(entry LogEntry, maxBytes int) LogEntry {
 		entry.Message = validUTF8TailString([]byte(entry.Message[:messageLimit])) + fmt.Sprintf(" [log entry truncated: omitted %d bytes]", len(entry.Message)-messageLimit)
 	}
 	return entry
-}
-
-func (buffer *LogBuffer) syncCompatLocked() {
-	buffer.entries = buffer.globalRing.entriesInOrder()
-	buffer.totalBytes = buffer.globalRing.totalBytes
 }
 
 func (buffer *LogBuffer) Since(since int64) []LogEntry {
@@ -569,20 +569,20 @@ func (ring *logEntryRing) entriesInOrder() []LogEntry {
 }
 
 func (ring *logEntryRing) query(since int64, latestID int64) LogQueryResult {
-	orderedEntries := ring.entriesInOrder()
+	// Copy only the entries newer than since; appends never copy the ring.
 	oldestID := int64(0)
-	if len(orderedEntries) > 0 {
-		oldestID = orderedEntries[0].ID
-	}
-	firstNewIndex := 0
-	if since > 0 {
-		for firstNewIndex < len(orderedEntries) && orderedEntries[firstNewIndex].ID <= since {
-			firstNewIndex++
+	entries := []LogEntry{}
+	if ring.entryCount > 0 && len(ring.entries) > 0 {
+		oldestID = ring.entries[ring.oldestIndex].ID
+		firstNew := 0
+		for firstNew < ring.entryCount && ring.entries[(ring.oldestIndex+firstNew)%len(ring.entries)].ID <= since {
+			firstNew++
+		}
+		entries = make([]LogEntry, 0, ring.entryCount-firstNew)
+		for offset := firstNew; offset < ring.entryCount; offset++ {
+			entries = append(entries, ring.entries[(ring.oldestIndex+offset)%len(ring.entries)])
 		}
 	}
-	matchingEntries := orderedEntries[firstNewIndex:]
-	entries := make([]LogEntry, len(matchingEntries))
-	copy(entries, matchingEntries)
 	return LogQueryResult{
 		Entries:      entries,
 		OldestID:     oldestID,
