@@ -362,6 +362,7 @@
 - 2026-11-21T17:10Z [USER] "Start Phase 4" (Store decision order and one worker runner), run as PR work on the PR #4 branch.
 - 2026-11-21T17:10Z [CODE] Phase 4: incomplete scans retain only a previous Available (`reconcileStoreScanAssessments`); an exact offer is Unknown when its own provider also failed for the package; RULE-274 dead branch removed; Store update-now blocked on IdentityConflict (RULE-122); both Store workers launch through `runStoreWorkerProcess` (`store_worker_runner_windows.go`). Opt-in replay test `TestReplayStoreScanSnapshots`.
 - 2026-11-21T17:10Z [TOOL] Phase 4 verification: gofmt, go vet (plain, uitestsupport, tests/browser), staticcheck clean; Run-Tests root PASS, browser PASS; dist rebuilt. Replay vs baseline: 558 changed, all bogus available -> unknown in incomplete scans; 0 actionable changes.
+- 2026-11-22T09:00Z [USER] Approved the RULE-278 and RULE-115 proposed revisions (keep exact per-package Store offers when another provider fails; keep matched aggregate rows). All Phase 4 exit criteria are met; next is Phase 5 (global state, timeouts, structural cleanup).
 
 [DISCOVERIES]
 
