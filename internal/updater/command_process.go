@@ -9,16 +9,6 @@ import (
 	"time"
 )
 
-const (
-	commandTerminationWaitTimeout = 10 * time.Second
-	commandOutputDrainTimeout     = 5 * time.Second
-)
-
-var (
-	wingetMutationStallTimeout      = 3 * time.Minute
-	commandActivitySamplingInterval = 5 * time.Second
-)
-
 type commandProcessActivitySnapshot struct {
 	ProcessorTime   int64
 	ActiveProcesses uint32

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func commandResultJobNotice(actionName string, result CommandResult) string {
@@ -151,12 +152,18 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 	packageKeys := updateJobPackageKeys(updatePackages)
 	return app.startOperationJobWithPackageSnapshot(operationType, updateMode, len(updatePackages), packageKeys, updatePackages, func(ctx context.Context, job *OperationJob) {
 		ctx = withPackageMutationOptions(ctx, packageMutationOptionsFromState(loadStateContext(ctx)))
+		jobCtx := ctx
+		batchDeadline := updateBatchDeadline(len(updatePackages))
+		ctx, cancelBatch := context.WithTimeout(ctx, batchDeadline)
+		defer cancelBatch()
+		batchCtx := ctx
+		stopJob := func(status *OperationJobStatus) { markUpdateJobStopped(status, jobCtx, batchCtx, batchDeadline) }
 		if ctx.Err() == nil && !updateJobIncludesStorePackage(updatePackages) {
 			app.mutateOperationJob(job, func(status *OperationJobStatus) {
 				status.State = jobStateStarting
 				status.Notice = "Refreshing package status before update..."
 			})
-			refreshErr := refreshInventoryBeforeUpdateJob(ctx, app, updatePackages)
+			refreshErr := app.updateJobSteps().refreshBefore(ctx, app, updatePackages)
 			if ctx.Err() == nil {
 				revalidatedPackages, skippedResults := app.revalidateUpdatePackagesForJob(ctx, updatePackages)
 				updatePackages = revalidatedPackages
@@ -176,15 +183,11 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 				appLogContext(ctx, "Update preflight refresh finished with error: %s.", refreshErr)
 			}
 		}
-		batchedPackages, remainingPackages := planElevatedPackageUpdateBatch(updatePackages, elevatedPackageUpdateBatchEligible)
+		batchedPackages, remainingPackages := planElevatedPackageUpdateBatch(updatePackages, app.updateJobSteps().batchEligible)
 		if ctx.Err() == nil && len(batchedPackages) > 0 {
 			result := app.runElevatedPackageUpdateBatchForJob(ctx, job, batchedPackages)
 			if ctx.Err() != nil || result.Code == commandCancelledCode {
-				app.mutateOperationJob(job, func(status *OperationJobStatus) {
-					status.CancelRequested = true
-					status.State = jobStateCancelled
-					status.Notice = "Update cancelled."
-				})
+				app.mutateOperationJob(job, stopJob)
 			}
 		}
 		if ctx.Err() == nil && app.operationJobCanContinue(job) {
@@ -199,10 +202,12 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 					status.Notice = "Starting update: " + updateJobPackageName(updatePackage) + "..."
 				})
 				if packageCtx.Err() != nil {
+					skippedResults := skippedPackageUpdateResults(remainingPackages[packageIndex:], "the update job timed out before it started")
 					app.mutateOperationJob(job, func(status *OperationJobStatus) {
-						status.CancelRequested = true
-						status.State = jobStateCancelled
-						status.Notice = "Update cancelled."
+						if jobCtx.Err() == nil {
+							status.Results = append(status.Results, skippedResults...)
+						}
+						stopJob(status)
 					})
 					break
 				}
@@ -212,9 +217,7 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 					status.Results = append(status.Results, UpdateResult{Key: updatePackage.Key, Result: result})
 					status.Result = &result
 					if packageCtx.Err() != nil || result.Code == commandCancelledCode {
-						status.CancelRequested = true
-						status.State = jobStateCancelled
-						status.Notice = "Update cancelled."
+						stopJob(status)
 					}
 				})
 				stop, stopReason, skippedResults := packageQueueStop(packageCtx, result, remainingPackages[packageIndex+1:])
@@ -222,12 +225,18 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 					app.mutateOperationJob(job, func(status *OperationJobStatus) {
 						status.Results = append(status.Results, skippedResults...)
 						status.Notice = "Remaining package updates were skipped because " + stopReason + "."
+						if packageCtx.Err() != nil {
+							stopJob(status)
+						}
 					})
 				}
 				if stop {
 					break
 				}
 			}
+		}
+		if jobCtx.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			appLogContext(jobCtx, "Update job ran past its %s deadline; unfinished packages are marked as timed out.", batchDeadline)
 		}
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			if status.State != jobStateCancelled {
@@ -238,16 +247,14 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 		})
 		var refreshErr error
 		if ctx.Err() == nil {
-			refreshErr = refreshInventoryAfterUpdateJob(ctx, app, updatePackages)
+			refreshErr = app.updateJobSteps().refreshAfter(ctx, app, updatePackages)
 		}
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {
 			if status.State == jobStateCancelled {
 				return
 			}
 			if ctx.Err() != nil {
-				status.CancelRequested = true
-				status.State = jobStateCancelled
-				status.Notice = "Update cancelled."
+				stopJob(status)
 				return
 			}
 			if updateResultsAcceptedNotVerified(status.Results) {
@@ -270,6 +277,20 @@ func (app *App) startUpdatePackagesOperation(operationType, updateMode string, u
 			status.Notice = "Update completed."
 		})
 	})
+}
+
+// markUpdateJobStopped records why an update job stopped early: the user
+// cancelled it (or the UAC prompt), or it ran past its batch deadline. A
+// deadline is not a cancel, so the job reads as timed out, not cancelled.
+func markUpdateJobStopped(status *OperationJobStatus, jobCtx, batchCtx context.Context, batchDeadline time.Duration) {
+	if jobCtx.Err() == nil && errors.Is(batchCtx.Err(), context.DeadlineExceeded) {
+		status.State = jobStateFailed
+		status.Notice = fmt.Sprintf("Update timed out: the job ran past its %d-minute deadline. Packages not finished are marked as timed out.", int(batchDeadline/time.Minute))
+		return
+	}
+	status.CancelRequested = true
+	status.State = jobStateCancelled
+	status.Notice = "Update cancelled."
 }
 
 func (app *App) operationJobCanContinue(job *OperationJob) bool {
@@ -300,7 +321,7 @@ func (app *App) runElevatedPackageUpdateBatchForJob(ctx context.Context, job *Op
 		status.CurrentPackage = updateJobPackageName(firstPackage)
 		status.Notice = batchStartNotice
 	})
-	batchResults, batchResult := elevatedPackageUpdateBatchRunner(ctx, updatePackages, func(packagePosition int, updatePackage Package) {
+	batchResults, batchResult := app.updateJobSteps().runBatch(ctx, updatePackages, func(packagePosition int, updatePackage Package) {
 		progressNotice := fmt.Sprintf("Elevated package batch running %d/%d: %s.", packagePosition, len(updatePackages), updateJobPackageName(updatePackage))
 		appLogContext(ctx, "%s", progressNotice)
 		app.mutateOperationJob(job, func(status *OperationJobStatus) {

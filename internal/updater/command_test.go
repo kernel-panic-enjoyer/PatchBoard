@@ -321,8 +321,8 @@ func TestLogBufferRetainsNewestEntriesByBytes(t *testing.T) {
 	if entries[len(entries)-1].ID != latest.ID || entries[len(entries)-1].Message != latest.Message {
 		t.Fatalf("expected latest entry to be retained, got %#v latest=%#v", entries, latest)
 	}
-	if buffer.totalBytes > buffer.maxBytes {
-		t.Fatalf("expected byte bound %d, got %d", buffer.maxBytes, buffer.totalBytes)
+	if buffer.globalRing.totalBytes > buffer.maxBytes {
+		t.Fatalf("expected byte bound %d, got %d", buffer.maxBytes, buffer.globalRing.totalBytes)
 	}
 	for i := 1; i < len(entries); i++ {
 		if entries[i].ID <= entries[i-1].ID {
@@ -359,8 +359,8 @@ func TestStoreScanFloodDoesNotEvictWingetOrJobDiagnostics(t *testing.T) {
 	if len(buffer.Query(0).Entries) >= 10000 {
 		t.Fatal("global log retained unbounded Store flood")
 	}
-	if buffer.totalBytes > buffer.maxBytes {
-		t.Fatalf("global byte bound exceeded: got %d max %d", buffer.totalBytes, buffer.maxBytes)
+	if buffer.globalRing.totalBytes > buffer.maxBytes {
+		t.Fatalf("global byte bound exceeded: got %d max %d", buffer.globalRing.totalBytes, buffer.maxBytes)
 	}
 
 	winget := buffer.CategoryQuery(logCategoryWinget, 0)

@@ -354,6 +354,8 @@ func TestLogExportDoesNotLeakBootstrapOrSessionTokens(t *testing.T) {
 	replaceSessionLogsForTest(t, &LogBuffer{})
 
 	app := &App{webSession: webSession{bootstrapToken: "bootstrap-token-export-route", sessionToken: "session-token-export-route", listenHost: defaultHost, listenPort: 4183}}
+	// main registers the tokens right after building the App.
+	app.registerSessionSecretsForLogRedaction()
 	sessionLogs.Append("app", "bootstrap-token-export-route session-token-export-route")
 	request := newTestRequest(http.MethodGet, "http://127.0.0.1:4183/api/logs/export", nil)
 	addTestSessionCookie(app, request)
@@ -564,18 +566,12 @@ func TestShutdownRouteStopsServer(t *testing.T) {
 }
 
 func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
-	oldRunner := updatePackageRunner
 	oldGetter := inventoryGetter
 	var observedErr error
-	updatePackageRunner = func(ctx context.Context, pkg Package) CommandResult {
-		observedErr = ctx.Err()
-		return CommandResult{OK: true, Command: "update " + pkg.ID}
-	}
 	inventoryGetter = func(ctx context.Context) Inventory {
 		return Inventory{}
 	}
 	defer func() {
-		updatePackageRunner = oldRunner
 		inventoryGetter = oldGetter
 	}()
 
@@ -589,6 +585,10 @@ func TestAPIUpdateIgnoresCanceledRequestContext(t *testing.T) {
 			UpdateAvailable: true,
 			UpdateSupported: true,
 		}}}}},
+		updateJob: updateJobDeps{runPackage: func(ctx context.Context, pkg Package) CommandResult {
+			observedErr = ctx.Err()
+			return CommandResult{OK: true, Command: "update " + pkg.ID}
+		}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

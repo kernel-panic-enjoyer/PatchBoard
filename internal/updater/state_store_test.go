@@ -46,13 +46,11 @@ func TestStateStoreConcurrentScanAndThemeUpdate(t *testing.T) {
 	if err := saveStateToStore(t, store, defaultState()); err != nil {
 		t.Fatal(err)
 	}
-	restoreReaders := replaceScanReadersForStateStoreTest()
-	defer restoreReaders()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = scanInstalledApplicationsWithStore(context.Background(), store)
+		_ = scanInstalledApplicationsFrom(context.Background(), store, fakeApplicationScanSources())
 	}()
 	go func() {
 		defer wg.Done()
@@ -332,23 +330,17 @@ func mustLoadStoreState(t *testing.T, store StateStore) State {
 	return state
 }
 
-func replaceScanReadersForStateStoreTest() func() {
-	oldRegistryReader := registryAppsReader
-	oldWingetReader := wingetAppsReader
-	oldAppxReader := appxAppsReader
-	registryAppsReader = func() ([]ScannedApp, error) {
-		return []ScannedApp{{Key: "registry:example", Name: "Example", Source: "registry"}}, nil
-	}
-	wingetAppsReader = func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
-		return nil, &CommandResult{OK: true, Command: "winget export"}, nil
-	}
-	appxAppsReader = func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
-		return nil, &CommandResult{OK: true, Command: "Get-AppxPackage"}, nil
-	}
-	return func() {
-		registryAppsReader = oldRegistryReader
-		wingetAppsReader = oldWingetReader
-		appxAppsReader = oldAppxReader
+func fakeApplicationScanSources() applicationScanSources {
+	return applicationScanSources{
+		registry: func() ([]ScannedApp, error) {
+			return []ScannedApp{{Key: "registry:example", Name: "Example", Source: "registry"}}, nil
+		},
+		winget: func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
+			return nil, &CommandResult{OK: true, Command: "winget export"}, nil
+		},
+		appx: func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
+			return nil, &CommandResult{OK: true, Command: "Get-AppxPackage"}, nil
+		},
 	}
 }
 

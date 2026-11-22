@@ -631,14 +631,12 @@ func TestBrowserSuccessfulSearchInstallDisablesClickedButton(t *testing.T) {
 func TestBrowserReloadDuringJobAndCancellation(t *testing.T) {
 	started := make(chan struct{})
 	var startedOnce sync.Once
-	restore := updater.ReplaceUpdateJobHooksWithRefresh(func(ctx context.Context, manager, id string) updater.CommandResult {
+	app := updater.NewBrowserTestApp()
+	app.SetTestUpdateJobSteps(func(ctx context.Context, manager, id string) updater.CommandResult {
 		startedOnce.Do(func() { close(started) })
 		<-ctx.Done()
 		return updater.CommandResult{Command: "update " + id, Code: updater.CommandCancelledCode, Stderr: "Cancelled."}
 	}, func(ctx context.Context, app *updater.App, packages []updater.Package) error { return nil })
-	defer restore()
-
-	app := updater.NewBrowserTestApp()
 	server := startBrowserTestServer(t, app)
 	ctx, cancel := newBrowserContext(t)
 	defer cancel()

@@ -15,7 +15,41 @@ var errNoUpdateCandidates = errors.New("no updatable packages found")
 
 var errUpdateJobStoreScanRefreshTimeout = errors.New("timed out waiting for Microsoft Store scan to finish")
 
-var refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, updatedPackages []Package) error {
+// updateJobDeps are the steps of an update job that tests replace. A nil
+// field means the real step.
+type updateJobDeps struct {
+	runPackage     func(ctx context.Context, pkg Package) CommandResult
+	retryInventory func(ctx context.Context, app *App, reason string) Inventory
+	refreshBefore  func(ctx context.Context, app *App, packages []Package) error
+	refreshAfter   func(ctx context.Context, app *App, packages []Package) error
+	// batchEligible nil means: decide from this machine's elevation support.
+	batchEligible func(Package) bool
+	runBatch      elevatedPackageUpdateBatchRunnerFunc
+}
+
+func (app *App) updateJobSteps() updateJobDeps {
+	steps := app.updateJob
+	if steps.runPackage == nil {
+		steps.runPackage = updatePackageWithMetadataContext
+	}
+	if steps.retryInventory == nil {
+		steps.retryInventory = func(ctx context.Context, app *App, reason string) Inventory {
+			return app.refreshInventorySyncContext(ctx, reason)
+		}
+	}
+	if steps.refreshBefore == nil {
+		steps.refreshBefore = refreshInventoryBeforeUpdateJob
+	}
+	if steps.refreshAfter == nil {
+		steps.refreshAfter = refreshInventoryAfterUpdateJob
+	}
+	if steps.runBatch == nil {
+		steps.runBatch = runElevatedPackageUpdateBatch
+	}
+	return steps
+}
+
+func refreshInventoryBeforeUpdateJob(ctx context.Context, app *App, updatedPackages []Package) error {
 	if updateJobIncludesStorePackage(updatedPackages) {
 		return nil
 	}
@@ -23,7 +57,7 @@ var refreshInventoryBeforeUpdateJob = func(ctx context.Context, app *App, update
 	return ctx.Err()
 }
 
-var refreshInventoryAfterUpdateJob = func(ctx context.Context, app *App, updatedPackages []Package) error {
+func refreshInventoryAfterUpdateJob(ctx context.Context, app *App, updatedPackages []Package) error {
 	app.refreshInventorySyncContext(ctx, "update job")
 	if !updateJobIncludesStorePackage(updatedPackages) {
 		return nil

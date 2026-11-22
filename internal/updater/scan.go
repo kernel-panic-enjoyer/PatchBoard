@@ -34,9 +34,17 @@ type ScanResult struct {
 	Errors          []map[string]string `json:"errors"`
 }
 
-var registryAppsReader = readRegistryApps
-var wingetAppsReader = readWingetAppsContext
-var appxAppsReader = readAppxAppsContext
+// applicationScanSources are the readers an application scan uses. Tests
+// pass their own instead of swapping package-level functions.
+type applicationScanSources struct {
+	registry func() ([]ScannedApp, error)
+	winget   func(context.Context) ([]ScannedApp, *CommandResult, error)
+	appx     func(context.Context) ([]ScannedApp, *CommandResult, error)
+}
+
+func defaultApplicationScanSources() applicationScanSources {
+	return applicationScanSources{registry: readRegistryApps, winget: readWingetAppsContext, appx: readAppxAppsContext}
+}
 
 func scanInstalledApplications() ScanResult {
 	appLog("Application scan started.")
@@ -49,6 +57,10 @@ func scanInstalledApplications() ScanResult {
 }
 
 func scanInstalledApplicationsWithStore(ctx context.Context, store StateStore) ScanResult {
+	return scanInstalledApplicationsFrom(ctx, store, defaultApplicationScanSources())
+}
+
+func scanInstalledApplicationsFrom(ctx context.Context, store StateStore, sources applicationScanSources) ScanResult {
 	var errorsOut []map[string]string
 	var registryApps []ScannedApp
 	var wingetApps []ScannedApp
@@ -60,13 +72,13 @@ func scanInstalledApplicationsWithStore(ctx context.Context, store StateStore) S
 	var appxErr error
 	var wg sync.WaitGroup
 	goSafeGroup(&wg, "registry app scan", func() {
-		registryApps, registryErr = registryAppsReader()
+		registryApps, registryErr = sources.registry()
 	}, func(err error) { registryApps, registryErr = nil, err })
 	goSafeGroup(&wg, "winget app scan", func() {
-		wingetApps, wingetResult, wingetErr = wingetAppsReader(ctx)
+		wingetApps, wingetResult, wingetErr = sources.winget(ctx)
 	}, func(err error) { wingetApps, wingetResult, wingetErr = nil, nil, err })
 	goSafeGroup(&wg, "Store app scan", func() {
-		appxApps, appxResult, appxErr = appxAppsReader(ctx)
+		appxApps, appxResult, appxErr = sources.appx(ctx)
 	}, func(err error) { appxApps, appxResult, appxErr = nil, nil, err })
 	wg.Wait()
 	if registryErr != nil {

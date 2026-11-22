@@ -16,12 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const (
-	elevatedWorkerStartupTimeout  = 2 * time.Minute
-	elevatedWorkerShutdownTimeout = 5 * time.Second
-	elevatedWorkerCancelTimeout   = 10 * time.Second
-	elevatedWorkerPipeBufferSize  = 64 * 1024
-)
+const elevatedWorkerPipeBufferSize = 64 * 1024
 
 type elevatedWorkerInvocation struct {
 	Operation string

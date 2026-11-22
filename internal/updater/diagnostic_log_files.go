@@ -101,7 +101,8 @@ func writeRecoveredPanicReport(source string, panicValue any, stack []byte) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "Recovered panic in %s at %s: %v\n\n%s", source, now.UTC().Format(time.RFC3339), panicValue, stack)
+	report := fmt.Sprintf("Recovered panic in %s at %s: %v\n\n%s", source, now.UTC().Format(time.RFC3339), panicValue, stack)
+	_, _ = file.WriteString(sanitizeLogText(report))
 }
 
 func writeSessionLogFileEntry(entry LogEntry) {

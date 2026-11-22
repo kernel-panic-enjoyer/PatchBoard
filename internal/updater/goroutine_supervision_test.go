@@ -130,3 +130,31 @@ func TestFailedBackgroundCommandResultIsAFailure(t *testing.T) {
 		t.Fatalf("unexpected result %#v", result)
 	}
 }
+
+// Test packages must not be linked into PatchBoard.exe. A file named like
+// foo_test_windows.go is not a test file to Go and would pull them in.
+func TestProductionCodeDoesNotImportTestPackages(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSet := token.NewFileSet()
+	var violations []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fileSet, name, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		for _, spec := range file.Imports {
+			if path := strings.Trim(spec.Path.Value, `"`); path == "testing" || strings.HasPrefix(path, "net/http/httptest") || strings.HasPrefix(path, "testing/") {
+				violations = append(violations, name+" imports "+path)
+			}
+		}
+	}
+	if len(violations) > 0 {
+		t.Fatalf("production files import test packages:\n%s", strings.Join(violations, "\n"))
+	}
+}

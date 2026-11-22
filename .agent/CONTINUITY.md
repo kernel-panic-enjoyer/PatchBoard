@@ -219,6 +219,8 @@
 - 2026-11-21T16:35Z [CODE] WinGet exit codes are taken from microsoft/winget-cli `doc/windows/package-manager/winget/returnCodes.md` (last changed 2026-10-01). Codes win over text; text is matched only when the code says nothing specific. Store CLI attempts stay unclassified except transient codes until Phase 4.
 - 2026-11-21T16:35Z [CODE] Deliberate behavior changes: `0x8A150014` no longer triggers source repair; `0x8A150010` is a failure, not a source failure; transient retries stop when a retry fails for another reason; WinGet `0x8A150109`/`0x8A15010B` count as restart success; `choco upgrade` always passes `--fail-on-not-installed`.
 - 2026-11-21T17:10Z [CODE] RULE-278 and RULE-115 not changed as the brief worded them: a healthy exact per-package offer stays Available when another provider (the aggregate check) fails, and matched aggregate rows are kept in an incomplete run. Replay showed the strict order would hide 13 confirmed real updates; existing tests pin this intent. Brief has Proposed revision lines awaiting approval.
+- 2026-11-22T11:20Z [CODE] Package-action hooks (`packageActionCommandRunner`, `packageActionManagerAvailable`, `packageActionRetryWait`) and 27 OS seams stay package-level: the package actions also run in the elevated worker, which has no App. `TestNoNewFunctionVariableHooks` pins the 30 that remain. Brief has a Proposed revision line for the Debt #9 criterion.
+- 2026-11-22T11:20Z [CODE] An update job past its deadline ends as failed with notice "Update timed out"; a declined UAC prompt stays a cancel (only a batch-context DeadlineExceeded counts as a timeout).
 
 [PROGRESS]
 
@@ -363,6 +365,9 @@
 - 2026-11-21T17:10Z [CODE] Phase 4: incomplete scans retain only a previous Available (`reconcileStoreScanAssessments`); an exact offer is Unknown when its own provider also failed for the package; RULE-274 dead branch removed; Store update-now blocked on IdentityConflict (RULE-122); both Store workers launch through `runStoreWorkerProcess` (`store_worker_runner_windows.go`). Opt-in replay test `TestReplayStoreScanSnapshots`.
 - 2026-11-21T17:10Z [TOOL] Phase 4 verification: gofmt, go vet (plain, uitestsupport, tests/browser), staticcheck clean; Run-Tests root PASS, browser PASS; dist rebuilt. Replay vs baseline: 558 changed, all bogus available -> unknown in incomplete scans; 0 actionable changes.
 - 2026-11-22T09:00Z [USER] Approved the RULE-278 and RULE-115 proposed revisions (keep exact per-package Store offers when another provider fails; keep matched aggregate rows). All Phase 4 exit criteria are met; next is Phase 5 (global state, timeouts, structural cleanup).
+- 2026-11-22T11:20Z [USER] "Start Phase 5" (global state, timeouts, structural cleanup), run as PR work on the PR #4 branch.
+- 2026-11-22T11:20Z [CODE] Phase 5: private_paths helpers renamed to real `_test.go` files; log append no longer copies the ring; RULE-273 keeps a Store PFN opt-in when the SID is unavailable; redaction gaps closed; timeouts in `timeouts.go` with an update job deadline (15 min + 20 min per package); update-job steps on `App.updateJob`, scan readers passed as `applicationScanSources`; CI race step runs the whole package.
+- 2026-11-22T11:20Z [TOOL] Phase 5 verification: gofmt, go vet (plain, uitestsupport, tests/browser), staticcheck clean; Run-Tests root PASS, browser PASS; dist rebuilt, `go tool nm` shows 0 testing/httptest symbols. Full-package `-race` not run locally (no gcc); CI result UNCONFIRMED.
 
 [DISCOVERIES]
 
@@ -478,6 +483,9 @@
 - 2026-11-21T16:35Z [CODE] Retry decisions re-scanned merged output of all attempts, so text from an earlier attempt (for example a transient 1618) kept retries going after a later real failure. `choco upgrade` without `--fail-on-not-installed` installs a missing package, so variant fallbacks (foo.install) could add packages.
 - 2026-11-21T17:10Z [TOOL] Real Store snapshots (66, 2026-06-23..2026-11-21) showed incomplete scans publishing 112-116 Store apps as Available with reason "retained previous positive update": the retention never checked that the previous state was Available. Stale flag kept them non-actionable. Fixed.
 - 2026-11-21T17:10Z [TOOL] Replaying the saved snapshots through current code reproduced all 7,568 recorded decisions, so snapshots are a usable regression oracle. They live redacted in `analysis/patchboard/store-snapshots/` (not committed: they list installed apps).
+- 2026-11-22T11:20Z [TOOL] Files named `*_test_windows.go` are not test files to Go (`_test` must come last), so they were linked into PatchBoard.exe.
+- 2026-11-22T11:20Z [TOOL] The Bash tool's heredoc collapses `\\` to `\` in written files; write Go sources with backslashes through the Write/Edit tools.
+- 2026-11-22T11:20Z [TOOL] In Git Bash, `go test` TempDir paths mix slashes, so `TestTrustedPathsIgnoreEnvironment` fails there; it passes under `dev\scripts\Run-Tests.ps1`.
 
 [OUTCOMES]
 

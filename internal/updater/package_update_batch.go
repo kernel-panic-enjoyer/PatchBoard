@@ -9,12 +9,6 @@ import (
 
 type elevatedPackageUpdateBatchRunnerFunc func(ctx context.Context, packages []Package, reportProgress func(int, Package)) ([]UpdateResult, CommandResult)
 
-var elevatedPackageUpdateBatchRunner elevatedPackageUpdateBatchRunnerFunc = runElevatedPackageUpdateBatch
-
-// Tests may replace this hook. A nil hook selects the production capability
-// detector once per batch plan so every package in one job uses one decision.
-var elevatedPackageUpdateBatchEligible func(Package) bool
-
 type elevatedPackageUpdateBatchCapability struct {
 	RequiresElevation          bool
 	SameUserElevationAvailable bool

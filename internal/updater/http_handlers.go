@@ -269,7 +269,6 @@ func storeDiagnosticsExportFilename(now time.Time) string {
 }
 
 func (app *App) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	app.registerSessionSecretsForLogRedaction()
 	setSecurityHeaders(w)
 	if !app.trustedHost(r) {
 		writeAPIError(w, http.StatusMisdirectedRequest, "untrusted host")

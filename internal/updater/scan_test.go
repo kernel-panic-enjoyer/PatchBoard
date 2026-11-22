@@ -124,29 +124,12 @@ func TestStableAppxScanIDIgnoresPackageVersion(t *testing.T) {
 }
 
 func TestScanInstalledApplicationsReportsStateSaveFailure(t *testing.T) {
-	oldRegistryReader := registryAppsReader
-	oldWingetReader := wingetAppsReader
-	oldAppxReader := appxAppsReader
-	registryAppsReader = func() ([]ScannedApp, error) {
-		return []ScannedApp{{Key: "registry:example", Name: "Example", Source: "registry"}}, nil
-	}
-	wingetAppsReader = func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
-		return nil, &CommandResult{OK: true, Command: "winget export"}, nil
-	}
-	appxAppsReader = func(ctx context.Context) ([]ScannedApp, *CommandResult, error) {
-		return nil, &CommandResult{OK: true, Command: "Get-AppxPackage"}, nil
-	}
-	defer func() {
-		registryAppsReader = oldRegistryReader
-		wingetAppsReader = oldWingetReader
-		appxAppsReader = oldAppxReader
-	}()
 
 	store := newMemoryStateStore(defaultState())
 	store.updateHook = func(*State) error {
 		return errors.New("state write failed")
 	}
-	scan := scanInstalledApplicationsWithStore(context.Background(), store)
+	scan := scanInstalledApplicationsFrom(context.Background(), store, fakeApplicationScanSources())
 	found := false
 	for _, item := range scan.Errors {
 		if item["source"] == "state" && strings.Contains(item["error"], "state write failed") {

@@ -67,10 +67,16 @@ func normalizeStoreScanAppKeys(state *State) {
 }
 
 func migrateAndNormalizeAutoUpdatePackageKeys(state *State, legacyAssessments map[string]legacyAssessmentCacheEntry) {
+	migrateAutoUpdatePackageKeysWithUserSID(state, legacyAssessments, currentUserSID)
+}
+
+// migrateAutoUpdatePackageKeysWithUserSID takes the SID lookup so tests can
+// simulate it being briefly unavailable.
+func migrateAutoUpdatePackageKeysWithUserSID(state *State, legacyAssessments map[string]legacyAssessmentCacheEntry, userSID func() (string, error)) {
 	normalized := map[string]bool{}
 	report := StoreAutoUpdateMigrationReport{LastRun: utcNow()}
 	for key, enabled := range state.AutoUpdatePackages {
-		normalizedKey, entry, disabled := migrateAutoUpdatePackageKey(state, key, legacyAssessments)
+		normalizedKey, entry, disabled := migrateAutoUpdatePackageKey(key, legacyAssessments, userSID)
 		if normalizedKey == "" {
 			if disabled {
 				report.Disabled = append(report.Disabled, entry)
@@ -88,7 +94,7 @@ func migrateAndNormalizeAutoUpdatePackageKeys(state *State, legacyAssessments ma
 	}
 }
 
-func migrateAutoUpdatePackageKey(state *State, key string, legacyAssessments map[string]legacyAssessmentCacheEntry) (string, StoreAutoUpdateMigrationEntry, bool) {
+func migrateAutoUpdatePackageKey(key string, legacyAssessments map[string]legacyAssessmentCacheEntry, currentUserSID func() (string, error)) (string, StoreAutoUpdateMigrationEntry, bool) {
 	now := utcNow()
 	entry := StoreAutoUpdateMigrationEntry{LegacyKey: key, MigratedAt: now}
 	manager, id, err := splitPackageKey(key)
@@ -114,8 +120,11 @@ func migrateAutoUpdatePackageKey(state *State, key string, legacyAssessments map
 	if looksLikePackageFamilyName(id) {
 		userSID, err := currentUserSID()
 		if err != nil {
-			entry.Reason = "current user SID unavailable for Store PFN migration"
-			return "", entry, true
+			// Keep the opt-in under its legacy key; the next start migrates
+			// it once the SID can be read (RULE-273).
+			entry.CanonicalKey = key
+			entry.Reason = "current user SID unavailable; Store PFN opt-in kept for a later migration"
+			return key, entry, false
 		}
 		entry.PackageFamilyName = id
 		entry.CanonicalKey = canonicalStoreAutoUpdateKey(userSID, id)

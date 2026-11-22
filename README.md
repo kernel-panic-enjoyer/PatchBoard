@@ -246,9 +246,15 @@ updates.
   `session-*.log` mirrors the Session Log to disk with the same redaction as
   **Export Logs** (4 MiB per file, newest 8 kept), and `crash-*.log` holds the
   Go panic and stack trace of a process that crashed (newest 10 kept; files from
-  clean exits are removed). Every intentional shutdown logs its source, such as
+  clean exits are removed). A recovered panic is redacted like the Session Log;
+  a fatal Go runtime crash is written by the runtime itself and is not, so
+  check a `crash-*.log` before sharing it. Every intentional shutdown logs its source, such as
   `Tray quit requested.`, so a session file that simply stops with no quit line
   and no crash file points to the process being killed from outside.
+- An update job has an overall deadline: 15 minutes plus 20 minutes per
+  package, so every package can use its full command timeout. A job that runs
+  past it stops, says "Update timed out", and marks the packages it did not
+  finish as skipped because the job timed out.
 - If the WebUI loses its backend while an update job is running, the update
   card turns red and reads "Lost connection to PatchBoard" with the last
   reported package. Restart PatchBoard and check for updates to see which

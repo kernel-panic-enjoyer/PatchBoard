@@ -392,6 +392,8 @@ func runServerWithOptions(options cliOptions, hooks serverHooks) error {
 		inventoryService: inventoryService{storeBackgroundScanEnabled: true},
 		appUpdateChecker: checker,
 	}
+	// Register before anything can log a token, not on the first request.
+	app.registerSessionSecretsForLogRedaction()
 	defer func() {
 		app.beginShutdown()
 		if !app.waitForBackgroundWork(gracefulShutdownTimeout) {

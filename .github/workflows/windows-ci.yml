@@ -61,7 +61,7 @@ jobs:
         run: |
           $env:CGO_ENABLED = '1'
           $env:CC = 'gcc.exe'
-          go test -race -count=1 ./internal/updater -run '^(TestConcurrentEffectiveInventorySnapshotsDoNotMutateCache|TestInventorySnapshotConcurrentWithUpdateSelection|TestStateStoreConcurrentThemeAndAutoUpdateSettings|TestStateStoreConcurrentScanAndThemeUpdate|TestStateStoreConcurrentAutoUpdateResultAndWebUISettings|TestUpdateJobRejectsConcurrentDuplicateStarts|TestUpdateJobValidatesConcurrentQueuedStart|TestStatusRefreshDoesNotWaitForInventoryCacheLock|TestBootstrapTokenDoesNotWaitForInventoryCacheLock)$'
+          go test -race -count=1 ./internal/updater
 
       - name: Go vet
         run: go vet ./...

@@ -11,14 +11,8 @@ import (
 	"time"
 )
 
-const (
-	defaultScheduledAutoUpdateDeadline = 45 * time.Minute
-	scheduledAutoUpdateDeadlineEnv     = "UPDATER_AUTO_UPDATE_DEADLINE_MINUTES"
-	scheduledInventoryDeadline         = 10 * time.Minute
-	scheduledStoreScanDeadline         = defaultStoreProviderTimeout + 3*time.Minute
-	scheduledPackageActionDeadline     = 20 * time.Minute
-	scheduledPersistenceDeadline       = 30 * time.Second
-)
+// The scheduled run's deadlines are in timeouts.go.
+const scheduledAutoUpdateDeadlineEnv = "UPDATER_AUTO_UPDATE_DEADLINE_MINUTES"
 
 type StoreAutomationDecision struct {
 	AutomationUsable    bool
